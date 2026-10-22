@@ -413,6 +413,11 @@ pub const State = struct {
         state.writeGeometry(io, library);
     }
 
+    /// Loads the selected frame if it isn't yet, for another workspace that shows it.
+    pub fn ensureFrame(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
+        state.load(gpa, io, library) catch |err| std.log.err("can't load frame {d}: {t}", .{ (state.selected orelse 0) + 1, err });
+    }
+
     /// Loads the selected frame if it isn't yet: with its saved settings when it was developed,
     /// or automatic ones.
     fn load(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) !void {
@@ -557,6 +562,14 @@ pub const State = struct {
                 if (c.ImGui_SelectableEx(gui.print("{s}", .{b.name}).ptr, id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, id);
             }
         }
+    }
+
+    /// Gives the open frame the look `id` and saves it, as choosing it in the Look menu does: for
+    /// the Looks workspace.
+    pub fn useLook(state: *State, io: std.Io, library: *Library, id: look.Id) void {
+        const frame = if (state.frame) |*f| f else return;
+        state.setLook(frame, id);
+        state.save(io, library);
     }
 
     fn setLook(state: *State, frame: *Frame, id: look.Id) void {
@@ -764,7 +777,7 @@ fn upload(texture: *?Texture, gpu: *c.SDL_GPUDevice, width: u32, height: u32, pi
 
 /// Draws the workspace; without `sides`, the viewer alone.
 pub fn draw(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, sides: bool) void {
-    state.load(gpa, io, library) catch |err| std.log.err("can't load frame {d}: {t}", .{ (state.selected orelse 0) + 1, err });
+    state.ensureFrame(gpa, io, library);
     if (state.crop_on_open and state.frame != null) {
         state.crop_on_open = false;
         if (state.cropping == null) state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
@@ -1085,7 +1098,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         tag(list, gui.vec2(max.x - gui.px(10), min.y + gui.px(10)), "Positive", .right);
     }
     if (state.picking != .none) {
-        const what = if (state.picking == .base) "Click the film base: the rebate, or between frames. Esc cancels." else "Click something that should be neutral grey. Esc cancels.";
+        const what = if (state.picking == .base) "Click the film base: the rebate, or between frames. Esc cancels." else "Click something that should be neutral gray. Esc cancels.";
         const size = c.ImGui_CalcTextSize(what);
         tag(list, gui.vec2((min.x + max.x) / 2 + size.x / 2 + gui.px(8), max.y - gui.px(10) - size.y - gui.px(4)), what, .right);
     }
@@ -1356,7 +1369,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
             c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(8)));
             defer c.ImGui_PopStyleVar();
             if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}")) state.changed();
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("After the look, for the whole frame: 0 is grey, 1 leaves the colour as it is");
+            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("After the look, for the whole frame: 0 is gray, 1 leaves the color as it is");
         }
         const gap = gui.px(4);
         const third = (c.ImGui_GetContentRegionAvail().x - 2 * gap) / 3;

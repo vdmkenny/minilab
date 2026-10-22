@@ -38,8 +38,18 @@ const table_min_width = 620;
 const figure_gap = 12;
 /// The labels' column beside a collection's credit and license.
 const pack_label_width = 90;
-/// Room for one film's look names in a collection, comma-separated.
-const pack_names_bytes = 2048;
+/// The longer side of the Develop frame as the previews render it.
+const preview_longest = 360;
+/// The tallest a preview of one look is drawn.
+const preview_max_height = 320;
+/// Previews rendered each frame, so that a collection's fill in without holding up the page.
+const previews_per_frame = 3;
+/// A collection's preview tiles: the narrowest and the tallest one, and the gap between them.
+const tile_min_width = 150;
+const tile_max_height = 170;
+/// The height of the buttons under a look's preview.
+const use_button_height = 30;
+const tile_gap = 10;
 /// The figures are 3:2.
 const figure_ratio = 2.0 / 3.0;
 /// The figures' images, at most this many pixels across.
@@ -196,6 +206,91 @@ const Figures = struct {
     }
 };
 
+/// The frame open in Develop, rendered with Neutral and with the selected look, or with each look
+/// of the selected collection: what a look does to a picture, before it's used.
+const Previews = struct {
+    key: ?Key = null,
+    /// The frame, reduced, and its settings in Develop.
+    small: ?minilab.image.Scan = null,
+    settings: minilab.develop.Settings = .{},
+    /// The looks shown, Neutral first, and their renders as they're made.
+    ids: std.ArrayList(minilab.look.Id) = .empty,
+    tiles: std.ArrayList(Tile) = .empty,
+
+    /// What the previews were made from: when it changes, they're made again.
+    const Key = struct {
+        selected: Selected,
+        pixels: [*]const [3]u16,
+        width: usize,
+        height: usize,
+        settings: minilab.develop.Settings,
+    };
+
+    const Tile = union(enum) { waiting, ready: Texture, failed };
+
+    fn start(p: *Previews, gpa: std.mem.Allocator, key: Key, preview: minilab.image.Scan, ids: []const minilab.look.Id) !void {
+        p.key = key;
+        p.small = try minilab.image.downscale(gpa, preview, preview_longest);
+        p.settings = key.settings;
+        try p.ids.appendSlice(gpa, ids);
+        try p.tiles.appendNTimes(gpa, .waiting, ids.len);
+    }
+
+    /// Renders the next few looks.
+    fn renderSome(p: *Previews, ctx: context.Context) void {
+        const small = p.small orelse return;
+        var made: usize = 0;
+        for (p.ids.items, p.tiles.items) |id, *tile| {
+            if (tile.* != .waiting) continue;
+            if (made == previews_per_frame) return;
+            made += 1;
+            tile.* = if (renderPreview(ctx, small, p.settings, id)) |made_texture| .{ .ready = made_texture } else |err| failed: {
+                std.log.err("can't preview the look {s}: {t}", .{ id.label(), err });
+                break :failed .failed;
+            };
+        }
+    }
+
+    /// The render of `ids[index]`, once it's made.
+    fn texture(p: *const Previews, index: usize) ?Texture {
+        return switch (p.tiles.items[index]) {
+            .ready => |t| t,
+            .waiting, .failed => null,
+        };
+    }
+
+    fn release(p: *Previews, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
+        for (p.tiles.items) |*tile| switch (tile.*) {
+            .ready => |*t| t.release(gpu),
+            .waiting, .failed => {},
+        };
+        p.tiles.clearRetainingCapacity();
+        p.ids.clearRetainingCapacity();
+        if (p.small) |*s| s.deinit(gpa);
+        p.small = null;
+        p.key = null;
+    }
+
+    fn deinit(p: *Previews, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
+        p.release(gpa, gpu);
+        p.ids.deinit(gpa);
+        p.tiles.deinit(gpa);
+    }
+};
+
+/// `small` with `settings` and the look `id`, on the GPU.
+fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: minilab.develop.Settings, id: minilab.look.Id) !Texture {
+    const gpa = ctx.gpa;
+    var linear = try minilab.look.render(gpa, small, settings, ctx.library.looks.resolve(gpa, ctx.io, id));
+    defer linear.deinit(gpa);
+    var encoded = try minilab.encode.toSrgb8(gpa, linear);
+    defer encoded.deinit(gpa);
+    const rgba = try gpa.alloc([4]u8, encoded.pixels.len);
+    defer gpa.free(rgba);
+    for (rgba, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+    return .upload(ctx.gpu, @intCast(small.width), @intCast(small.height), rgba);
+}
+
 const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
@@ -224,6 +319,7 @@ pub const State = struct {
     job_pairs: std.ArrayList(usize) = .empty,
     dialog: Dialog = .{ .filters = &pair_files, .many = true },
     figures: Figures = .{},
+    previews: Previews = .{},
     /// Counts fits, so that the figures know when to work out the difference again.
     generation: u32 = 0,
     rename: [128:0]u8 = @splat(0),
@@ -235,14 +331,21 @@ pub const State = struct {
         state.job = null;
         state.job_pairs.deinit(gpa);
         state.figures.release(gpu);
+        state.previews.deinit(gpa, gpu);
         for (state.own.items) |*o| o.deinit(gpa);
         state.own.deinit(gpa);
         state.dialog.deinit(gpa);
     }
 
     /// Whether everything the page shows has loaded: for a screenshot, which waits for it.
+    /// Whether previews are still to be rendered, a few each frame.
+    pub fn rendering(state: *const State) bool {
+        for (state.previews.tiles.items) |tile| if (tile == .waiting) return true;
+        return false;
+    }
+
     pub fn settled(state: *const State) bool {
-        if (!state.loaded or state.job != null) return false;
+        if (!state.loaded or state.job != null or state.rendering()) return false;
         const own = state.current() orelse return true;
         if (own.unread() > 0) return false;
         if (state.pair >= own.pairs.items.len) return true;
@@ -627,6 +730,55 @@ pub const State = struct {
         state.figures.key = key;
         makeFigures(state, ctx, own, prepared, alignment) catch |err| std.log.err("can't show the pair: {t}", .{err});
     }
+
+    /// Starts the previews again when the selection or the frame in Develop changed, and renders
+    /// the next few. A fitted look shows its pairs instead.
+    fn refreshPreviews(state: *State, ctx: context.Context) void {
+        ctx.develop.ensureFrame(ctx.gpa, ctx.io, ctx.library);
+        const frame = if (ctx.develop.frame) |*f| f else return state.previews.release(ctx.gpa, ctx.gpu);
+        var buffer: [bundled.looks.len + 1]minilab.look.Id = undefined;
+        const ids = state.previewIds(&buffer);
+        if (ids.len == 0) return state.previews.release(ctx.gpa, ctx.gpu);
+        const key: Previews.Key = .{
+            .selected = state.selected,
+            .pixels = frame.preview.pixels.ptr,
+            .width = frame.preview.width,
+            .height = frame.preview.height,
+            .settings = frame.settings,
+        };
+        const same = if (state.previews.key) |k| std.meta.eql(k, key) else false;
+        if (!same) {
+            state.previews.release(ctx.gpa, ctx.gpu);
+            state.previews.start(ctx.gpa, key, frame.preview, ids) catch |err| {
+                std.log.err("can't preview the looks: {t}", .{err});
+                return state.previews.release(ctx.gpa, ctx.gpu);
+            };
+        }
+        state.previews.renderSome(ctx);
+    }
+
+    /// The looks the selection previews, Neutral first: none for a fitted look.
+    fn previewIds(state: *const State, buffer: []minilab.look.Id) []minilab.look.Id {
+        buffer[0] = .neutral;
+        var n: usize = 1;
+        switch (state.selected) {
+            .neutral => {},
+            .frontier => {
+                buffer[n] = .frontier;
+                n += 1;
+            },
+            .imported => |i| {
+                buffer[n] = state.imported.items[i];
+                n += 1;
+            },
+            .pack => |pack| for (bundled.looks, 0..) |b, i| if (b.pack == pack) {
+                buffer[n] = .ofBundled(i);
+                n += 1;
+            },
+            .own => return buffer[0..0],
+        }
+        return buffer[0..n];
+    }
 };
 
 fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *const pairs.Prepared, alignment: ?register.Alignment) !void {
@@ -762,6 +914,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
         if (state.pair >= own.pairs.items.len) state.pair = own.pairs.items.len -| 1;
     }
     state.refreshFigures(ctx);
+    state.refreshPreviews(ctx);
 
     const top = c.ImGui_GetCursorScreenPos();
     const available = c.ImGui_GetContentRegionAvail();
@@ -855,15 +1008,12 @@ fn drawList(state: *State, ctx: context.Context) void {
     const width = c.ImGui_GetContentRegionAvail().x;
     var y = origin.y;
 
-    fonts.pushSized(.semibold, 12);
-    textIn(list, gui.vec2(origin.x, y), line(12), theme.text_secondary, "LOOKS");
-    fonts.pop();
-    y += line(12) + gui.px(4 + 6);
-
+    // In groups, as Develop's Look menu has them.
+    y = groupHeading(list, origin.x, y, origin.y, "BUILT IN");
     const item_height = gui.px(8 + 8 + 1) + line(13) + line(12) + 2;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
-        .{ .neutral, "Neutral", "Built in · inversion curve" },
-        .{ .frontier, "Frontier emulation", "Built in · color LUT" },
+        .{ .neutral, "Neutral", "Inversion curve" },
+        .{ .frontier, "Frontier emulation", "Color LUT, 33³" },
     };
     for (built_in, 0..) |b, i| {
         c.ImGui_PushIDInt(@intCast(i));
@@ -871,25 +1021,31 @@ fn drawList(state: *State, ctx: context.Context) void {
         c.ImGui_PopID();
         y += item_height + gui.px(6);
     }
+    y = groupHeading(list, origin.x, y, origin.y, "FILM LOOKS");
     const packs = comptime std.enums.values(bundled.Pack);
     for (packs, 0..) |pack, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len));
         const info = pack.info();
-        const source = gui.print("{d} film looks · {s}", .{ packLooks(pack), info.licence });
+        const source = gui.print("{d} looks · {s}", .{ packLooks(pack), info.licence });
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, info.name, source, std.meta.eql(state.selected, .{ .pack = pack }))) select(state, .{ .pack = pack });
         c.ImGui_PopID();
         y += item_height + gui.px(6);
     }
+    if (state.imported.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "IMPORTED LUTS");
     for (state.imported.items, 0..) |*id, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len));
         const selected = switch (state.selected) {
             .imported => |s| s == i,
             else => false,
         };
-        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), "Imported LUT", selected)) select(state, .{ .imported = i });
+        const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, id.*);
+        var buffer: [64]u8 = undefined;
+        const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "Can't be read";
+        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), size, selected)) select(state, .{ .imported = i });
         c.ImGui_PopID();
         y += item_height + gui.px(6);
     }
+    if (state.own.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "FITTED LOOKS");
     for (state.own.items, 0..) |*own, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len + state.imported.items.len));
         const source = gui.print("{s} · {s}", .{ own.status(), own.references.short() });
@@ -938,6 +1094,16 @@ fn drawList(state: *State, ctx: context.Context) void {
     _ = paragraph(list, gui.vec2(origin.x, @max(y + height + gui.px(12), bottom - note_height)), width, theme.text_tertiary, note);
 }
 
+/// A group's heading in the list at `y`, with space above it unless it's at the list's `first` y.
+/// Returns the y under it.
+fn groupHeading(list: *c.ImDrawList, x: f32, y: f32, first: f32, label: []const u8) f32 {
+    const top = if (y > first) y + gui.px(8) else y;
+    fonts.pushSized(.semibold, 12);
+    textIn(list, gui.vec2(x, top), line(12), theme.text_secondary, label);
+    fonts.pop();
+    return top + line(12) + gui.px(8);
+}
+
 /// One look in the list: its name and where it comes from. True when clicked.
 fn lookItem(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, name: []const u8, source: []const u8, selected: bool) bool {
     c.ImGui_SetCursorScreenPos(at);
@@ -978,8 +1144,8 @@ fn drawMain(state: *State, ctx: context.Context) void {
     var y = origin.y;
 
     const title: []const u8, const badge: []const u8, const description: []const u8 = switch (state.selected) {
-        .neutral => .{ "Neutral", "Built in", "minilab's own inversion: density above the film base, a density matrix, then the inversion curve. Nothing is added to the colour." },
-        .frontier => .{ "Frontier emulation", "Built in", "The Fujifilm Frontier's colour, from the colour cube in its scanning software at its standard saturation, as a LUT over Neutral. Tone, neutrals and lightness stay Neutral's: greens lean a little toward teal, and skin, skies and yellows gain a little." },
+        .neutral => .{ "Neutral", "Built in", "minilab's own inversion: density above the film base, a density matrix, then the inversion curve. Nothing is added to the color." },
+        .frontier => .{ "Frontier emulation", "Built in", "The Fujifilm Frontier's color, from the color cube in its scanning software at its standard saturation, as a LUT over Neutral. Tone, neutrals and lightness stay Neutral's: greens lean a little toward teal, and skin, skies and yellows gain a little." },
         .pack => |p| .{ p.info().name, "Film looks", p.info().about },
         .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "A LUT laid over Neutral's sRGB output: tone and balance come from Develop, then the LUT. It should expect sRGB or Rec. 709 input." },
         .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), switch (state.own.items[i].references) {
@@ -1019,23 +1185,32 @@ fn drawMain(state: *State, ctx: context.Context) void {
         .own => |i| i,
         .pack => |p| {
             y += gui.px(14);
-            drawPack(list, gui.vec2(origin.x, y), width, p);
+            y = drawPack(list, gui.vec2(origin.x, y), width, p);
+            y += gui.px(14);
+            _ = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             return;
         },
         .imported => |i| {
             y += gui.px(14);
-            c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, y));
-            if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, 30))) state.removeImported(ctx, i);
+            y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
+            _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
+            if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
             if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Deletes the library's copy in Looks; the file it was imported from stays");
             return;
         },
-        else => {
+        .neutral, .frontier => {
             y += gui.px(14);
-            _ = paragraph(list, gui.vec2(origin.x, y), width, theme.text_tertiary, "Built-in looks aren't fitted. To make a look of your own, use New look from references: pairs of our raw scans and references of the same negatives, such as a lab's scans. Or import a .cube LUT.");
+            y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
+            _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
             return;
         },
     };
     const own = &state.own.items[look];
+    // A saved look can be used as it is; drafts and fits not saved yet can't.
+    if (own.saved) if (minilab.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| {
+        y += gui.px(10);
+        y = drawUseButton(ctx, gui.vec2(origin.x, y), id);
+    } else |_| {};
     y += gui.px(14);
     y = drawReferences(state, ctx, own, look, gui.vec2(origin.x, y));
     y += gui.px(14);
@@ -1051,8 +1226,8 @@ fn packLooks(pack: bundled.Pack) usize {
     return count;
 }
 
-/// A collection's credit, license and changes, then its looks by film.
-fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) void {
+/// A collection's credit, license, source and changes. Returns the y under them.
+fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f32 {
     const info = pack.info();
     var y = at.y;
     const label_width = gui.px(pack_label_width);
@@ -1067,25 +1242,126 @@ fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) v
         y += @max(line(13), paragraph(list, gui.vec2(at.x + label_width, y + (line(13) - c.ImGui_GetFontSize() * 1.4) / 2), width - label_width, theme.text, row[1]));
         y += gui.px(4);
     }
-    for (std.enums.values(bundled.Film)) |film| {
-        var names: [pack_names_bytes]u8 = undefined;
-        var writer: std.Io.Writer = .fixed(&names);
-        var count: usize = 0;
-        for (bundled.looks) |b| {
-            if (b.pack != pack or b.film != film) continue;
-            writer.print("{s}{s}", .{ if (count > 0) ", " else "", b.name }) catch break;
-            count += 1;
-        }
-        if (count == 0) continue;
-        y += gui.px(14);
-        fonts.pushSized(.semibold, 12);
-        textIn(list, gui.vec2(at.x, y), line(12), theme.text_secondary, gui.print("{s} · {d}", .{ film.label(), count }));
-        fonts.pop();
-        y += line(12) + gui.px(4);
-        y += paragraph(list, gui.vec2(at.x, y), width, theme.text_tertiary, writer.buffered());
+    return y;
+}
+
+/// The frame open in Develop with the selected look beside Neutral, and a button to use it there;
+/// for a collection, a tile for each of its looks, which uses it when clicked. Returns the y under
+/// them.
+fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f32 {
+    const list = c.ImGui_GetWindowDrawList();
+    var y = at.y;
+    defer {
+        c.ImGui_SetCursorScreenPos(gui.vec2(at.x, y));
+        c.ImGui_Dummy(gui.vec2(0, 0));
     }
-    y += gui.px(14);
-    _ = paragraph(list, gui.vec2(at.x, y), width, theme.text_tertiary, "Choose one in Develop's Look menu, under Film looks. Each is a LUT laid over Neutral, like an imported one.");
+    const frame = if (ctx.develop.frame) |*f| f else {
+        y += paragraph(list, gui.vec2(at.x, y), width, theme.text_tertiary, "Open a frame in Develop to see the looks on it here.");
+        return y;
+    };
+    const previews = &state.previews;
+    // The previews may be of the selection before a click this frame: they're made again next.
+    const key = previews.key orelse return y;
+    if (!std.meta.eql(key.selected, state.selected)) return y;
+    const ids = previews.ids.items;
+    const pack = state.selected == .pack;
+
+    const where = if (ctx.develop.rollIndex(ctx.library)) |r| gui.print("{s} of {s}", .{ frame.name, ctx.library.rolls.items[r].info.name }) else frame.name;
+    const intro = if (pack) gui.print("On {s}, as Develop sets it. Click a look to use it there.", .{where}) else gui.print("On {s}, as Develop sets it.", .{where});
+    y += paragraph(list, gui.vec2(at.x, y), width, theme.text_secondary, intro);
+    y += gui.px(10);
+
+    const small = previews.small.?;
+    const aspect = @as(f32, @floatFromInt(small.height)) / @as(f32, @floatFromInt(small.width));
+    const gap = gui.px(tile_gap);
+    const caption = gui.px(6) + line(13);
+    if (!pack) {
+        // Neutral and the look, side by side, no taller than `preview_max_height`.
+        var w = (width - gap) / 2;
+        if (w * aspect > gui.px(preview_max_height)) w = gui.px(preview_max_height) / aspect;
+        const h = w * aspect;
+        for (ids, 0..) |id, i| {
+            const min = gui.vec2(at.x + (w + gap) * @as(f32, @floatFromInt(i)), y);
+            _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), id.label(), false, false);
+        }
+        y += h + caption + gui.px(10);
+        return y;
+    }
+
+    // A grid for Neutral, then one for each film the collection's looks emulate. Tiles are no
+    // taller than `tile_max_height`, so that a portrait frame's fit as many to a row.
+    const narrowest = @min(gui.px(tile_min_width), gui.px(tile_max_height) / aspect);
+    const columns: usize = @max(1, @as(usize, @intFromFloat((width + gap) / (narrowest + gap))));
+    const w = @min((width - gap * @as(f32, @floatFromInt(columns - 1))) / @as(f32, @floatFromInt(columns)), gui.px(tile_max_height) / aspect);
+    const h = w * aspect;
+    var from: usize = 0;
+    while (from < ids.len) {
+        const film: ?bundled.Film = if (from == 0) null else bundled.looks[ids[from].kind().bundled].film;
+        var to = from + 1;
+        while (film != null and to < ids.len and bundled.looks[ids[to].kind().bundled].film == film.?) to += 1;
+        fonts.pushSized(.semibold, 12);
+        textIn(list, gui.vec2(at.x, y), line(12), theme.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else "Neutral");
+        fonts.pop();
+        y += line(12) + gui.px(6);
+        for (from..to) |i| {
+            const column: f32 = @floatFromInt((i - from) % columns);
+            const row: f32 = @floatFromInt((i - from) / columns);
+            const min = gui.vec2(at.x + (w + gap) * column, y + (h + caption + gap) * row);
+            const name = if (i == 0) "Neutral" else bundled.looks[ids[i].kind().bundled].name;
+            c.ImGui_PushIDInt(@intCast(i));
+            if (previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), name, ids[i].eql(&frame.look), true)) ctx.develop.useLook(ctx.io, ctx.library, ids[i]);
+            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Use on %s", gui.print("{s}", .{frame.name}).ptr);
+            c.ImGui_PopID();
+        }
+        const rows = (to - from + columns - 1) / columns;
+        y += (h + caption + gap) * @as(f32, @floatFromInt(rows)) + gui.px(6);
+        from = to;
+    }
+    return y;
+}
+
+/// The look the previews show beside Neutral, once they're of the selection.
+fn previewedLook(state: *const State) ?minilab.look.Id {
+    const key = state.previews.key orelse return null;
+    if (!std.meta.eql(key.selected, state.selected)) return null;
+    const ids = state.previews.ids.items;
+    return ids[ids.len - 1];
+}
+
+/// "Use on Frame 3", which gives the frame open in Develop the look `id`: in use already, it's
+/// off. Leaves the cursor beside it, for another button on the same line. Returns the y under it.
+fn drawUseButton(ctx: context.Context, at: gui.Vec2, look_id: ?minilab.look.Id) f32 {
+    const frame = if (ctx.develop.frame) |*f| f else return at.y;
+    const id = look_id orelse return at.y;
+    const in_use = id.eql(&frame.look);
+    c.ImGui_SetCursorScreenPos(at);
+    c.ImGui_BeginDisabled(in_use);
+    const label = if (in_use) gui.print("In use on {s}", .{frame.name}) else gui.print("Use on {s}", .{frame.name});
+    if (gui.buttonOf(.normal, label, gui.vec2(0, use_button_height))) ctx.develop.useLook(ctx.io, ctx.library, id);
+    c.ImGui_EndDisabled();
+    c.ImGui_SameLine();
+    return at.y + gui.px(use_button_height);
+}
+
+/// A look's preview in `min`..`max`, with its name under it, outlined when it's the frame's look.
+/// True when clicked, where `clickable`.
+fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Texture, name: []const u8, current: bool, clickable: bool) bool {
+    const caption_top = max.y + gui.px(6);
+    var clicked = false;
+    var hovered = false;
+    if (clickable) {
+        c.ImGui_SetCursorScreenPos(min);
+        clicked = c.ImGui_InvisibleButton("tile", gui.vec2(max.x - min.x, caption_top + line(13) - min.y), 0);
+        hovered = c.ImGui_IsItemHovered(0);
+    }
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(3), 0);
+    if (texture) |t| gui.imageCover(list, t.ref(), t.width, t.height, min, max, gui.px(3));
+    if (current or hovered) {
+        const outline = gui.px(if (current) 2 else 1);
+        c.ImDrawList_AddRectEx(list, gui.vec2(min.x - outline, min.y - outline), gui.vec2(max.x + outline, max.y + outline), theme.imU32(if (current) theme.accent else theme.border), gui.px(4), outline, 0);
+    }
+    textIn(list, gui.vec2(min.x, caption_top), line(13), if (current) theme.text else theme.text_secondary, gui.elideEnd(name, max.x - min.x));
+    return clicked;
 }
 
 fn drawRename(state: *State, ctx: context.Context) void {
@@ -1371,7 +1647,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
         .frontier => {
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
                 .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
-                .{ "Frontier colour LUT", "33³, on Neutral's sRGB output: the Frontier cube's colour at its standard saturation, with Neutral's lightness kept" },
+                .{ "Frontier color LUT", "33³, on Neutral's sRGB output: the Frontier cube's color at its standard saturation, with Neutral's lightness kept" },
             });
             return;
         },

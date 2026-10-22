@@ -174,6 +174,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         // Thumbnails are made one per frame, so that the window keeps answering meanwhile.
         library.work(gpa, io, window.gpu);
         if (library.wanted.items.len > 0 or notice.text() != null) window.keepBusy();
+        if (workspace == .looks and looks.rendering()) window.keepBusy();
 
         frames_drawn += 1;
         if (options.screenshot) |path| {
