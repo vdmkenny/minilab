@@ -187,6 +187,11 @@ pub const label_column = 96;
 pub const label_gap = 10;
 /// Width of the value column after a slider.
 pub const value_column = 52;
+/// The reset button after a slider's value: its size, and the room it takes with its gap.
+pub const reset_size = 14;
+pub const reset_space = reset_size + 6;
+/// The reset button's arrow: the radius of its circle, smaller than the turn buttons'.
+const reset_icon_radius = 4;
 
 /// Starts a row of a settings grid: `label` in the label column, then the cursor where the
 /// control goes.
@@ -350,7 +355,7 @@ pub fn textField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f
 /// thumb. `width` in the design's pixels, 0 to fill up to the value column. True when it moved.
 pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) bool {
     const room = c.ImGui_GetContentRegionAvail().x;
-    const w = if (width == 0) room - px(value_column + label_gap) else px(width);
+    const w = if (width == 0) room - px(value_column + label_gap + reset_space) else px(width);
     const height = c.ImGui_GetFrameHeight();
     const origin = c.ImGui_GetCursorScreenPos();
     const thumb = px(7);
@@ -392,17 +397,67 @@ pub fn valueText(shown: []const u8) void {
 }
 
 /// A labelled slider row with its value: the settings grid's commonest row. True when it moved.
-pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format: []const u8) bool {
+pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format: []const u8, options: SliderOptions) bool {
     c.ImGui_PushID(print("{s}", .{label}).ptr);
     defer c.ImGui_PopID();
     rowLabel(label);
-    const changed = slider("slider", v, min, max, 0);
-    valueText(formatSigned(format, v.*));
+    var changed = slider("slider", v, min, max, 0);
+    if (options.help) |help| if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
+    const shown = formatSigned(format, v.*);
+    valueText(shown);
+    c.ImGui_SameLineEx(0, px(reset_space - reset_size));
+    const at = c.ImGui_GetCursorScreenPos();
+    if (resetButton("reset", vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - px(reset_size)) / 2), shown, formatSigned(format, options.default))) {
+        v.* = options.default;
+        changed = true;
+    }
     return changed;
 }
 
+/// What a slider row needs besides its value.
+pub const SliderOptions = struct {
+    /// What the reset button puts the value back to.
+    default: f32,
+    /// Shown while the slider is hovered.
+    help: ?[:0]const u8 = null,
+};
+
+/// A small button at `at` that puts a value back to its default: off while the value, `shown`,
+/// reads as the default does, `default_shown`. True when clicked.
+pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown: []const u8) bool {
+    const at_default = std.mem.eql(u8, shown, default_shown);
+    const disabled = at_default or c.ImGui_GetStyle().*.Alpha < 1 or (c.ImGui_GetItemFlags() & c.ImGuiItemFlags_Disabled) != 0;
+    const size = px(reset_size);
+    c.ImGui_SetCursorScreenPos(at);
+    c.ImGui_BeginDisabled(at_default);
+    const clicked = c.ImGui_InvisibleButton(id, vec2(size, size), 0);
+    c.ImGui_EndDisabled();
+    const hovered = !disabled and c.ImGui_IsItemHovered(0);
+    if (hovered) c.ImGui_SetTooltip("Reset to %s", print("{s}", .{default_shown}).ptr);
+    const ink = if (disabled) theme.text_tertiary else if (hovered) theme.text else theme.text_secondary;
+    turnIcon(c.ImGui_GetWindowDrawList(), vec2(at.x + size / 2, at.y + size / 2), px(reset_icon_radius), false, ink);
+    return clicked and !at_default;
+}
+
+/// A turning arrow, three quarters of a circle of `radius`, centred at `centre`: clockwise for
+/// turn right, anticlockwise for turn left and for reset.
+pub fn turnIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, clockwise: bool, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    const thickness = radius / 4;
+    const top = -std.math.pi / 2.0;
+    const sweep = 1.5 * std.math.pi;
+    // Screen angles grow clockwise, as y grows downwards.
+    if (clockwise) c.ImDrawList_PathArcTo(list, centre, radius, top - sweep, top, 16) else c.ImDrawList_PathArcTo(list, centre, radius, top, top + sweep, 16);
+    c.ImDrawList_PathStroke(list, ink, thickness, 0);
+    const tip = vec2(centre.x, centre.y - radius);
+    const along: f32 = if (clockwise) 1 else -1;
+    const head = radius * 0.55;
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x - along * head, tip.y - head), ink, thickness);
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x - along * head, tip.y + head), ink, thickness);
+}
+
 /// `v` printed with `format`, with a true minus sign as in the design.
-fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
+pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
     const shown = print(format, .{@abs(v)});
     // −0.00 reads as a mistake: a value that prints as zero gets no sign.
     const zero = for (shown) |ch| {

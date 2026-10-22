@@ -654,9 +654,14 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     if (state.file == .jpeg) {
         rowLabel(list, x, y, "Quality");
         c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y + (row - c.ImGui_GetFrameHeight()) / 2));
-        _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap);
+        _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap - gui.reset_space);
         state.quality = @round(state.quality);
-        gui.valueText(gui.print("{d:.0}", .{state.quality}));
+        const shown = gui.print("{d:.0}", .{state.quality});
+        gui.valueText(shown);
+        c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
+        const at = c.ImGui_GetCursorScreenPos();
+        const default_quality = (State{}).quality;
+        if (gui.resetButton("reset quality", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0}", .{default_quality}))) state.quality = default_quality;
         y += row + gui.px(grid_gap);
     }
 

@@ -151,6 +151,12 @@ pub const Frame = struct {
         frame.rebalance(if (keep.white_balance == .picked) .auto_neutral else keep.white_balance, null);
     }
 
+    /// The automatic settings for the frame on its film base as it stands: what Develop's sliders
+    /// reset to.
+    pub fn automaticSettings(frame: *const Frame) develop.Settings {
+        return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre);
+    }
+
     /// Sets the balance by `mode`; `.picked` needs `picked`, the transmission to make neutral.
     pub fn rebalance(frame: *Frame, mode: develop.WhiteBalance, picked: ?[3]f32) void {
         frame.settings = develop.balanced(frame.settings, mode, frame.centre, picked, frame.stock_slopes);

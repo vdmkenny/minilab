@@ -1216,27 +1216,11 @@ fn turnButton(list: *c.ImDrawList, id: [:0]const u8, clockwise: bool) bool {
     const side = c.ImGui_GetFrameHeight();
     const corner = c.ImGui_GetCursorScreenPos();
     const clicked = gui.buttonOf(.normal, gui.print("##{s}", .{id}), gui.vec2(side / gui.scale, side / gui.scale));
-    drawTurnIcon(list, gui.vec2(corner.x + side / 2, corner.y + side / 2), clockwise);
+    gui.turnIcon(list, gui.vec2(corner.x + side / 2, corner.y + side / 2), gui.px(5.5), clockwise, theme.text_secondary);
     return clicked;
 }
 
 /// Three quarters of a circle with an arrowhead at the top, pointing the way of the turn.
-fn drawTurnIcon(list: *c.ImDrawList, centre: gui.Vec2, clockwise: bool) void {
-    const ink = theme.imU32(theme.text_secondary);
-    const radius = gui.px(5.5);
-    const thickness = gui.px(1.4);
-    const top = -std.math.pi / 2.0;
-    const sweep = 1.5 * std.math.pi;
-    // Screen angles grow clockwise, as y grows downwards.
-    if (clockwise) c.ImDrawList_PathArcTo(list, centre, radius, top - sweep, top, 16) else c.ImDrawList_PathArcTo(list, centre, radius, top, top + sweep, 16);
-    c.ImDrawList_PathStroke(list, ink, thickness, 0);
-    const tip = gui.vec2(centre.x, centre.y - radius);
-    const along: f32 = if (clockwise) 1 else -1;
-    const head = gui.px(3);
-    c.ImDrawList_AddLineEx(list, tip, gui.vec2(tip.x - along * head, tip.y - head), ink, thickness);
-    c.ImDrawList_AddLineEx(list, tip, gui.vec2(tip.x - along * head, tip.y + head), ink, thickness);
-}
-
 /// A label over the picture, on a dark ground, from `at` to its `side`.
 fn tag(list: *c.ImDrawList, at: gui.Vec2, label: [:0]const u8, side: enum { left, right }) void {
     const size = c.ImGui_CalcTextSize(label);
@@ -1346,17 +1330,19 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(6)));
         defer c.ImGui_PopStyleVar();
-        if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}")) state.changed();
-        if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}")) state.changed();
+        // Each slider resets to what the frame's automatic settings have, on its film base.
+        const auto = frame.automaticSettings();
+        if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}", .{ .default = auto.density_range })) state.changed();
+        if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}", .{ .default = auto.offset })) state.changed();
         drawMatrix(state);
         c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
         gui.heading("INVERSION");
         c.ImGui_BeginDisabled(fitted);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Contrast", &s.contrast, 1, 8, "{d:.2}")) state.changed();
-        if (gui.sliderRow("Black", &s.black, -0.5, 0.5, "{d:.3}")) state.changed();
-        if (gui.sliderRow("Highlight roll-off", &s.roll_off, 0.01, 0.99, "{d:.2}")) state.changed();
-        if (gui.sliderRow("Exposure", &s.exposure, 0.5, 2, "{d:.2}")) state.changed();
+        if (gui.sliderRow("Contrast", &s.contrast, 1, 8, "{d:.2}", .{ .default = auto.contrast })) state.changed();
+        if (gui.sliderRow("Black", &s.black, -0.5, 0.5, "{d:.3}", .{ .default = auto.black })) state.changed();
+        if (gui.sliderRow("Highlight roll-off", &s.roll_off, 0.01, 0.99, "{d:.2}", .{ .default = auto.roll_off })) state.changed();
+        if (gui.sliderRow("Exposure", &s.exposure, 0.5, 2, "{d:.2}", .{ .default = auto.exposure })) state.changed();
     }
     gui.endSection(true);
 
@@ -1368,8 +1354,10 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         {
             c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(8)));
             defer c.ImGui_PopStyleVar();
-            if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}")) state.changed();
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("After the look, for the whole frame: 0 is gray, 1 leaves the color as it is");
+            if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}", .{
+                .default = (develop.Settings{}).saturation,
+                .help = "After the look, for the whole frame: 0 is gray, 1 leaves the color as it is",
+            })) state.changed();
         }
         const gap = gui.px(4);
         const third = (c.ImGui_GetContentRegionAvail().x - 2 * gap) / 3;
@@ -1382,8 +1370,8 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(6)));
         defer c.ImGui_PopStyleVar();
         const which = @backingInt(state.range);
-        if (gui.sliderRow("Temperature", &s.temperature[which], -100, 100, "{d:.0}")) state.changed();
-        if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}")) state.changed();
+        if (gui.sliderRow("Temperature", &s.temperature[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
+        if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
     }
     gui.endSection(false);
 }

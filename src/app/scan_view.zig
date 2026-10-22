@@ -173,6 +173,8 @@ const Box = struct {
     height: f32,
     /// Degrees, clockwise as shown.
     rotation: f32 = 0,
+    /// The rotation detection found: what Rotation resets to.
+    detected_rotation: f32 = 0,
     shape: Shape = .roll,
     /// Length over height, for `Shape.custom`.
     ratio: f32 = 1.5,
@@ -1063,18 +1065,18 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
 
     // Inset, rotation, and the custom ratio.
     c.ImGui_PushID("sliders");
-    if (sliderRowAt(x, &y, width, "Inset", &box.inset, 0, max_inset, "{d:.1}%")) {
+    if (sliderRowAt(x, &y, width, "Inset", &box.inset, 0, max_inset, "{d:.1}%", 0)) {
         box.hand = true;
         state.boxes_dirty = true;
     }
     y += gui.px(8);
-    if (sliderRowAt(x, &y, width, "Rotation", &box.rotation, -max_rotation, max_rotation, "{d:.1}°")) {
+    if (sliderRowAt(x, &y, width, "Rotation", &box.rotation, -max_rotation, max_rotation, "{d:.1}°", box.detected_rotation)) {
         box.hand = true;
         state.boxes_dirty = true;
     }
     if (box.shape == .custom) {
         y += gui.px(8);
-        if (sliderRowAt(x, &y, width, "Ratio", &box.ratio, 0.5, 3, "{d:.2}")) {
+        if (sliderRowAt(x, &y, width, "Ratio", &box.ratio, 0.5, 3, "{d:.2}", format.ratio())) {
             reshape(box, preview, format);
             box.hand = true;
             state.boxes_dirty = true;
@@ -1420,6 +1422,7 @@ fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format) Box {
         .length = if (vertical) h else w,
         .height = if (vertical) w else h,
         .rotation = frame.rotation_degrees,
+        .detected_rotation = frame.rotation_degrees,
     };
     if (@abs(box.length - box.height * format.ratio()) > ratio_tolerance * box.length) box.shape = .free;
     if (frame.confidence == .check) {
@@ -1794,9 +1797,9 @@ fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f
     return clicked;
 }
 
-/// A slider row of the frame tools: a 110-pixel label, the slider, and the value in a 56-pixel
-/// column. Moves `y` past it. True when it moved.
-fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min: f32, max: f32, comptime format: []const u8) bool {
+/// A slider row of the frame tools: a 110-pixel label, the slider, the value in a 56-pixel
+/// column, and a button that resets it to `default`. Moves `y` past it. True when it moved.
+fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min: f32, max: f32, comptime format: []const u8, default: f32) bool {
     // A range input is 20 pixels high in the design; the slider fills the row.
     const height = gui.px(slider_row_height);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (height - c.ImGui_GetFontSize()) / 2));
@@ -1804,17 +1807,27 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     const list = c.ImGui_GetWindowDrawList();
     _ = lineAt(list, x, y.* + (height - lineHeight()) / 2, theme.text_secondary, label);
     const slider_x = x + gui.px(slider_label_column + 10);
-    const slider_width = width - gui.px(slider_label_column + 10 + 10 + slider_value_column);
+    const slider_width = width - gui.px(slider_label_column + 10 + 10 + slider_value_column + gui.reset_space);
     c.ImGui_SetCursorScreenPos(gui.vec2(slider_x, y.*));
-    const changed = gui.slider(gui.print("{s}", .{label}), value, min, max, slider_width / gui.scale);
+    var changed = gui.slider(gui.print("{s}", .{label}), value, min, max, slider_width / gui.scale);
     fonts.push(.mono);
-    // No minus sign on what rounds to nothing.
-    const shown = if (value.* < -0.05) gui.print("−" ++ format, .{-value.*}) else gui.print(format, .{@abs(value.*)});
+    const shown = signed(format, value.*);
     const shown_width = c.ImGui_CalcTextSize(shown).x;
-    c.ImDrawList_AddText(list, gui.vec2(x + width - shown_width, y.* + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text), shown);
+    const value_right = x + width - gui.px(gui.reset_space);
+    c.ImDrawList_AddText(list, gui.vec2(value_right - shown_width, y.* + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text), shown);
     fonts.pop();
+    const reset_at = gui.vec2(x + width - gui.px(gui.reset_size), y.* + (height - gui.px(gui.reset_size)) / 2);
+    if (gui.resetButton(gui.print("reset {s}", .{label}), reset_at, shown, signed(format, default))) {
+        value.* = default;
+        changed = true;
+    }
     y.* += height;
     return changed;
+}
+
+/// `v` with `format`, with no minus sign on what rounds to nothing.
+fn signed(comptime format: []const u8, v: f32) [:0]const u8 {
+    return if (v < -0.05) gui.print("−" ++ format, .{-v}) else gui.print(format, .{@abs(v)});
 }
 
 /// A check box as the design draws it here: the label in the text colour, 8 pixels after the box.
