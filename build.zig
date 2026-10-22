@@ -73,6 +73,8 @@ pub fn build(b: *std.Build) void {
     if (macos_sdk) |sdk| addMacosSdk(b, app, sdk);
     addFonts(b, app);
 
+    // The Windows program carries the icon the window shows.
+    if (target.result.os.tag == .windows) app.addWin32ResourceFile(.{ .file = windowsIcon(b) });
     const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
 
@@ -147,6 +149,20 @@ fn interfaceIncludes(b: *std.Build) [4]std.Build.LazyPath {
     const imgui = b.dependency("imgui", .{});
     const bindings = b.dependency("dear_bindings", .{});
     return .{ imgui.path("."), imgui.path("backends"), bindings.path("."), bindings.path("backends") };
+}
+
+/// minilab's icon as a Windows resource: `src/make_icon.zig` draws it into an .ico, and a resource
+/// script names it.
+fn windowsIcon(b: *std.Build) std.Build.LazyPath {
+    const tool = b.addExecutable(.{
+        .name = "make_icon",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/make_icon.zig"), .target = b.graph.host, .optimize = .ReleaseFast }),
+    });
+    const run = b.addRunArtifact(tool);
+    const ico = run.addOutputFileArg("minilab.ico");
+    const files = b.addWriteFiles();
+    _ = files.addCopyFile(ico, "minilab.ico");
+    return files.add("minilab.rc", "1 ICON \"minilab.ico\"\n");
 }
 
 /// The looks from other people's collections (`src/presets/looks/bundled.zig`): each collection

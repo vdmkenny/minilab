@@ -722,4 +722,5 @@ test {
 
 test {
     _ = version;
+    _ = @import("platform/icon.zig");
 }

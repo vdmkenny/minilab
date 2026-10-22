@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const c = @import("c");
+const icon = @import("icon.zig");
 
 pub const Error = error{Sdl};
 
@@ -26,6 +27,10 @@ const settle_frames = 3;
 /// The smallest the window can be made, in points: room for the panels and a usable viewer.
 const min_width = 960;
 const min_height = 600;
+/// The window icon's side, in pixels: what macOS's Dock and the taskbars scale from.
+const icon_side = 256;
+/// The icon drawn for the window, kept out of the stack.
+var icon_pixels: [icon_side * icon_side][4]u8 = undefined;
 
 pub const Window = struct {
     handle: *c.SDL_Window,
@@ -49,6 +54,7 @@ pub const Window = struct {
         const flags = c.SDL_WINDOW_RESIZABLE | c.SDL_WINDOW_HIDDEN | c.SDL_WINDOW_HIGH_PIXEL_DENSITY;
         const handle = c.SDL_CreateWindow(title, @intFromFloat(@as(f32, @floatFromInt(width)) * scale), @intFromFloat(@as(f32, @floatFromInt(height)) * scale), flags) orelse return fail("SDL_CreateWindow");
         errdefer c.SDL_DestroyWindow(handle);
+        setIcon(handle);
         _ = c.SDL_SetWindowPosition(handle, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
         _ = c.SDL_SetWindowMinimumSize(handle, min_width, min_height);
         // The shader formats ImGui's backend carries: Vulkan's, and Metal's on Apple's systems.
@@ -223,6 +229,20 @@ pub const Window = struct {
 
 /// Files dropped on the window in one frame, with their paths copied from SDL's events, which
 /// SDL frees with the next one. A drop of several files sends one event per file.
+/// Gives the window minilab's icon: on macOS the Dock's too.
+fn setIcon(handle: *c.SDL_Window) void {
+    icon.render(icon_side, &icon_pixels);
+    const surface = c.SDL_CreateSurface(icon_side, icon_side, c.SDL_PIXELFORMAT_RGBA32) orelse return;
+    defer c.SDL_DestroySurface(surface);
+    const rows: [*]u8 = @ptrCast(surface.*.pixels orelse return);
+    const pitch: usize = @intCast(surface.*.pitch);
+    for (0..icon_side) |y| {
+        const row: [*][4]u8 = @ptrCast(rows + y * pitch);
+        @memcpy(row[0..icon_side], icon_pixels[y * icon_side ..][0..icon_side]);
+    }
+    if (!c.SDL_SetWindowIcon(handle, surface)) std.log.warn("the window icon wasn't set: {s}", .{c.SDL_GetError()});
+}
+
 pub const Dropped = struct {
     paths: [max_files][]const u8 = undefined,
     count: usize = 0,

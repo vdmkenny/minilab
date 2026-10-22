@@ -1,5 +1,7 @@
 # minilab
 
+<img src="docs/icon.svg" alt="minilab's icon: an amber film strip on a dark tile" width="96">
+
 minilab scans and develops film: colour and B&W negatives and slides, from a scanner, a camera or
 files, a roll at a time. It runs on macOS, Linux and Windows. It is written in Zig 0.17, with a
 Dear ImGui interface. `docs/design.md` describes how it works and why.

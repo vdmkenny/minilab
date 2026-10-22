@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- minilab's icon, as src/platform/icon.zig draws it: the logo's film strip on a dark tile. -->
+  <rect x="23.04" y="23.04" width="209.92" height="209.92" rx="47.232" fill="#1D1D1F"/>
+  <g transform="translate(44.032 44.032) scale(8.3968)" fill="none" stroke="#E8A33D" stroke-width="1.5">
+    <rect x="2" y="4" width="16" height="12" rx="1.5"/>
+    <path d="M2 7h16M2 13h16M5 4v3M9 4v3M13 4v3M5 13v3M9 13v3M13 13v3"/>
+  </g>
+</svg>
