@@ -1,29 +1,37 @@
 # minilab: design
 
-Working name. A film scanning and inversion app:
+This is how minilab works and why it works that way. minilab is an app for scanning and developing
+film. It does four things:
 
-- scan a roll on any scanner the system can drive (SANE on macOS and Linux, TWAIN on Windows),
-  the V200 included, or import camera RAW files and existing scans;
-- find the frames;
-- invert and colour-correct them in density, with an inversion model based on darktable's;
-- export finished files.
+- it scans a roll on any scanner the system can drive (SANE on macOS and Linux, TWAIN on Windows),
+  or imports camera RAW files and scans made with other software;
+- it finds the frames;
+- it turns negatives into positives and corrects their colour, working in density (section 7
+  explains what that means), with an inversion model based on darktable's;
+- it exports finished files.
 
-35mm by default, other formats supported. Written in Zig 0.17 with a Dear ImGui interface, built
-the way openreliant-editor is. Status: design only, nothing written yet. Section 15 lists the
-phases and what's still open.
+35mm is the default, and most other formats work too. It's written in Zig 0.17 with a Dear ImGui
+interface, and it's set up the same way as openreliant-editor.
+
+Most of what's described here is built. Section 15 lists what isn't yet.
 
 ## 1. What we take from the reference apps
 
-[f8 Develop](https://develop.atf8.app/) (macOS, closed source), from its product page:
+Two existing apps shaped the design. Neither is open source, so all we know about them is what
+they publish.
 
-- it measures the film base from the rebate visible in the scan, per roll;
-- rolls are organised as sessions with film stock, date and location;
-- it develops a whole roll in a batch, non-destructively, and can develop it again later;
+[f8 Develop](https://develop.atf8.app/) (macOS). From its product page:
+
+- it measures the film base (the clear film with nothing exposed on it, orange on a colour
+  negative) from the rebate, the strip of film around the pictures, once per roll;
+- it organises rolls as sessions with a film stock, date and location;
+- it develops a whole roll in one go, without changing the scans, and you can develop it again
+  later;
 - it writes camera, lens, film stock and copyright metadata into the exported files;
 - it exports HEIC, TIFF and JPEG, including HDR HEIC with Apple's adaptive gain map.
 
-[Negative Lab Pro](https://www.negativelabpro.com/guide/basics/) (Lightroom plugin, closed source),
-from its guide. Its presets come in independent layers:
+[Negative Lab Pro](https://www.negativelabpro.com/guide/basics/) (a Lightroom plugin). From its
+guide, its presets come in independent layers:
 
 - colour model: Basic, Frontier, Noritsu, B+W, None;
 - pre-saturation;
@@ -32,271 +40,297 @@ from its guide. Its presets come in independent layers:
 - white balance: auto-neutral, auto-warm, auto-cool, auto-average, or fixed per film family
   (Standard, Kodak, Fuji, Cine-T, Cine-D);
 - LUTs: Natural, Frontier, Crystal (Crystal Archive paper), Pakon;
-- a "border buffer" that leaves the frame edges out of the analysis;
+- a "border buffer" that leaves the edges of the frame out of the analysis;
 - separate colour balance for highlights, midtones and shadows.
 
-We copy the ideas: base measured from the rebate, roll-level sessions, layered presets, batch
-sync and per-region colour balance. No preset values come from either product: we don't have
-them, and they aren't published. Every built-in preset in minilab says where its numbers come from
-(section 9).
+We borrow the ideas: measuring the base from the film itself, a roll as the unit of work, layered
+presets, syncing settings across a roll and colour balance per tonal range. We don't take any
+preset values from either app. We don't have them and they aren't published. Every built-in preset
+in minilab says where its numbers come from (section 9).
 
 ## 2. Scope
 
-In:
+What's in:
 
-- colour negative, B&W negative, colour positive (slide) and B&W positive;
+- colour negative, B&W negative, colour positive (slide) and B&W positive film;
 - scanners:
-  - through SANE on macOS and Linux, so any scanner SANE supports. The V200 goes through our
-    epkowa build and plugin, unchanged.
+  - through SANE on macOS and Linux, so any scanner SANE supports. The Epson V200 goes through
+    our build of Epson's epkowa backend and its plugin, unchanged.
   - through TWAIN on Windows, with the scanner maker's own driver.
-- camera scans: RAW files from a camera over a light source, through LibRaw;
-- importing linear TIFFs from other scanning software (VueScan, SilverFast raw output);
-- all common film sizes and formats, one format per roll;
-- automatic frame detection that keeps the roll format's aspect ratio, plus custom boxes;
-- macOS (arm64, x86_64), Linux (x86_64, arm64) and Windows (x86_64).
+- camera scans: RAW files from a camera pointed at the film over a light source, read with
+  LibRaw;
+- linear TIFFs from other scanning software (VueScan, SilverFast raw output);
+- all common film sizes and formats, with one format per roll;
+- automatic frame detection that keeps the format's aspect ratio, plus boxes drawn by hand;
+- macOS, Linux and Windows, each on x86-64 and Arm.
 
-Out, at least for now:
+What's out, at least for now:
 
-- dust and scratch removal with an infrared channel (the V200 has none);
+- dust and scratch removal with an infrared channel (the V200 doesn't have one);
 - grain, halation and other film simulation effects;
 - stitching several camera shots of one medium format frame.
 
 ## 3. Architecture
 
 ```
-          app: GUI (Dear ImGui via Dear Bindings, SDL3 + SDL_GPU)  and  CLI subcommands
-                                          |
-   ------------------------------- core module (Zig) ------------------------------
-   scan/      scanners: SANE, TWAIN, camera tethering later; one tagged union over them
-   input/     TIFF, camera RAW (LibRaw)
-   frames/    strip and frame detection, formats, crops
-   develop/   the colour pipeline: base, density, inversion, tone, output
-   presets/   preset files, layering, resolving to parameters
-   roll/      on-disk roll layout, sidecars, EXIF/XMP
-   output/    TIFF, JPEG, ICC                (libtiff, libjpeg-turbo, lcms2)
-   --------------------------------------------------------------------------------
+     app/, ui/, platform/   the GUI: Dear ImGui via Dear Bindings, on SDL3 and SDL_GPU
+     main.zig               the command line
+                                         |
+   ---------------------- the core: works without a window ----------------------
+   core/      the colour pipeline, looks, rolls on disk, calibration, export
+   frames/    film formats and frame detection
+   scan/      scanners: SANE and TWAIN behind one interface
+   io/        file formats: PNM and PNG in Zig; TIFF, JPEG, camera RAW and ICC
+              profiles through the C libraries in deps/
+   looks/     fitting a look to pairs of scans
+   presets/   film stocks, the Frontier LUT and the list of bundled film looks
+   -------------------------------------------------------------------------------
 ```
 
-- **Zig 0.17, idiomatic, with OpenReliant's conventions.** Name every number, give an id space an
-  `enum` and switch over it exhaustively, use tagged unions for variants and optionals for
-  "none", check invariants with `comptime`, and put `test` blocks next to the code.
-  British spelling in docs and comments, American on screen.
-- **The core module** holds everything that can be tested without a window: the pipeline, frame
-  detection, scanner sessions and file handling. `zig build test` runs its tests with no scanner
-  and no display.
-- **The app** is one executable. With no arguments it opens the GUI. Subcommands
-  (`minilab develop`, `minilab detect`, `minilab scan`) run the core from the command line, for
-  batch work and for the tests.
-- **Dear ImGui as in openreliant-editor.** It is C++, so Dear Bindings' C API wraps it, and the
-  translate-c package turns one header (`src/platform/c.h`: SDL3, `dcimgui.h` and its SDL3 and
-  SDL_GPU backends, and our shims) into the `c` module. ImPlot and the few internal ImGui calls go
-  through small C shims. zgui, the Zig-native wrapper, doesn't build with Zig 0.17: tried here, it
-  fails on `std.meta.fields`, which 0.17 removed.
-- **Threads.** The UI runs on the main thread. One scan thread owns the scanner, since SANE and
-  TWAIN calls block. A worker pool runs the pipeline. The UI never waits on either.
-- **Pixels.** Raw scans stay 16-bit on disk. In memory the pipeline uses 32-bit float RGB. The
-  viewer works on a proxy at screen size, so a slider change re-renders a few megapixels, not the
-  full scan. A full-resolution render happens only on export.
-- **CPU, not shaders.** The pipeline runs on the CPU, multi-threaded, with `@Vector` where it
-  helps. A 35mm frame at 4800 dpi is 6803 × 4535 px, 31 MP. The per-pixel work is one log, a 3×3
-  matrix, one exp and a curve lookup per channel. So a full render should take well under a
-  second on 8 cores, and a 3 MP proxy a few milliseconds (an estimate; phase 1 measures it).
-  With one implementation the preview and the export are identical and testable. The GPU only
-  draws the UI and shows the finished proxy as a texture.
-  Measured: Develop renders its 754 × 1131 preview with Frontier emulation in about 40 ms on a
-  12-core M-series Mac, split over the cores by rows.
+- **Zig 0.17, written idiomatically, with OpenReliant's conventions.** Name every number, give
+  every set of ids an `enum` and switch over it exhaustively, use tagged unions for variants and
+  optionals for "none", check invariants at `comptime`, and put `test` blocks next to the code.
+  Docs and comments use British spelling; text on screen uses American spelling.
+- **The core** is everything you can test without a window: the pipeline, frame detection,
+  scanner sessions and file handling. `zig build test` runs its tests without a scanner or a
+  display.
+- **The app** is one program. Run it with no arguments and you get the GUI. Commands such as
+  `minilab develop`, `minilab detect` and `minilab scan` run the core from the command line, for
+  batch work and for testing.
+- **Dear ImGui, as in openreliant-editor.** Dear ImGui is C++, so we use it through Dear
+  Bindings' C API. The translate-c package turns one header, `src/platform/c.h` (SDL3, `dcimgui.h`
+  and its SDL3 and SDL_GPU backends), into the `c` module. We tried zgui, the Zig-native wrapper,
+  but it doesn't build with Zig 0.17: it uses `std.meta.fields`, which 0.17 removed.
+- **Threads.** The UI runs on the main thread. One scan thread owns the scanner, because SANE and
+  TWAIN calls block and neither library can be called from two threads at once. A render splits
+  the picture into bands of rows and develops them on all the cores at once (up to 16). Exports
+  and look fitting run in the background.
+- **Pixels.** Scans are 16 bits per channel, on disk and in memory. Developing works in 32-bit
+  floats. Develop shows a copy reduced to about screen size, so moving a slider re-renders a few
+  megapixels instead of the whole scan. Only export renders at full resolution.
+- **CPU, not shaders.** The pipeline runs on the CPU, split over the cores. A 35mm frame at
+  4800 dpi is 6803 × 4535 px, about 31 megapixels. Per pixel, the work is one log, a 3×3 matrix,
+  one exp and a curve per channel, so a full render should take well under a second on 8 cores.
+  We've measured the preview: Develop renders its 754 × 1131 preview with Frontier emulation in
+  about 40 ms on a 12-core M-series Mac. Because there's only one implementation, the preview and
+  the export always match, and both are testable. The GPU only draws the UI and shows the finished
+  preview as a texture.
 
 ## 4. Workflow
 
-The GUI has five workspaces, mocked up in the "minilab GUI" design canvas:
+The GUI has five workspaces. They're mocked up in the "minilab GUI" design canvas:
 
-- **Rolls:** a contact sheet per roll, with its filmstrip, date and how many frames are
-  developed. Undeveloped frames show the raw scan.
-- **Scan:** scanner settings, the preview with detected frames, the selected frame's crop, and
-  the scan queue.
-- **Develop:** frames, viewer with a negative/positive split, and the develop settings.
-- **Export:** frame selection, file settings and metadata.
-- **Looks:** the built-in looks, Frontier emulation, and fitting a look from reference pairs.
+- **Rolls:** a contact sheet per roll, with its film strip, date and how many frames are
+  developed. Frames you haven't developed yet show the raw scan.
+- **Scan:** the scanner settings, the preview with the frames it found, the selected frame's crop,
+  and the scan queue.
+- **Develop:** the roll's frames, a viewer that can split the negative and the positive, and the
+  develop settings.
+- **Export:** which frames, the file settings and the metadata.
+- **Looks:** the built-in and bundled looks, Frontier emulation, and fitting a look from reference
+  pairs.
 
-The steps:
+The steps for a roll on a scanner:
 
-1. **New roll.** Film type, stock (optional), format, camera, lens, date, notes. Stored in the
-   roll directory (section 11).
+1. **New roll.** Film type, stock (optional), format, camera, lens, date and notes. These are
+   saved in the roll's folder (section 11).
 2. **Preview.** Scan the scanner's whole film area at low resolution.
-   - On the V200 this is the 33.02 × 244.348 mm transparency window (the backend's `-x`/`-y`
-     range). The Epson stack's own preview of a strip was 384 × 2885 px at 300 dpi (recording
-     `10-preview-negative`).
-   - The first scan after power-on is about 1% brighter and shifted a few pixels (phase3.md), so
-     the preview also serves as the warm-up before the scans that matter.
-3. **Detect frames** (section 6), and correct them by hand where needed.
-4. **Scan.** One scan per frame at the chosen resolution, linear, 16-bit, with a margin around the
-   detected box. The margin covers two things:
-   - the strip moves 11 to 14 lines between sessions (phase3.md);
-   - the margin includes the gap between frames, which is where the film base is measured.
-5. **Refine.** Run edge detection again on each full-resolution scan, refine the crop, and measure
+   - On the V200 that's the 33.02 × 244.348 mm transparency window (the backend's `-x` and `-y`
+     range). For comparison, Epson's own software previews a strip at 384 × 2885 px, 300 dpi.
+   - The first scan after the scanner is switched on comes out about 1% brighter and a few pixels
+     off (we measured this while working on the V200 driver). So the preview also warms the
+     scanner up before the scans that matter.
+3. **Detect frames** (section 6), and fix them by hand where needed.
+4. **Scan.** One scan per frame at the resolution you chose: linear, 16-bit, with a margin around
+   the detected box. The margin is there for two reasons:
+   - the strip moves 11 to 14 lines between sessions (again from the driver work);
+   - the margin takes in the gap between frames, which is where the film base gets measured.
+5. **Refine.** Detect the frame again on each full-resolution scan, tighten the crop, and measure
    the film base in that scan's own margin.
-6. **Develop.** Pick a preset; auto values are computed per frame; adjust; sync settings across
-   the roll.
-7. **Export.** TIFF 16-bit or JPEG. HEIC with a gain map comes later (phase 7).
+6. **Develop.** minilab works out automatic settings for each frame. Adjust them, pick a look,
+   and sync settings across the roll.
+7. **Export.** TIFF (16 or 8 bit) or JPEG. HEIC with a gain map will come later; Export already
+   shows it, greyed out.
 
-Camera scans and imported files skip steps 2 and 4: import RAWs, linear TIFFs or PNM scans into a
-roll (`minilab import`, or drop them on the roll in the app), detect or draw the frames, and
-continue from step 5. A file of one frame becomes one frame. A strip, from VueScan or a flatbed,
-becomes one frame per whole frame on it; they share the one stored scan, each with its own crop and
-the film base from the gaps beside it.
+Camera scans and imported files skip steps 2 and 4. You import RAWs, linear TIFFs or PNM scans
+into a roll (`minilab import`, or drop them on the roll in the app), detect or draw the frames, and
+carry on from step 5. A file with one frame on it becomes one frame. A strip, say from VueScan or a
+flatbed, becomes one frame for every whole frame on it. Those frames share the one stored scan,
+and each has its own crop and its own film base, from the gaps beside it.
 
 ## 5. Inputs
 
 ### Scanners
 
-Scanners are one tagged union, `Scanner = union(enum) { sane, twain }`. Each OS builds only the
-variants it has. The rest of the app sees the same operations on every OS: list devices, read
-capabilities, preview, scan an area, cancel.
+The scanner code (`src/scan/`) puts SANE and TWAIN behind one interface: a `Library` and a
+`Scanner`, each a tagged union over the two. The rest of the app sees the same operations on every
+OS: list the devices, read what a scanner can do, scan an area and cancel. A preview is just a
+low-resolution scan of the whole area.
 
 **SANE (macOS, Linux).**
 
-- The app loads the system's libsane at run time (`std.DynLib`), so it starts without SANE
-  installed and uses the system's backend configuration (`dll.d`), which is where the V200's
-  epkowa backend is enabled. The types come from `sane.h`, which is public domain.
-- Options by name. SANE's standard names (`source`, `mode`, `depth`, `resolution`, `tl-x`, `tl-y`,
-  `br-x`, `br-y`, `preview`) work everywhere. Backend-specific ones, such as epkowa's `film-type`
-  and `gamma-correction`, come from a scanner profile.
-- Cancel is `sane_cancel`. On the V200 the plugin then reads the rest of the scan so the scanner
-  stays usable. That takes as long as the rest of the scan would have (install.md), so the UI
+- minilab loads the system's libsane when it runs (`std.DynLib`), not when it's built. So it
+  starts fine without SANE installed, and it uses the system's own backend configuration
+  (`dll.d`), which is where the V200's epkowa backend is switched on. The types come from
+  `sane.h`, which is public domain.
+- Options are set by name. SANE's standard names (`source`, `mode`, `depth`, `resolution`,
+  `tl-x`, `tl-y`, `br-x`, `br-y`, `preview`) work with every backend. Backend-specific ones, like
+  epkowa's `film-type` and `gamma-correction`, come from a scanner profile (below).
+- Cancel calls `sane_cancel`. On the V200 the plugin then reads the rest of the scan anyway, so
+  that the scanner stays usable. That takes as long as the rest of the scan would have, so the UI
   shows "finishing" until it's done.
-- sane-backends ships a `test` backend that generates frames (Homebrew has `libsane-test.so`).
-  The tests use it, so the SANE layer is tested without a scanner.
+- sane-backends ships a `test` backend that makes up frames (Homebrew has `libsane-test.so`).
+  The tests use it where libsane is installed, so the SANE code gets tested without a scanner.
 
 **TWAIN (Windows).**
 
-- The app loads the TWAIN data source manager (`TWAINDSM.dll`) at run time, as TWAIN applications
-  do, and drives the maker's data source with its UI hidden where the source allows that
-  (`CAP_UICONTROLLABLE`).
-- The film capabilities exist in the standard: `ICAP_LIGHTPATH` (`TWLP_TRANSMISSIVE`),
+- minilab loads the TWAIN data source manager (`TWAINDSM.dll`) when it runs, like other TWAIN
+  apps do, and drives the maker's data source (its driver) with the driver's own window hidden,
+  where the driver allows that (`CAP_UICONTROLLABLE`).
+- The standard has capabilities for film: `ICAP_LIGHTPATH` (`TWLP_TRANSMISSIVE`),
   `ICAP_FILMTYPE` (positive, negative), `ICAP_BITDEPTH`, `ICAP_GAMMA` and `ICAP_FRAMES`. How much
-  of this each maker's source supports is something we can only find out per scanner.
+  of that each maker's driver supports, we can only find out scanner by scanner.
 - On Windows the V200 runs on Epson's own TWAIN driver (Epson Scan), not on our plugin. Whether
-  Epson's source gives linear 48-bit data without its own window is unknown until it's tried on a
-  Windows machine.
-- `twain.h` carries the TWAIN Working Group's copyright with no licence terms in it, so we don't
-  vendor it. The Zig declarations for the structures and constants we use are written from the
-  TWAIN specification.
+  Epson's driver gives linear 48-bit data without showing its own window, we won't know until
+  someone tries it on Windows.
+- `twain.h` carries the TWAIN Working Group's copyright but no licence terms, so we don't include
+  it. Our Zig declarations of the structures and constants we use are written from the TWAIN
+  specification.
+- The TWAIN code is untested so far. It was written from the specification without a Windows
+  machine or a TWAIN driver to try it on. It compiles for Windows, and its structure sizes are
+  checked against the specification, but none of it has run yet.
 
-**Scanner profiles.** One small text file per model: which option values give linear raw data
-per film type, the film area, holder layouts, and preview and scan resolutions. The V200 profile,
-from our own measurements:
+**Scanner profiles.** A profile is the set of option values that makes one scanner model give
+linear, unprocessed data. Profiles live in a table in `src/scan/root.zig`, matched by SANE backend
+and model name. We have one so far, for the V200, from our own measurements:
 
-- source `Transparency Unit`, mode `Color`, depth 16, `gamma-correction` `User defined (Gamma=1.0)`;
-- the colour matrix as the identity (`cct-1` … `cct-9`). The backend's default matrix mixes the
-  channels for a more saturated picture;
-- resolutions 300, 2400 and 4800 dpi (the backend's option list);
-- film type `Positive Film` for every film. `Negative Film` takes the orange mask out in the
-  scanner, so the film base can't be measured beside the frames, and it clips blue on B&W film
-  (phase1.md). minilab inverts the raw scan itself.
-- The film type is set before the rest, as scanimage does, in case the backend resets its colour
-  settings for a film type.
+- mode `Color`, `gamma-correction` `User defined (Gamma=1.0)`, scanning from the transparency
+  unit at 16 bits per channel;
+- the colour matrix set to the identity (`cct-1` to `cct-9`). The backend's default matrix mixes
+  the channels to make the picture more saturated, which we don't want;
+- film type `Positive Film` for every film, negatives included. `Negative Film` takes the orange
+  mask out inside the scanner, so the film base can't be measured beside the frames any more, and
+  it clips blue on B&W film. minilab inverts the raw scan itself;
+- the film type is set before everything else, the way scanimage does it, in case the backend
+  resets its colour settings when the film type changes.
 
-Checked on the V200 with a colour strip: `minilab scan` with this profile gives the same values as
-`scanimage` with the same options, within 2% in every channel.
+The V200's backend offers 300, 2400 and 4800 dpi. We checked the profile on the V200 with a colour
+strip: `minilab scan` gives the same values as `scanimage` with the same options, within 2% in
+every channel.
 
-**Scanners without a profile.** The app shows what the scanner offers and picks the obvious
-values: colour, the highest depth, and the transparency source if there is one. If there's no way
-to get linear output, a calibration scan of a transmission step wedge (such as a Stouffer T2115)
-gives the scanner's curve, which the pipeline then undoes. Without either, the app says the data
-isn't known to be linear.
+**Scanners without a profile.** minilab scans in colour at the deepest bit depth the scanner has,
+and says plainly that the data isn't known to be linear. A scanner that can't give linear data
+could still be used if we undid its curve: a scan of a transmission step wedge (a strip of known
+densities, such as a Stouffer T2115) would measure that curve. That isn't built yet.
 
 ### Camera scans
 
-LibRaw decodes the RAW file with no white balance, no colour matrix and no gamma: linear 16-bit
-data in the camera's own channels, which is what the density stage wants (section 7).
+LibRaw decodes the RAW file with no white balance, no colour matrix and no gamma. That gives
+linear 16-bit data in the camera's own channels, which is what the density stage wants
+(section 7).
 
-- LibRaw leaves the numbers unscaled; they're scaled so that the sensor's white level is full
+- LibRaw leaves the numbers unscaled, so we scale them to put the sensor's white level at full
   scale.
-- A flat-field shot (the light source with no film, same exposure) corrects uneven light and lens
-  vignetting. It's taken once per session and stored with the roll: `minilab import --flat`, or
-  the New roll form for a camera roll. Frames imported after it are divided by it (section 7,
-  Linearise); frames already in the roll stay as they are.
-- The film base comes from the rebate in the frame, as for scans.
-- For positives the camera's own matrix from LibRaw is the input profile, unless the user has an
-  IT8 target shot.
+- A flat-field shot evens out the light. It's a shot of the light source with no film in front of
+  it, at the same exposure as the frames. You take it once per session and the roll keeps it:
+  `minilab import --flat`, or the New roll form for a camera roll. Frames imported after it are
+  divided by it (section 7, Linearise). Frames already in the roll stay as they are.
+- The film base comes from the rebate in the frame, same as for scans.
+- For a colour slide, the frame keeps the RAW file's own colour information: the camera's white
+  balance and its colour matrix (section 7).
 
 ### Files
 
-16-bit linear TIFFs from other software, RGB or greyscale, in any compression LibTIFF decodes.
-8-bit TIFFs and PNMs are read too, with a warning that they're probably not linear. The user says
-whether the file is linear. If it isn't, the step wedge calibration applies, as for scanners (not
-built yet).
+minilab reads TIFFs from other software, RGB or greyscale, in any compression LibTIFF decodes, and
+binary PNM, which is what SANE's scanimage writes. They should be 16-bit and linear. 8-bit files are
+read too, with a warning: 8 bits is too few for linear data, so an 8-bit file almost always has a
+gamma curve applied, and nothing undoes that yet.
 
-A roll keeps every scan as a 16-bit PPM, whatever it was imported from, so the rest of the app
-reads one format.
+A roll stores every scan as a 16-bit PPM, whatever it was imported from, so the rest of the app only
+has to read one format.
 
 ## 6. Film formats and frame detection
 
-A roll has one format; frames of different formats never share a roll. The format seeds the
-detection. Real frame sizes vary by camera, which is why detection measures them. Nominal image
-sizes in mm:
+A roll has one format. Frames of different formats never share a roll. The format is the starting
+point for detection, but real frame sizes vary from camera to camera, which is why detection
+measures them. Nominal picture sizes, in mm:
 
 | Film size | Formats |
 |---|---|
-| 135 | full frame 36 × 24 (default, 38 mm pitch), half frame 18 × 24, panorama 65 × 24, square 24 × 24 |
+| 135 | full frame 36 × 24 (the default, 38 mm pitch), half frame 18 × 24, panorama 65 × 24, square 24 × 24 |
 | 120 / 220 | 6×4.5 56 × 41.5, 6×6 56 × 56, 6×7 56 × 69.5, 6×8 56 × 76, 6×9 56 × 84, 6×12 56 × 112, 6×17 56 × 168 |
 | 127 | 4×4 40 × 40, 4×6.5 40 × 65, 3×4 30 × 40 |
 | 110 | 13 × 17 |
 | 126 | 28 × 28 |
 | APS | H 30.2 × 16.7, C 25.1 × 16.7, P 30.2 × 9.5 |
 | Minox | 8 × 11 |
-| Sheet film | 4×5 in, 5×7 in, 8×10 in, 9×12 cm, 13×18 cm; image area depends on the holder |
-| Custom | any size, with a locked ratio or free |
+| Sheet film | 4×5 in, 5×7 in, 8×10 in, 9×12 cm, 13×18 cm; the picture area depends on the holder |
+| Custom | any size, with the ratio locked or free |
 
-The V200's 33.02 mm window takes 35 mm wide film (135, 126), and narrower film (110 at 16 mm, APS
-at 24 mm, Minox at 9.2 mm) if a holder keeps it flat. 120 and wider need another scanner or a
-camera.
+The pitch is the distance from one frame to the next. The V200's 33.02 mm window takes 35 mm wide
+film (135 and 126), and narrower film (110 at 16 mm, APS at 24 mm, Minox at 9.2 mm) if a holder
+keeps it flat. 120 and anything wider needs another scanner or a camera.
 
-Film holders usually cover the film edges, so the scan shows no rebate across the strip. The
-default crop therefore uses the full height of the holder opening, and only the gaps between
-frames set the ends.
+Film holders usually cover the edges of the film, so the scan doesn't show the rebate across the
+strip. So by default a frame gets the full height of the holder's opening, and only the gaps
+between frames decide where it starts and ends.
 
-Detection on a strip preview, for negatives:
+Detection on a strip preview works like this for negatives (`src/frames/detect.zig`):
 
-1. **Classify.** Holder and anything outside the film transmit almost nothing. The film base
-   between frames is the most transparent part of the film. The image area sits in between.
-2. **Opening.** Fit lines to the two long edges of the light band. Usually these are the
-   holder's edges, not the film's: they give the strip's angle and the frame height. Where the
-   film edge does show, the perforation bands are left out by their repeating pattern.
-3. **Gaps.** Along the strip, take the median density of each row across the band. Runs at base
-   density, about as long as a frame gap, are frame boundaries.
-4. **Snap to the roll's format.** The frame gets the full height of the opening, and the
-   format's ratio gives its length, centred between its gaps. A frame whose measured length is
-   far from that keeps its measured box and is marked for checking.
-5. **Weak frames.** A frame of a dark scene is close to base density, so its edges barely show.
-   Missing boundaries are filled in from the pitch of the confident neighbours, and those frames
-   are marked for checking. 120 and other films without perforations have no fixed pitch, so
-   their weak frames rely more on the user.
-6. **Inset.** None across the height by default. An inset can be set when an opening is wider
-   than the image, such as a 35mm holder with a 120 mask.
+1. **Classify.** The holder, and anything else outside the film, lets almost no light through.
+   The film base between frames is the clearest part of the film. The pictures are somewhere in
+   between.
+2. **Opening.** Fit lines to the two long edges of the light band. These are usually the holder's
+   edges, not the film's, and they give the strip's angle and the frame height. Where 135's
+   perforations (the sprocket holes) show, their bands are left out.
+3. **Gaps.** Walk along the strip and take the median density of each line across the band. A
+   line counts as gap when it's at base density and flat (even a thin picture still has some
+   texture). Each run of picture between gaps has two ends. An end is sharp when the density
+   steps up within half a millimetre, soft when it doesn't, or cut off by the end of the film or
+   the scan.
+4. **Snap to the roll's format.** Each frame gets the opening's full height, and its length comes
+   from the format's ratio, centred between its gaps. If the measured length is far from that,
+   the frame keeps its measured box and is marked for checking. One sharp end is enough to place a
+   frame whose other end doesn't show.
+5. **Weak frames.** A frame of a dark scene is close to base density, so its edges hardly show.
+   Missing edges are filled in from the pitch: measured between sharp edges where they repeat,
+   or else the format's fixed pitch. Those frames are marked for checking too. 120 and other films
+   without perforations have no fixed pitch, so there you'll more often fix weak frames by hand.
+6. **Inset.** By default there's none across the height. You can set one when the opening is
+   wider than the picture, for example a 35mm holder with a 120 mask.
 
-For positives in mounts, the mount is opaque and the aperture is the frame. For unmounted slide
-film the gaps are unexposed, so they're opaque instead of clear. The steps are the same with the
-test inverted. A camera scan usually holds one frame. The same steps find its edges in the one
-image and skip the pitch. A file with two or more whole frames on it is a strip: each whole frame
-becomes a frame of the roll, and frames cut off by the edge of the scan are left out.
+Positives take the same steps with the gap test turned around: on unmounted slide film the gaps
+are unexposed, so they're dark instead of clear. Mounted slides are found by their openings
+instead, each one measured on its own. A camera scan usually holds one frame, so the same steps
+find its edges in that one picture and skip the pitch. A file with two or more whole frames on it
+is treated as a strip: each whole frame becomes a frame of the roll, and frames cut off by the
+edge of the scan are left out.
 
-By hand, the user can:
+By hand, you can:
 
-- drag edges and corners;
+- drag a frame along the strip, and drag its edges and corners;
 - add, delete and split frames;
-- rotate;
-- lock the aspect ratio to a format or a custom ratio, or leave it free.
+- rotate them;
+- lock the aspect ratio to the roll's format or a ratio of your own, or leave it free.
 
-Hand edits are kept when detection runs again.
+Frames you've edited by hand are kept when detection runs again.
 
 ## 7. The colour pipeline
 
+### Why density
+
+Density is how much light the film blocks, on a log scale: D = −log10(T), where T is the share of
+light that gets through. A density of 1 lets 10% through and 2 lets 1% through. Film behaves
+simply in density: over most of its range, each dye layer's density goes up in a straight line
+with the log of the exposure, and dyes stacked on top of each other add their densities. So that's
+where minilab does its colour work.
+
 ### The model we start from
 
-darktable's negative inversion model, as its documentation sets out the maths. minilab's code is
-written from these equations, not translated from darktable's C, so it can carry minilab's own
-licence (section 13). T is the pixel's transmission and T_base the film base, per channel:
+We start from darktable's negative inversion model, as its documentation lays out the maths.
+minilab's code is written from these equations, not translated from darktable's C, so minilab can
+keep its own licence (section 13). T is the pixel's transmission and T_base the film base's, per
+channel:
 
 ```
 d   = log10(T / T_base)                                   (density above base, ≤ 0)
@@ -306,340 +340,397 @@ out = p                                    if p ≤ s
       s + (1 − e^(−(p − s)/(1 − s))) · (1 − s)   otherwise  (s = highlight roll-off)
 ```
 
-Its colour film preset sets D_max 1.6, offset −0.05, black 0.0755, gamma (contrast) 4.0, roll-off
-0.75 and exposure 0.9245. Its pickers derive:
+darktable's colour film preset sets D_max 1.6, offset −0.05, black 0.0755, gamma (contrast) 4.0,
+roll-off 0.75 and exposure 0.9245. Its pickers work out:
 
-- D_min from a base sample;
+- D_min from a sample of the base;
 - D_max from the densest part of the negative;
-- offset from the least dense part;
-- the two white balances from neutral samples in the shadows and highlights.
+- the offset from the least dense part;
+- the two white balances (wb_high and wb_low) from neutral samples in the highlights and the
+  shadows.
 
-Dividing by the base sample cancels any constant per-channel gain in the scanner. That's why the
-V200's Negative Film mode, which changes the exposure per channel, makes no difference to the
-result, apart from giving blue more levels.
+Dividing by the base cancels out any fixed gain per channel in the scanner. That's why the V200's
+Negative Film mode, which changes the exposure per channel, makes no difference to the result,
+apart from giving blue more levels.
 
-### What ours does
+### What minilab does
 
-Each stage has its own parameters; presets set some or all of them.
+Each stage has its own settings.
 
-1. **Linearise.** The scanner profile's curve, or nothing for linear input. Camera scans are
-   divided by the flat field here, on import. The flat field is averaged over a grid of 64 cells
-   along its longer side, blurred over each cell's neighbours (the grid continued past its edges
-   along its own slope, so the edges aren't pulled towards the middle), interpolated between cell
-   centres, and divided by its brightest value per channel: a gain of at most 1 at each point.
-   Dust on the light source and noise drop out; the fall-off stays.
-2. **Base.** Divide by T_base, measured from the scan's own margin (section 4).
-   - The roll's base is the median over its frames.
-   - A frame that differs from it by more than the scan-to-scan variation gets flagged.
+1. **Linearise.** Scans from a scanner with a profile are linear already, because the profile sets
+   the scanner up that way. Camera scans are divided by the flat field here, on import. The flat
+   field is smoothed first: it's averaged over a grid of 64 cells along its longer side, and the
+   grid is blurred over each cell's neighbours. Past the grid's edges it's extended along its own
+   slope, so the blur doesn't pull the edges towards the middle. Between cell centres it's
+   interpolated, and then it's divided by its brightest value per channel, which gives a gain of
+   at most 1 at each point. Dust on the light source and noise drop out, and the fall-off towards
+   the edges stays, which is what we want to correct.
+2. **Base.** Divide by T_base. Each frame's base is measured in the gaps beside it (section 4). The
+   roll's base is the median over its frames. If a frame's own base is more than 15% off the
+   roll's in any channel, say because a gap fell on the leader, a light leak or the holder, that
+   frame uses the roll's base instead.
 3. **Density.** d = −log10(T / T_base), in the scanner's or camera's own channels, before any
-   colour matrix, the way a densitometer reads a negative. darktable applies the input profile
-   before its inversion; we don't. Dye densities add in log space, so channel mixing belongs in
-   density (stage 4). A matrix on transmission values has no such meaning.
-4. **Density correction.** Per-channel slope and offset, as in darktable's model, plus a 3×3 matrix in
-   density space, identity by default. The matrix corrects channel crosstalk and the dyes'
-   unwanted absorptions. darktable's model has no equivalent.
-5. **Inversion curve.** Per-channel curves from density to positive values, as tables.
-   - darktable's `(1 + black − 10^c)^gamma` with highlight roll-off is one curve shape. It stays the default,
-     and gives the same output as darktable for the same parameters.
-   - A table lets the curves come from datasheet data or a fitted lab scanner instead.
-6. **Tone and colour.** Tone profile curve, and the colour of the light per tonal range: a
-   temperature in K and a tint. Light of another colour shifts each layer's exposure by a fixed
-   amount, a fixed density on the negative, so the inversion undoes it with a fixed shift per
-   channel, as a colour printing filter does: the black body's colour at 5500 K (daylight, which
-   daylight film is balanced for, and where the balance as set counts) over its colour at the
-   temperature, as log exposure, times a colour negative's contrast (0.6), over the density
-   range. Highlights, midtones and shadows each have their own, weighted by the tone so that the
-   same light in all three is the same shift everywhere. The camera's own white balance in a raw
-   file only describes the light behind the film, which the film base cancels, so it isn't read.
-   Then the look (section 9), then saturation: each pixel mixed with its own luminance in linear
-   light, which keeps its hue and luminance.
-7. **Output.** Linear Rec.2020 internally.
-   - lcms2 converts to the display profile for the viewer (SDL3 provides the window's ICC
-     profile).
-   - lcms2 converts to the export space (sRGB, Display P3, Adobe RGB, ProPhoto) and the profile
-     is embedded.
-   - Values above 1 are kept up to this stage, for HDR export later.
+   colour matrix: the way a densitometer reads a negative. darktable applies the input profile
+   before its inversion; we don't. Dye densities add up in log space, so mixing channels belongs
+   in density (the next stage). A matrix on transmission values has no such meaning.
+4. **Density correction.** A 3×3 matrix in density, the identity by default. It's there to correct
+   crosstalk between the channels and the dyes' unwanted absorptions, and darktable's model has
+   nothing like it. After that, if the roll's stock has datasheet curves, each layer's density is
+   straightened by its curve (section 9).
+5. **Inversion curve.** Each channel's density is scaled by the density range and balanced (a
+   slope and an offset per channel, darktable's wb_high and wb_low), then goes through darktable's
+   curve, `(1 + black − 10^c)^gamma`, with its highlight roll-off. With the same settings it gives
+   the same result as darktable.
+6. **Tone and colour.** The tone (section 9) changes the inversion curve's contrast. The colour
+   of the light is set as a temperature in kelvin and a tint, separately for highlights, midtones
+   and shadows.
 
-B&W negatives use one channel's density (selectable, green by default) through the same stages.
-Positives skip stages 2 to 5. Their transmission goes through an input profile (an IT8.7/1
-transparency target if the user has one, otherwise a matrix) and then the tone stage. A colour
-slide shot with a camera keeps its raw file's colour with the frame at import, since the roll's
-scan of it is in the camera's own colour: the camera's white balance as shot, for the light behind
-the film (or for daylight where the file has none), then the camera's matrix to sRGB
-(`develop.SlideColour`). With a flat field, which has made the light white already, only the
-matrix applies. Slides imported before this keep the camera's colour as it is.
+   Here's the idea. If the light was warmer or cooler than daylight, every layer of the negative got
+   a fixed amount more or less exposure. On the negative that's a fixed density offset per layer, so
+   the inversion can undo it with a fixed shift per channel, added before the curve, just like a
+   colour filter in a darkroom enlarger. The numbers: take the colour of a black body (an ideal
+   light source; its colour depends only on its temperature) at 5500 K over its colour at the chosen
+   temperature, per channel. 5500 K is daylight, which daylight film is balanced for, so at 5500 K
+   nothing changes. Take the log10 of that, times a colour negative's contrast (0.6), over the
+   density range, and that's the shift. The black body's colour comes from Kim et al.'s fit to the
+   Planckian locus. The tint is ±100 for half a stop on green. The slider moves in mired (a million
+   over the temperature), so equal steps on it are equal changes in colour.
 
-### Auto values
+   The three ranges are blended by tone, with weights that add up to 1, so the same light in all
+   three is the same shift everywhere. A negative's film base already cancels the colour of the
+   light behind the film, so for negatives the camera's white balance in a RAW file isn't used.
 
-Computed per frame, inside the crop minus a border buffer, as NLP describes its analysis:
+   After that comes the look (section 9), then saturation: each pixel mixed with its own
+   luminance in linear light, which keeps its hue and its luminance.
+7. **Output.** What Develop produces is linear light from 0 to 1, in the scanner's RGB, which we
+   take as having Rec. 709's primaries. The viewer shows it sRGB-encoded. Export converts it to
+   linear Rec. 2020 (with ITU-R BT.2087's matrix), and Little CMS then converts that to the export
+   space: sRGB, Display P3, Adobe RGB or ProPhoto RGB. The space's ICC profile is embedded in the
+   file.
 
-- **base**: from the margin, as above;
-- **D_max and offset**: from low and high density percentiles. They play the same role as
-  darktable's pickers, without the clicking.
-- **white balance**, one of:
-  - auto-neutral: balance the low-chroma areas, in density;
-  - auto-warm and auto-cool: the same with a bias;
-  - average: grey world;
-  - fixed, from the stock preset;
-  - a picked neutral.
+B&W negatives use one channel's density (green by default, and you can pick another) and go
+through the same stages, minus the colour.
 
-These are our own algorithms. Their definitions go in the docs and tests, not only in the code.
+Positives skip stages 2 to 5, the tone and the light: the scan's transmission, times the exposure,
+is the picture. The look and saturation still apply. A colour slide shot with a camera needs one
+more step, because the roll's scan of it is in the camera's own colour. So at import, the frame
+keeps the RAW file's colour information (`develop.SlideColour`): the camera's white balance as shot,
+for the light behind the film (or its daylight balance, where the file doesn't have one), then the
+camera's matrix to sRGB. With a flat field, which has already made the light white, only the matrix
+applies. Slides imported by development builds from before this was added keep the camera's raw
+colour.
+
+### Automatic settings
+
+These are worked out for each frame on the middle of the frame (half its width and half its
+height), away from the holder. That's the same idea as NLP's border buffer.
+
+- **Base**: from the gaps, as above. Without gaps, the clearest film in the frame.
+- **Density range and offset**: the density range from the densest 0.2% of the frame (the
+  brightest highlights), and the offset from the clearest 0.5% (the deepest shadows). They do the
+  same job as darktable's pickers, without any clicking.
+- **White balance**, one of:
+  - Auto neutral: makes the highlights and the shadows neutral. This is the default;
+  - Auto warm and Auto cool: the same, then a little warmer or cooler;
+  - Average: makes the frame's average density neutral;
+  - Stock: the stock's own balance, on a calibrated scanner (section 9);
+  - Picked: makes a point you click neutral.
+
+These are our own algorithms, so they're written down in the code's docs and covered by tests,
+not just buried in the code.
 
 ## 8. Settings and sync
 
-Every frame has a sidecar with the preset names and versions and every resolved parameter. A
-frame opened again later renders the same, even after a preset changed. "Sync" copies chosen
-groups to the roll's other frames: look, tone and saturation, and white balance by default;
-density, film base, and crop with turns when asked. What isn't synced each frame keeps, or
-measures for itself on its thumbnail if it was never developed. An automatic white balance is
-worked out on each frame.
+Every frame has a settings file of its own. It holds the crop, the turns, the film base, the look
+by name and every develop setting, fully worked out. So a frame you open again later renders the
+same, even if a default changed in between.
+
+Sync copies some of one frame's settings to the roll's other frames. You choose the groups: the
+look (with tone and saturation) and the white balance are on by default; density, film base, and
+crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
+saved settings, or, if it was never developed, automatic ones measured on its thumbnail. An
+automatic white balance is always worked out again on each frame.
 
 ## 9. Presets
 
-Layered like NLP, but ours, with their sources written down.
+Presets come in layers, like NLP's, but they're ours, and their sources are written down.
 
-**Film type:** colour negative, B&W negative, colour positive, B&W positive. Picks the pipeline
-path and the scanner settings.
+**Film type:** colour negative, B&W negative, colour positive or B&W positive. This picks the path
+through the pipeline and the scanner settings.
 
-**Stock** (optional): each layer's characteristic curve, and on a calibrated scanner the fixed
-white balance.
+**Stock** (optional): each layer's characteristic curve, and on a calibrated scanner, the stock's
+white balance. The stock presets are built into the program (`src/presets/stocks.zig`).
 
-- **Curves** (`src/core/stock_curves.zig`): a negative's density rises from the base in a toe
-  before it follows log exposure in a straight line, which the inversion assumes. Read as a straight
-  line, the toe crushes the shadows, and as each layer's toe is its own, it tints them. With a
-  stock's datasheet curves, each layer's density above the base goes back to its log exposure and
-  on to the density the curve's straight line gives that exposure, measured from the base: the base
-  stays at 0, the toe opens up, and the straight part keeps its contrast. The line is fitted to the
-  middle of the curve's density range (25 to 85 percent), so that it straightens the curve it's
-  drawn from. Right at the base the toe is all but flat (Superia X-TRA 400's would need 15 to 35
-  times there), so the stretch stops at 3 times. Each layer is a 33-point table, applied after the
-  density matrix and in the automatic settings alike.
-- Datasheet curves are in Status M density. On a calibrated scanner each layer's scale is
-  1 / its calibration factor, green taken as reading Status M; without a calibration, 1. On our
-  V200's Superia X-TRA 400 frames, the calibrated scale keeps neutrals neutral where Status M's
-  leaves a slight magenta in the light greys.
-- Datasheet corrections, a checkbox under Stock, on by default, turns the curves and the stock's
-  balance off for the roll: the stock is then only its metadata.
-- Choosing a stock, or calibrating, measures the roll's developed frames again with the curves: the
-  density range, offset and balance; the user's other settings stay. Frames not developed yet get
-  the curves when they're opened. On a calibrated scanner, frames on Auto neutral take the stock's
-  balance.
+- **Curves** (`src/core/stock_curves.zig`). A characteristic curve plots a layer's density
+  against the log of the exposure. It starts at the base, rises slowly at first (the toe), then
+  follows a straight line, and some films flatten out again at the top (the shoulder). The
+  inversion assumes the whole thing is a straight line. Read that way, the toe crushes the
+  shadows, and since each layer has its own toe, it tints them as well.
 
-- Source: the makers' datasheets. The characteristic curves and figures are our own readings of
-  the published charts, with each stock's datasheet, edition and reading error recorded in
-  `data/stocks/README.md`. The PDFs aren't stored.
-- Datasheet densities are measured through standard filters (Status M), and a scanner's channels
-  aren't the same: on our V200 a colour negative's red needs 1.3 to 1.7 times blue's slope where
-  Status M says 1.14. Used directly, a stock's gammas turn skies cyan. So Stock balance needs the
-  scanner calibrated, once, on any roll of a stock with a preset (`src/core/calibration.zig`):
-  - each frame's automatic balance gives the slopes that make its neutrals neutral;
-  - their median over the roll leaves out the scenes' own colours;
-  - divided by the stock's datasheet slopes, it gives the scanner's factors, per layer.
-  A stock's balance on that scanner is then its datasheet slopes times the factors. This holds for
-  any scanner or camera whose channels each read mainly one dye; each is calibrated by the name its
-  rolls record, and more rolls refine it (the median over them). The calibrations live in the
-  library's `calibration.json`. On the V200, from a roll of Superia X-TRA 400: red ×1.23, blue
-  ×0.94.
-- Stock balance keeps the roll's light: each frame gets the same layer slopes, and only its
-  shadows are balanced on the frame. Auto neutral, the default, neutralises each frame instead.
-- Exact values come from a calibration frame on that stock: a grey card bracketed over several
-  stops. The app saves the result as a personal preset per stock and scanner.
+  With a stock's datasheet curves, minilab takes each layer's density above the base back to its
+  log exposure, then on to the density the curve's straight line would give at that exposure,
+  measured from the base. So the base stays at 0, the toe opens up, and the straight part keeps
+  its contrast. The straight line is fitted to the middle of the curve's density range (25 to 85
+  percent), so it straightens the actual curve it comes from. Right at the base the toe is nearly
+  flat: Superia X-TRA 400's would need stretching 15 to 35 times there, which would only blow up
+  the grain, so the stretch stops at 3 times. Each layer becomes a 33-point table. It's applied
+  after the density matrix, and the automatic settings use it too.
+- Datasheet curves are in Status M density: density measured through the standard filters labs
+  use for colour negatives. A scanner's channels see the dyes through different filters. On a
+  calibrated scanner (see below), each layer's scale is 1 over its calibration factor, with green
+  taken as reading Status M. Without a calibration, the scale is 1. On our V200's Superia X-TRA
+  400 frames, the calibrated scale keeps neutrals neutral, where plain Status M leaves a slight
+  magenta in the light greys.
+- **Datasheet corrections** is a checkbox under Stock, on by default. Turning it off switches the
+  curves and the stock's balance off for the roll, so the stock is just metadata.
+- Choosing a stock, or calibrating, measures the roll's developed frames again with the curves:
+  the density range, offset and balance. Your other settings stay. Frames you haven't developed
+  yet get the curves when you open them. On a calibrated scanner, frames on Auto neutral switch to
+  the stock's balance.
+- Where the numbers come from: the makers' datasheets. The characteristic curves and figures are
+  our own readings of the published charts. `data/stocks/README.md` records each stock's
+  datasheet, its edition and how accurate the reading is. We don't store the PDFs.
+- **Calibration** (`src/core/calibration.zig`). A datasheet gives each layer's contrast (its
+  gamma: the slope of the straight part of the curve) in Status M density, and a scanner's
+  channels don't match Status M. On our V200 a colour negative's red needs 1.3 to 1.7 times
+  blue's slope, where Status M says 1.14. Used as they are, a stock's gammas turn skies cyan. So
+  the Stock balance needs the scanner calibrated, once, on any roll of a stock that has a preset:
+  - each frame's automatic balance gives the slopes that make that frame's neutrals neutral;
+  - the median over the roll leaves out the colours of the scenes themselves;
+  - divide that by the stock's datasheet slopes, and you get the scanner's factor per layer.
 
-**Look:** what follows Develop's settings. Develop lists every look in one drop-down.
+  A stock's balance on that scanner is then its datasheet slopes times those factors. This works
+  for any scanner or camera whose channels each mostly see one dye. Each scanner is calibrated
+  under the name its rolls record, and more rolls refine it, as the median over all of them.
+  Calibrations are kept in the library's `calibration.json`. On the V200, a roll of Superia X-TRA
+  400 gave red ×1.23 and blue ×0.94.
+- The Stock balance keeps the light the roll was shot in: every frame gets the same layer slopes,
+  and only its shadows are balanced on the frame itself. Auto neutral, the default, neutralises
+  each frame instead.
 
-- **Neutral:** Develop's rendering as it is: the inversion curve and nothing added.
-- **LUT looks:** a .cube LUT (1D, 3D, or a 1D shaper and a 3D LUT, any size and input range)
-  laid over Neutral's sRGB-encoded output, read with tetrahedral interpolation. Tone, balance and
-  the rest of Develop's settings still apply. minilab ships Frontier emulation (section 10)
-  and the film looks below, and the user can import any .cube that expects sRGB or Rec. 709
-  input. Imported LUTs are copied into the library's `Looks/` folder.
-- **Film looks:** 85 LUTs from three free collections, listed in
-  `src/presets/looks/bundled.zig` with each one's film, name and file: GlassMeter (CC BY 4.0, 30
-  33³ .cube files), t3mujinpack (MIT, 51 HaldCLUT PNGs at 144³) and Street Monochrome (CC BY
-  4.0, four 64³ .cube files). `build.zig.zon` fetches the collections at pinned commits, and
-  `src/bake_looks.zig`, run by the build, samples every look at 33³ with tetrahedral
-  interpolation and writes the tables as 16-bit values into one file (18 MB) that the core
-  embeds. A table is decoded the first time a frame uses it. Develop's Look menu has a submenu
-  per collection, grouped by film; the Looks workspace shows each collection's credit, licence
-  and changes.
+**Look:** what comes after Develop's settings. Develop lists every look in one drop-down.
+
+- **Neutral:** what Develop gives you, the inversion curve with nothing added.
+- **LUT looks:** a LUT (lookup table) maps each input colour to an output colour. minilab reads
+  .cube LUTs: 1D, 3D, or a 1D shaper followed by a 3D LUT, of any size and input range. The LUT is
+  applied to Neutral's sRGB-encoded output, with tetrahedral interpolation between its points.
+  Tone, balance and the rest of Develop's settings still apply under it. minilab ships Frontier
+  emulation (section 10) and the film looks below, and you can import any .cube that expects sRGB
+  or Rec. 709 input. Imported LUTs are copied into the library's `Looks/` folder.
+- **Film looks:** 85 LUTs from three free collections, listed in `src/presets/looks/bundled.zig`
+  with each one's film, name and file:
+  - GlassMeter (CC BY 4.0): 30 .cube files at 33³;
+  - t3mujinpack (MIT): 51 HaldCLUTs at 144³. A HaldCLUT is a 3D LUT stored as a PNG picture;
+  - Street Monochrome (CC BY 4.0): four .cube files at 64³.
+
+  `build.zig.zon` fetches the collections at pinned commits. At build time,
+  `src/bake_looks.zig` samples every look at 33³ with tetrahedral interpolation and writes them
+  all as 16-bit values into one 18 MB file, which the program embeds. A look's table is decoded
+  the first time a frame uses it. Develop's Look menu has a submenu per collection, grouped by
+  film, and the Looks workspace shows each collection's credit, licence and what we changed.
 - **Fitted looks:** made in the Looks workspace from pairs of our raw scans and a lab's scans of
-  the same negatives. They take over after the film base and density stages: curves, a density
-  matrix and an optional 3D LUT. Tone and the inversion settings don't apply to them.
+  the same negatives. A fitted look takes over after the film base and density stages, with its
+  own curves, a density matrix and optionally a 3D LUT. Tone and the inversion settings don't
+  apply to it.
 
-A frame keeps its look by name (`neutral`, `frontier`, `<collection>:<look>` such as
-`glassmeter:kodak-portra-400`, `cube:<name>` or `look:<name>`). A film look's name never changes
-once released. A look that can't be read develops as Neutral, with a warning.
+A frame keeps its look by name: `neutral`, `frontier`, `<collection>:<look>` (such as
+`glassmeter:kodak-portra-400`), `cube:<name>` or `look:<name>`. A film look's name never changes
+once it's released. If a look can't be read, the frame develops as Neutral, with a warning.
 
-**Tone profile:** standard, soft, hard, linear, log. Parametric curves, defined in the docs.
+**Tone:** Standard is darktable's curve as set. Soft and Hard use 0.8 and 1.25 times its
+contrast. Linear has no contrast curve and no roll-off, so it's linear in the film's exposure, and
+Log stores the density itself, from 0 to 1. Linear and Log are flat starting points for grading in
+other software.
 
-**White balance:** the auto modes and fixed values from section 7.
+**White balance:** the modes from section 7.
 
-**Positives:** neutral, or a per-stock IT8 profile, then the same tone profiles.
-
-Preset files are plain text with a version number. Built-in ones are installed with the app; saved
-and fitted ones go in the user's directory.
+**Where presets live.** The stocks and the bundled looks are built into the program. Your imported
+LUTs and fitted looks go in the library's `Looks/` folder, and scanner calibrations in the
+library's `calibration.json`.
 
 ## 10. Frontier emulation
 
-Frontier emulation (its name in the app) gives a frame the colour of a Fujifilm Frontier scan. It is
-a subtle difference over Neutral, not a different development: tone, neutrals and lightness stay
-Neutral's.
+Frontier emulation (that's its name in the app) gives a frame the colour of a scan from a
+Fujifilm Frontier, a common lab scanner. It's a subtle change on top of Neutral, not a
+different development: tone, neutrals and lightness stay the same as Neutral's.
 
-**Source.** The colour cube in the Frontier 350's scanning software (A1 7.6-0E-920, the user's
-licensed copy): a 32³ table from the tone curve's 10-bit output to 8-bit monitor RGB, with the
-software's saturation matrix in front of it. Nothing else of the Frontier is used.
+**Source.** The colour cube in the Frontier 350's scanning software (A1 7.6-0E-920, a licensed
+copy). It's a 32³ table from the tone curve's 10-bit output to 8-bit monitor RGB, with the
+software's saturation matrix in front of it. We use nothing else from the Frontier.
 
-**Why only the cube.** The Frontier develops a negative through its own chain: density, a gray
-axis set per roll, a film curve, a per-channel tone curve, the saturation matrix and the cube. Its
-tone curve and the cube's grey axis together are a hard S-curve, and its curves expect the
+**Why only the cube.** The Frontier develops a negative through its own chain: density, a grey
+axis set per roll, a film curve, a tone curve per channel, the saturation matrix and the cube.
+Its tone curve and the cube's grey axis add up to a hard S-curve, and its curves expect the
 Frontier scanner's densities. On another scanner's raw scans the whole chain comes out contrasty
-and over-saturated. What makes a Frontier scan look like one is how the cube renders colours
-compared with greys, and that part doesn't depend on the scanner.
+and oversaturated. What makes a Frontier scan look like a Frontier scan is how the cube renders
+colours compared with greys, and that part doesn't depend on the scanner.
 
-**How the LUT is made** (`src/presets/looks/frontier.cube`, 33³). For Neutral's sRGB-encoded value
-`d`:
+**How the LUT is made** (`src/presets/looks/frontier.cube`, 33³). For Neutral's sRGB-encoded
+value `d`:
 
     f = d + cube(S w) − grey(w),   w = grey⁻¹(d) per channel
 
-where `grey` is the cube's output along its grey axis, per channel, `grey⁻¹` goes back through the
-channels' mean, and `S` is the saturation matrix at the Frontier's standard setting (1.2 on the
-diagonal, −0.1 elsewhere). A grey comes out as it went in, and a cube that treated the channels
-apart would change nothing. The result keeps `d`'s Oklab lightness and takes its hue and chroma
-from `f`.
+Here `grey` is the cube's output along its grey axis, per channel, `grey⁻¹` goes back the other
+way through the channels' mean, and `S` is the saturation matrix at the Frontier's standard setting
+(1.2 on the diagonal, −0.1 everywhere else). A grey comes out the way it went in, and a cube that
+treated each channel on its own would change nothing. The result keeps `d`'s Oklab lightness and
+takes its hue and chroma from `f`.
 
-**What it does.** Over sRGB's mid-lightness colours, the mean chroma ends up at 0.96 of Neutral's.
-The standard saturation puts back what the cube takes out (with no saturation matrix it's 0.82).
-Greens lose about a fifth of their chroma and turn 10 to 15° toward teal. Skies, skin and yellows gain
-5 to 20%, and reds turn a little toward orange. The baked LUT is within a quarter of an 8-bit step of
-the exact transform on average, and greys within 3·10⁻⁶.
+**What it does.** Over sRGB's colours of middle lightness, the average chroma (how colourful they
+are) ends up at 0.96 of Neutral's. The standard saturation puts back what the cube takes out
+(without the saturation matrix it's 0.82). Greens lose about a fifth of their chroma and turn 10
+to 15° towards teal. Skies, skin and yellows gain 5 to 20%, and reds turn a little towards orange.
+On average the baked LUT is within a quarter of an 8-bit step of the exact transform, and greys
+within 3·10⁻⁶.
 
-**B&W.** The Frontier has no B&W colour table. Its software runs B&W negatives through the same
-chain, with a gentler straight line in its 10-bit density stage (slope 0.92) and a saturation preference
-that makes the channels grey before the cube. Its B&W look is therefore tone only, and Frontier
-emulation leaves B&W frames as Neutral has them. The installer's other B&W files
-(`PARAM/imgp/*bw.dat`) are, by their names and sizes, the skin, sky, grain, clipping and
-sharpening parameters, not colour tables.
+**B&W.** The Frontier has no colour table for B&W. Its software runs B&W negatives through the
+same chain, with a gentler straight line in its 10-bit density stage (slope 0.92) and a saturation
+setting that turns the channels grey before the cube. So its B&W look is tone only, and Frontier
+emulation leaves B&W frames the way Neutral has them. Going by their names and sizes, the
+installer's other B&W files (`PARAM/imgp/*bw.dat`) are the skin, sky, grain, clipping and
+sharpening settings, not colour tables.
 
-**Checking it.** Lab Frontier scans of negatives the user still has are scanned raw on the V200 as
-well, and each pair is registered and compared (ΔE2000 median and 95th percentile) in the Looks
-workspace. The same workspace fits looks for labs whose software isn't available, such as a
+**Checking it.** The plan is to take negatives that a lab has scanned on a Frontier, scan them raw
+on the V200 too, and compare each pair in the Looks workspace, which lines the two scans up and
+measures the difference (the median and 95th percentile of ΔE2000, a standard measure of colour
+difference). The same workspace fits looks for labs whose software we can't get, such as a
 Noritsu.
 
 ## 11. Files on disk
 
+A library is a folder of rolls, and a roll is a folder:
+
 ```
-Rolls/2026-10-22 Portra 400 Ghent/
-  roll.json            film type, stock, format, camera, lens, date, notes, scanner, base
-  flat.ppm             camera scans only: the flat field, as shot
-  scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import, never
-                       modified; the frames of a strip share one
-  frames/01.json ...   crop, rotation, develop settings (resolved), preset names and versions
-  exports/
+Rolls/
+  calibration.json       scanner calibrations (section 9)
+  Looks/                 imported LUTs and fitted looks
+  2026-10-22 Portra 400 Ghent/
+    roll.json            film type, stock, format, camera, lens, dates, notes, scanner
+    flat.ppm             camera rolls only: the flat field, as shot
+    scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import and
+                         never changed; the frames of a strip share one
+    frames/01.json ...   crop, turns, film base, look and develop settings (worked out)
+    thumbs/01.ppm ...    reduced copies of the scans, for quick previews
+    preview.ppm          the last preview of the film holder, from Scan
+    preview.json         the frames' boxes on that preview, hand edits included
+    exports/
 ```
 
-Exports carry the metadata (camera, lens, film stock, copyright) as EXIF and XMP. We write these
-ourselves in Zig: we only need a handful of tags, and exiv2, the usual library, is C++.
+Exports carry the roll's metadata (camera, lens, film stock, date, copyright, and how the frame
+was developed). EXIF goes inside the file. XMP goes inside the file and in a sidecar next to it,
+and that's where the film stock and develop settings go, since EXIF has no fields for them. We
+write both in Zig: we only need a handful of tags, and exiv2, the usual library for this, is C++.
 
 ## 12. What we reuse
 
-| Part | Use | Licence |
+| Part | What for | Licence |
 |---|---|---|
-| openreliant-editor | the build setup: `build.zig`, `c.h`, the Dear Bindings and ImPlot shims, the SDL3/SDL_GPU window, the Makefile; patterns for `gui.zig` | MPL-2.0 (yours) |
-| Dear ImGui, docking branch | GUI, docking layout | MIT |
-| Dear Bindings | C API over Dear ImGui, for translate-c | MIT |
-| ImPlot | histograms, curve editor | MIT |
-| translate-c package | C headers into a Zig module | MIT |
+| openreliant-editor | the build setup: `build.zig`, `c.h`, the SDL3/SDL_GPU window, the Makefile; patterns for `gui.zig` | MPL-2.0 (ours too) |
+| Dear ImGui, docking branch | the GUI | MIT |
+| Dear Bindings | a C API over Dear ImGui, for translate-c | MIT |
+| translate-c package | turns C headers into a Zig module | MIT |
 | SDL3 (castholm/SDL's Zig build) | window, input, GPU (Metal, Vulkan, D3D12) | zlib |
-| libsane (system's, loaded at run time) | scanners on macOS and Linux | GPL-2.0+ with SANE's exception; `sane.h` public domain |
+| IBM Plex Sans, JetBrains Mono | the interface's fonts | SIL OFL 1.1 |
+| libsane (the system's, loaded when minilab runs) | scanners on macOS and Linux | GPL-2.0+ with SANE's exception; `sane.h` public domain |
 | our epkowa build and `libesint7A` | the V200, unchanged, loaded by libsane | GPL-2.0+ |
-| TWAIN DSM (system's, loaded at run time) | scanners on Windows | LGPL-2.1 |
+| TWAIN DSM (the system's, loaded when minilab runs) | scanners on Windows | LGPL-2.1 |
 | darktable's negative inversion model | the equations and their defaults, written in Zig from the maths; no darktable code | (credited; nothing copied) |
 | film makers' datasheets | stock presets: our own readings of the published charts (`data/stocks/README.md`) | the numbers are ours; the PDFs aren't stored |
-| LibRaw | camera RAW | LGPL-2.1 or CDDL-1.0 (minilab takes LGPL-2.1) |
-| libtiff, libjpeg-turbo, little-cms2, zlib | file I/O, colour management | BSD-like, BSD/IJG, MIT, zlib |
-| driver repo: `tools/imgcompare`, test data | registration approach; our V200 scans as test inputs | ours |
+| LibRaw | camera RAW | LGPL-2.1 or CDDL-1.0 (minilab uses it under LGPL-2.1) |
+| libtiff, libjpeg-turbo, Little CMS 2, zlib | file I/O, colour management | BSD-like, BSD/IJG, MIT, zlib |
+| the V200 driver repo: `tools/imgcompare`, test data | how to line up two scans; our V200 scans as test inputs | ours |
 | GlassMeter Film Looks (Glass Works) | 30 film looks, baked in | CC BY 4.0 |
 | t3mujinpack (João Almeida) | 51 film looks, baked in | MIT |
 | Street Monochrome (Ivan Bogachev) | 4 B&W looks, baked in | CC BY 4.0 |
 
-`build.zig.zon` fetches all of these at pinned versions and `zig build` builds the C and C++ ones,
-as in openreliant-editor and OpenReliant:
+`build.zig.zon` fetches the libraries, fonts and look collections at pinned versions, and
+`zig build` builds the C and C++ ones, the same way openreliant-editor and OpenReliant do:
 
-- lcms2 and zlib from allyourcodebase's Zig packages;
-- libtiff, libjpeg-turbo and LibRaw from their upstream sources with our own build files in
-  `deps/`, as OpenReliant does for FreeType and libarchive. libjpeg-turbo's SIMD code needs NASM
-  on x86, so it builds without it at first.
+- Little CMS and zlib come from allyourcodebase's Zig packages;
+- libtiff, libjpeg-turbo and LibRaw are built from their upstream sources with our own build
+  files in `deps/`, the way OpenReliant does it for FreeType and libarchive. libjpeg-turbo is built
+  without its SIMD code, so you don't need NASM.
 
-libsane and the TWAIN DSM are the exceptions: they belong to the system, because the system's
+libsane and the TWAIN DSM are the exceptions. They belong to the system, because the system's
 scanner configuration comes with them.
 
 ## 13. Licence
 
-MPL-2.0, as openreliant-editor. The licence is per file: a changed minilab file stays MPL-2.0, and
-minilab can be combined with code under other licences.
+minilab is MPL-2.0, like openreliant-editor. The MPL works per file: a changed minilab file stays
+MPL-2.0, but minilab can be combined with code under other licences.
 
-What that rules out, and how minilab keeps to it:
+What that rules out, and how minilab stays within it:
 
 - No code is ported from GPL projects. The inversion follows darktable's published model, written
   from the equations (section 7).
 - No data under the GPL or CC BY-SA. The stock presets are our own readings of the makers'
   datasheets (`data/stocks/README.md`).
-- GPL programs stay outside minilab: SANE and its backends, our V200 driver among them, are loaded
-  at run time, and SANE's licence makes an exception for programs that use its library.
-- LibRaw is linked statically under LGPL-2.1, which needs users to be able to relink it with
-  their own LibRaw. minilab's source and build are public, which allows that.
+- GPL programs stay outside minilab. SANE and its backends, our V200 driver among them, are loaded
+  when minilab runs, and SANE's licence makes an exception for programs that use its library.
+- LibRaw is linked statically under the LGPL-2.1, which means users must be able to relink minilab
+  with their own LibRaw. minilab's source and build are public, so they can.
 
-The Frontier emulation LUT is minilab's own transform of the colour cube's numbers from the
-Frontier software (section 10). None of Fujifilm's code or other tables are in the repository.
+The Frontier emulation LUT is minilab's own transform of the numbers in the Frontier software's
+colour cube (section 10). None of Fujifilm's code or other tables are in the repository.
 
-The film looks are under CC BY 4.0 and MIT, which allow them in minilab on two conditions: the
-credit and licence go with them, and for CC BY, what we changed is said. The build installs each
-collection's licence and `CREDITS-looks.txt` (credit, source and changes, from `bundled.zig`)
-beside the program, and the Looks workspace shows the same. The collections' files aren't in the
+The film looks are under CC BY 4.0 and MIT. Both allow them in minilab on two conditions: the
+credit and the licence go with them, and for CC BY, we say what we changed. The build installs
+each collection's licence and `CREDITS-looks.txt` (credit, source and changes, from `bundled.zig`)
+next to the program, and the Looks workspace shows the same. The collections' files aren't in the
 repository; the build fetches them.
 
 ## 14. Build, platforms, tests
 
-- **Build.** `zig build`, `zig build test`, `zig build run`, and `zig build check` for fast
-  compile errors. A Makefile wraps them with `make help`, as in the editor. The first build
-  fetches and builds every library, and fetches and bakes the film looks. Nothing is needed from
+- **Build.** `zig build`, `zig build test`, `zig build run`, and `zig build check` for quick
+  compile errors. A Makefile wraps them; `make help` lists what it does. The first build fetches
+  and builds every library, and fetches and bakes the film looks. You don't need anything from
   Homebrew or apt except SANE itself, for scanning.
-- **Platforms.** macOS arm64/x86_64, Linux x86_64/arm64 and Windows x86_64. All of them can be
-  cross-compiled from the Mac, as the editor is. Scanning on Windows can only be tried on a
-  Windows machine.
+- **Platforms.** Each release has builds for macOS, Linux and Windows, each on x86-64 and Arm,
+  made by GitHub Actions. CI runs the tests on Linux, macOS and Windows. Scanning on Windows can
+  only be tried on a Windows machine with a scanner.
 - **Tests**, in `test` blocks next to the code:
-  - the pipeline against reference formulas: the inversion model against the equations in
-    section 7, worked by hand for a few pixels.
+  - the pipeline against the formulas: the inversion model against the equations in section 7,
+    worked out by hand for a few pixels;
   - golden images: frames of our raw V200 colour strip (`vendor/hw-scans/2026-10-22-colour/`),
-    developed automatically on the base in their gaps, keep their mean colours in Neutral and
-    Frontier emulation (`src/core/scans_test.zig`, skipped where the scans aren't present);
-  - frame detection: recorded previews with hand-marked boxes, plus generated strips with known
-    boxes, dark frames and mixed panoramas;
-  - the SANE layer against SANE's `test` backend, and the V200 on hardware;
-  - linearity: a step wedge scanned on the V200 at gamma 1.0, to confirm the output is
-    proportional to transmission. This hasn't been measured yet.
+    developed automatically on the base in their gaps, have to keep their average colours in
+    Neutral and in Frontier emulation (`src/core/scans_test.zig`). The scans are private and
+    large, so the test is skipped where they aren't there;
+  - frame detection on generated strips with known boxes (`src/frames/synthetic.zig`), including
+    dark frames. `src/frames/check_scans.zig` also runs detection on our V200 scans and prints what
+    it finds, but it's a manual check, not part of the test suite;
+  - the SANE code against SANE's `test` backend, where libsane is installed, and the V200 on real
+    hardware;
+  - linearity: scanning a step wedge on the V200 at gamma 1.0, to confirm that its output really
+    is proportional to transmission. We haven't measured this yet.
 
-## 15. Phases and open items
+## 15. Where things stand
 
-Phases, each ending with something usable:
+The work was planned in phases, each ending with something usable:
 
-1. **Core and CLI:** TIFF and camera RAW in, flat field, base, the inversion model, B&W and
-   positive paths, TIFF and JPEG out with ICC. Tested on our V200 scans.
-2. **Frame detection** and `minilab detect`.
-3. **GUI on files:** roll browser, viewer, develop panel, histogram, before/after.
-4. **Scanning:** SANE with the V200 profile, preview, detection, batch scan; then TWAIN.
-5. **Presets:** film types, tone and WB modes, stock starting points.
-6. **Looks:** Frontier emulation (section 10), imported .cube LUTs, and the fitting tool to check
-   it against lab scans and make looks of the user's own.
-7. **Export extras:** metadata, HDR with gain maps, and Apple Photos on macOS.
+1. **Core and command line:** TIFF and camera RAW in, flat field, base, the inversion model, the
+   B&W and positive paths, TIFF and JPEG out with ICC profiles. Done, and tested on our V200
+   scans.
+2. **Frame detection** and `minilab detect`. Done.
+3. **GUI on files:** roll browser, viewer, develop panel, histogram, before and after. Done.
+4. **Scanning:** SANE with the V200 profile, preview, detection, batch scan. Done. TWAIN is
+   written but hasn't been tried yet (section 5).
+5. **Presets:** film types, tone and white balance modes, stock presets. Done.
+6. **Looks:** Frontier emulation (section 10), imported .cube LUTs, the bundled film looks, and
+   the tool for fitting looks to lab scans. Done.
+7. **Export extras:** metadata is done. HDR with gain maps and export to Apple Photos aren't.
 
-Open items:
+Still open:
 
-- Frontier emulation is checked only by eye so far. A lab's Frontier scans of the user's
-  negatives would measure it.
-- Windows scanning needs a Windows machine with a scanner for testing.
-- macOS's own scanner framework (ImageCaptureCore) would add scanners SANE doesn't drive. It's
-  not in the plan; it can be added as another variant of `Scanner` if needed.
-- The app's name. "Negative Space" is taken by something close: negativespaceapp.com announces
-  "the complete workflow tool for analog photographers" (rolls, scans, archive). DarkSlide is
-  an existing film negative converter on GitHub.
+- Frontier emulation has only been checked by eye so far. A lab's Frontier scans of our negatives
+  would let us measure it.
+- TWAIN needs a Windows machine with a scanner to test on.
+- Undoing a non-linear scanner's curve from a step wedge scan (section 5) isn't built, and the
+  V200's linearity hasn't been measured with a wedge.
+- Slides use the scanner's colour as it is, or the camera's matrix. An input profile made from an
+  IT8.7/1 transparency target isn't built.
+- The viewer shows sRGB and doesn't use the display's ICC profile.
+- HEIC with a gain map: the codecs minilab builds don't write HEIC yet.
+- Exact stock values could come from a calibration frame on each stock (a grey card, bracketed
+  over several stops), saved per stock and scanner. That isn't built.
+- macOS's own scanner framework (ImageCaptureCore) would add scanners that SANE doesn't drive.
+  It isn't planned, but it could be added as another kind of `Scanner` if needed.

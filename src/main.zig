@@ -6,45 +6,54 @@ const app = @import("app/app.zig");
 pub const version = @import("version.zig");
 
 const usage =
-    \\usage (any command takes --verbose, for debug messages):
+    \\usage (every command takes --verbose, to print debug messages):
     \\  minilab                          open the app
-    \\  minilab --version                which version this is
-    \\  minilab --help                   this list
-    \\  minilab open [<scan.ppm>...]     open the app, with these scans on their own
-    \\      [--library <folder>]         the folder of rolls (default ~/Pictures/Rolls)
-    \\      [--roll <name>]              open this roll of the library in Develop
-    \\      [--workspace <name>]         rolls, scan, develop, export or looks
+    \\  minilab --version                print the version
+    \\  minilab --help                   print this help
+    \\  minilab open [<scan.ppm>...]     open the app, with these scans loaded outside any roll
+    \\      [--library <folder>]         your folder of rolls (default ~/Pictures/Rolls)
+    \\      [--roll <name>]              open this roll in Develop
+    \\      [--workspace <name>]         start in rolls, scan, develop, export or looks
     \\      [--shortcuts]                show the keyboard shortcuts
-    \\      [--screenshot <file.png>]    draw without a window and save the screen
+    \\      [--screenshot <file.png>]    draw the screen without a window and save it
     \\  minilab import <roll name> <scan>...
     \\      [--library <folder>] [--stock <name>] [--film colour|bw|slide]
-    \\      [--flat <file>]              add scans to a roll, making the roll if it's new: PPM or
-    \\                                   PGM, TIFF (16-bit linear) or camera RAW; a strip becomes
-    \\                                   a frame per frame on it. --flat keeps a shot of the
-    \\                                   light with no film as the roll's flat field and divides
-    \\                                   the frames by it
-    \\  minilab looks                    list the looks --look takes by name: neutral, frontier and
-    \\                                   the film looks; --look also takes a .cube file
+    \\      [--flat <file>]              add scans to a roll, and make the roll if it doesn't exist
+    \\                                   yet. Takes PPM or PGM, 16-bit linear TIFF or camera RAW.
+    \\                                   A strip scan becomes one frame per frame found on it.
+    \\                                   --flat is a shot of the light with no film in front of
+    \\                                   it: the roll keeps it as its flat field and divides each
+    \\                                   frame by it, to even out the light
+    \\  minilab looks                    list the looks you can give --look by name: neutral,
+    \\                                   frontier and the film looks. --look also takes a .cube
+    \\                                   file
     \\  minilab develop-roll <out folder> <scan>... [--look <look>]
     \\      [--film colour|bw] [--base r,g,b] [--stock <name>]
-    \\                                   develop scans of one 35mm roll together on one film base
+    \\                                   develop scans from one 35mm roll together, with one film
+    \\                                   base for all of them
     \\  minilab scan --list              list the scanners
     \\  minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
     \\      [--flatbed] [--film positive|negative]
-    \\                                   one scan, in mm from the scanner's origin, raw (Positive
-    \\                                   Film) by default; 300 dpi unless --dpi says otherwise
+    \\                                   make one scan of film, at 300 dpi unless you give
+    \\                                   --dpi. --area is in mm from the scanner's origin.
+    \\                                   --flatbed scans from the glass instead of the film
+    \\                                   light. The scan is raw (the scanner's Positive Film
+    \\                                   setting) unless you give --film negative, which lets
+    \\                                   the scanner adjust for the orange mask itself
     \\  minilab detect <scan> --dpi <n> [--film colour|bw|slide]
-    \\                                   list the 135 frames found on a strip scan, in mm
+    \\                                   list the 35mm frames found on a strip scan, in mm
     \\  minilab develop <scan> <out.tif|out.ppm> [--look <look>]
     \\      [--film colour|bw]
-    \\      [--depth 8|16] [--whole]     a scan of one 35mm frame, or of a strip, whose frames go
-    \\                                   to out-1.tif, out-2.tif and so on; --whole keeps all of
-    \\                                   the scan instead of cutting it to the frames found on it
-    \\      [--base r,g,b]               the film base's transmission, 0..1, instead of
-    \\                                   measuring it in the gaps beside the frame
-    \\      [--stock <name>]             straighten each layer by the stock's datasheet curve,
-    \\                                   as Develop does on a scanner not calibrated: "Kodak
-    \\                                   Portra 400", as minilab names it
+    \\      [--depth 8|16] [--whole]     develop a scan of one 35mm frame, or of a strip. A
+    \\                                   strip's frames go to out-1.tif, out-2.tif and so on.
+    \\                                   --whole keeps the whole scan instead of cutting out the
+    \\                                   frames found on it
+    \\      [--base r,g,b]               the film base's transmission, 0 to 1 per channel, so
+    \\                                   it isn't measured in the gaps next to the frame
+    \\      [--stock <name>]             correct each color layer with the stock's datasheet
+    \\                                   curve, like Develop does on a scanner that isn't
+    \\                                   calibrated. Use minilab's name for the stock, like
+    \\                                   "Kodak Portra 400"
     \\
 ;
 

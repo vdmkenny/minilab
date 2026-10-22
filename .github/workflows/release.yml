@@ -133,7 +133,7 @@ jobs:
         run: |
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | scripts/release-credits.sh)"
-          note="Scanning needs SANE on macOS and Linux, or the scanner maker's TWAIN driver on Windows: see the README. The macOS builds are not signed, so macOS blocks them at first; run \`xattr -d com.apple.quarantine minilab\` once to allow them. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          note="To scan, you need SANE on macOS and Linux, or your scanner maker's TWAIN driver on Windows (see the README). The macOS builds aren't signed, so macOS blocks them the first time you open one: run \`xattr -d com.apple.quarantine minilab\` once to let it through. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
 
           $changelog"
