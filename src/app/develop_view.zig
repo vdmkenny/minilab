@@ -29,6 +29,8 @@ const frame_columns = 2;
 const frame_gap = 8;
 const thumb_height = 58;
 const bottom_bar_height = 36;
+/// The temperature slider's steps, K.
+const kelvin_step = 50;
 /// The tallest a collection's look menu grows before it scrolls.
 const pack_menu_height = 480;
 
@@ -1395,10 +1397,31 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(6)));
         defer c.ImGui_PopStyleVar();
         const which = @backingInt(state.range);
-        if (gui.sliderRow("Temperature", &s.temperature[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
+        if (temperatureRow(&s.temperature[which])) state.changed();
         if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
     }
     gui.endSection(false);
+}
+
+/// The temperature slider: the light's, in K. It moves evenly in mired (a million over K), so that a
+/// step changes the colour as much at 3000 K as at 8000 K. True when it moved.
+fn temperatureRow(kelvin: *f32) bool {
+    c.ImGui_PushID("Temperature");
+    defer c.ImGui_PopID();
+    gui.rowLabel("Temperature");
+    var mired = 1e6 / kelvin.*;
+    var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
+    if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("The light it was shot in: 5500 K is daylight, which the balance is set for. Lower cools the picture, as for warm light; higher warms it.");
+    const shown = gui.print("{d:.0} K", .{kelvin.*});
+    gui.valueText(shown);
+    c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
+    const at = c.ImGui_GetCursorScreenPos();
+    if (gui.resetButton("reset", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
+        kelvin.* = develop.reference_kelvin;
+        changed = true;
+    }
+    return changed;
 }
 
 /// The stock: the roll's, for the whole roll, from the stocks of the frame's film type.

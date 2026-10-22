@@ -162,12 +162,13 @@ pub const Roll = struct {
         std.mem.sort([]const u8, names.items, {}, byNumber);
         for (names.items) |name| {
             const bytes = try dir.readFileAlloc(io, name, arena, .limited(max_json_bytes));
-            const frame = std.json.parseFromSliceLeaky(FrameSettings, arena, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| frame: {
+            var frame = std.json.parseFromSliceLeaky(FrameSettings, arena, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| frame: {
                 // One unreadable frame keeps its place, so the others keep their files, and the
                 // rest of the roll still opens.
                 std.log.err("{s}/{s}/{s} can't be read ({t}); the frame is left out of Develop", .{ path, frames_dir, name, err });
                 break :frame FrameSettings{ .scan = "" };
             };
+            upgrade(&frame.settings);
             try roll.frames.append(arena, frame);
         }
         return roll;
@@ -466,6 +467,14 @@ fn finite(comptime T: type, value: *T, default: T) void {
             if (!allFinite(o.child, inner)) value.* = null;
         },
         else => {},
+    }
+}
+
+/// Settings saved by an earlier minilab, brought up to date: temperatures from before they were in
+/// K, −100..100 then, as K.
+fn upgrade(settings: *develop.Settings) void {
+    for (&settings.temperature) |*t| {
+        if (t.* < develop.min_kelvin) t.* = develop.kelvinFromShift(t.*);
     }
 }
 

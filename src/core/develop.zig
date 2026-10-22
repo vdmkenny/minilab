@@ -12,7 +12,9 @@
 //! published equations; no darktable code is used. Output is linear, 0..1.
 //!
 //! The balance has two layers: the automatic per-channel balance of highlights and shadows, which
-//! the white balance mode sets, and the user's temperature and tint per tonal range on top.
+//! the white balance mode sets, and on top the colour of the light, as a temperature in K and a
+//! tint per tonal range. Light of another colour shifts each layer's exposure by a fixed amount,
+//! which the inversion undoes as a fixed shift per channel, the way a colour printing filter does.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -98,8 +100,17 @@ pub const WhiteBalance = enum {
     }
 };
 
-/// How much warmer or cooler the warm and cool balances are, as temperature.
+/// How much warmer or cooler the warm and cool balances are: a twelfth of a stop on red and blue.
 const warmth = 25;
+
+/// The light the balance as set counts as, K: daylight, which daylight film is balanced for.
+pub const reference_kelvin = 5500;
+/// The temperatures the light can be set to, K: from candlelight to open shade.
+pub const min_kelvin = 2000;
+pub const max_kelvin = 12000;
+/// A colour negative's contrast, density per log exposure, for how far a change in the light
+/// moves the inversion: the presets' straight parts are 0.5 to 0.7.
+const light_gamma = 0.6;
 
 /// The tonal ranges temperature and tint apply to.
 pub const Range = enum {
@@ -148,9 +159,10 @@ pub const Settings = struct {
     highlight_balance: [3]f32 = @splat(1),
     shadow_balance: [3]f32 = @splat(1),
     white_balance: WhiteBalance = .auto_neutral,
-    /// The user's temperature and tint per range, −100..100, on top of the balance. Positive
-    /// temperature is warmer, positive tint more magenta.
-    temperature: [3]f32 = @splat(0),
+    /// The colour of the light per range, on top of the balance: its temperature in K, where
+    /// `reference_kelvin` leaves the balance and lower is warmer light, which the picture is made
+    /// cooler for; and its tint, −100..100, positive more magenta.
+    temperature: [3]f32 = @splat(reference_kelvin),
     tint: [3]f32 = @splat(0),
     tone: Tone = .standard,
     /// Colour after the look, 0..2: 0 grey, 1 as it is. Applied by `saturate`.
@@ -165,53 +177,97 @@ pub const Settings = struct {
     }
 };
 
-/// Per-channel gains for `temperature` and `tint` (−100..100): ±100 is half a stop on red and
-/// blue for temperature, and on green for tint.
-pub fn gains(temperature: f32, tint: f32) [3]f32 {
-    const t = temperature / 200;
-    const m = tint / 200;
-    return .{ std.math.exp2(t + m / 2), std.math.exp2(-m), std.math.exp2(-t + m / 2) };
+/// Per-channel slope gains for the warm and cool balances: `shift` of ±100 is half a stop on red
+/// and blue.
+fn warmthGains(shift: f32) [3]f32 {
+    const t = shift / 200;
+    return .{ std.math.exp2(t), 1, std.math.exp2(-t) };
 }
 
-/// How strongly midtone gains bend each channel's curve.
-const midtone_strength = 0.5;
+/// The exposure each layer needs, against green, to make a grey lit by light of `kelvin` and `tint`
+/// come out as one lit at `reference_kelvin`: the black body's colour at the reference over its
+/// colour at `kelvin`, and ±100 tint half a stop on green.
+pub fn lightGains(kelvin: f32, tint: f32) [3]f32 {
+    const reference = blackBody(reference_kelvin);
+    const light = blackBody(std.math.clamp(kelvin, min_kelvin, max_kelvin));
+    const m = tint / 200;
+    return .{ reference[0] / light[0] * std.math.exp2(m / 2), std.math.exp2(-m), reference[2] / light[2] * std.math.exp2(m / 2) };
+}
+
+/// A black body's colour at `kelvin` (1667 to 25000), in linear sRGB with green 1: its
+/// chromaticity by Kim et al.'s cubic fit to the Planckian locus, then sRGB's primaries.
+fn blackBody(kelvin: f32) [3]f32 {
+    const t: f64 = kelvin;
+    const x = if (t <= 4000)
+        -0.2661239e9 / (t * t * t) - 0.2343589e6 / (t * t) + 0.8776956e3 / t + 0.179910
+    else
+        -3.0258469e9 / (t * t * t) + 2.1070379e6 / (t * t) + 0.2226347e3 / t + 0.240390;
+    const y = if (t <= 2222)
+        -1.1063814 * x * x * x - 1.34811020 * x * x + 2.18555832 * x - 0.20219683
+    else if (t <= 4000)
+        -0.9549476 * x * x * x - 1.37418593 * x * x + 2.09137015 * x - 0.16748867
+    else
+        3.0817580 * x * x * x - 5.87338670 * x * x + 3.75112997 * x - 0.37001483;
+    const xyz = [3]f64{ x / y, 1, (1 - x - y) / y };
+    const to_srgb = [3][3]f64{
+        .{ 3.2404542, -1.5371385, -0.4985314 },
+        .{ -0.9692660, 1.8760108, 0.0415560 },
+        .{ 0.0556434, -0.2040259, 1.0572252 },
+    };
+    var rgb: [3]f64 = undefined;
+    for (&rgb, to_srgb) |*v, row| v.* = row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2];
+    // A very warm light's blue is all but nothing: kept above it, so that it divides.
+    return .{ @floatCast(@max(rgb[0], 1e-4) / rgb[1]), 1, @floatCast(@max(rgb[2], 1e-4) / rgb[1]) };
+}
+
+/// A temperature on the scale before kelvin, −100..100, as K: ±100 moved red and blue half a
+/// stop each, about 73 mired, the same as from 5500 K to 9200 K.
+pub fn kelvinFromShift(shift: f32) f32 {
+    const mired_per_step = 0.726;
+    const mired = 1e6 / @as(f32, reference_kelvin) - shift * mired_per_step;
+    return std.math.clamp(1e6 / mired, min_kelvin, max_kelvin);
+}
 
 /// Values that depend only on the settings, worked out once per render.
 pub const Prepared = struct {
     settings: Settings,
     slope: [3]f32,
     shift: [3]f32,
-    contrast: [3]f32,
+    contrast: f32,
     roll_off: f32,
     lift: f32,
     /// 1 for B&W, which has no colour to change.
     saturation: f32,
+    /// Per range, per channel, the shift that undoes the light's colour; 0 for B&W.
+    light: [3][3]f32,
 
     pub fn init(settings: Settings) Prepared {
         var prepared: Prepared = .{
             .settings = settings,
             .slope = undefined,
             .shift = undefined,
-            .contrast = undefined,
+            .contrast = switch (settings.tone) {
+                .standard, .log => settings.contrast,
+                .soft => settings.contrast * soft_contrast,
+                .hard => settings.contrast * hard_contrast,
+                .linear => 1,
+            },
             .roll_off = if (settings.tone == .linear) 1 else settings.roll_off,
             .lift = -settings.exposure * (1 + settings.black),
             .saturation = if (settings.kind.isMonochrome()) 1 else settings.saturation,
+            .light = @splat(@splat(0)),
         };
-        const contrast: f32 = switch (settings.tone) {
-            .standard, .log => settings.contrast,
-            .soft => settings.contrast * soft_contrast,
-            .hard => settings.contrast * hard_contrast,
-            .linear => 1,
-        };
-        const highlights = gains(settings.temperature[@backingInt(Range.highlights)], settings.tint[@backingInt(Range.highlights)]);
-        const midtones = gains(settings.temperature[@backingInt(Range.midtones)], settings.tint[@backingInt(Range.midtones)]);
-        const shadows = gains(settings.temperature[@backingInt(Range.shadows)], settings.tint[@backingInt(Range.shadows)]);
         for (0..3) |i| {
-            const high = settings.highlight_balance[i] * highlights[i];
-            const low = settings.shadow_balance[i] / shadows[i];
+            const high = settings.highlight_balance[i];
             prepared.slope[i] = high / settings.density_range;
-            prepared.shift[i] = high * settings.offset * low;
-            prepared.contrast[i] = contrast * std.math.pow(f32, midtones[i], -midtone_strength);
+            prepared.shift[i] = high * settings.offset * settings.shadow_balance[i];
+        }
+        if (!settings.kind.isMonochrome()) {
+            // More exposure in a layer is more density, which comes out brighter: log10 of the gain
+            // in exposure, times the film's contrast, over the density range.
+            for (&prepared.light, settings.temperature, settings.tint) |*range, kelvin, tint| {
+                for (range, lightGains(kelvin, tint)) |*l, gain| l.* = -light_gamma * std.math.log10(gain) / settings.density_range;
+            }
         }
         return prepared;
     }
@@ -237,12 +293,30 @@ fn densityAbove(curves: ?*const stock_curves.Curves, c: usize, base: f32, t: f32
     return if (curves) |cv| cv.layer(c, d) else d;
 }
 
+/// How much each range's light counts at the tone `c`, green's place on the curve: 0 at the base,
+/// in the deepest shadows, to −1 at the density range, in the highlights. They sum to 1, so the
+/// same light in every range is the same shift at every tone.
+fn rangeWeights(c: f32) [3]f32 {
+    const t = std.math.clamp(-c, 0, 1);
+    var w: [3]f32 = undefined;
+    w[@backingInt(Range.highlights)] = t * t;
+    w[@backingInt(Range.midtones)] = 2 * t * (1 - t);
+    w[@backingInt(Range.shadows)] = (1 - t) * (1 - t);
+    return w;
+}
+
 fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
     const s = prepared.settings;
     const roll_off = prepared.roll_off;
+    const contrast = prepared.contrast;
+    var curve: [3]f32 = undefined;
+    for (&curve, d, prepared.slope, prepared.shift) |*c, v, slope, shift| c.* = slope * v + shift;
+    const weights = rangeWeights(curve[1]);
+    for (&curve, 0..) |*c, channel| {
+        for (weights, prepared.light) |w, range| c.* += w * range[channel];
+    }
     var y: [3]f32 = undefined;
-    for (&y, d, prepared.slope, prepared.shift, prepared.contrast) |*out, v, slope, shift, contrast| {
-        const c = slope * v + shift;
+    for (&y, curve) |*out, c| {
         if (s.tone == .log) {
             // The file holds the density itself; undo the encoding's curve in advance.
             out.* = encode.linearFromSrgb(std.math.clamp(-c, 0, 1));
@@ -478,7 +552,7 @@ pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picke
             s.highlight_balance = neutral.highlight_balance;
             s.shadow_balance = neutral.shadow_balance;
             if (mode != .auto_neutral) {
-                const g = gains(if (mode == .auto_warm) warmth else -warmth, 0);
+                const g = warmthGains(if (mode == .auto_warm) warmth else -warmth);
                 for (&s.highlight_balance, &s.shadow_balance, g) |*high, *low, gain| {
                     high.* *= gain;
                     low.* /= gain;
@@ -591,13 +665,36 @@ test "saturation keeps luminance and hue, and 0 is grey" {
     try std.testing.expectEqual([3]f32{ 0.4, 0.4, 0.4 }, bw[0]);
 }
 
-test "positive temperature warms the highlights" {
+test "warm light makes the picture cooler, and the reference changes nothing" {
     var settings: Settings = .{ .base = .{ 0.8, 0.5, 0.3 }, .offset = 0 };
     const raw: [3]u16 = .{ 3000, 1500, 800 };
     const before = pixel(.init(settings), raw);
-    settings.temperature[@backingInt(Range.highlights)] = 50;
-    const after = pixel(.init(settings), raw);
-    try std.testing.expect(after[0] > before[0] and after[2] < before[2]);
+    settings.temperature = @splat(3200);
+    const tungsten = pixel(.init(settings), raw);
+    try std.testing.expect(tungsten[0] < before[0] and tungsten[2] > before[2]);
+    settings.temperature = @splat(8000);
+    const shade = pixel(.init(settings), raw);
+    try std.testing.expect(shade[0] > before[0] and shade[2] < before[2]);
+    for (lightGains(reference_kelvin, 0)) |g| try std.testing.expectApproxEqAbs(@as(f32, 1), g, 1e-5);
+    // A black body near 6500 K is near sRGB's white.
+    for (blackBody(6500)) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 0.1);
+}
+
+test "the same light in every range shifts every tone alike" {
+    for ([_]f32{ 0, -0.2, -0.5, -0.8, -1 }) |c| {
+        var sum: f32 = 0;
+        for (rangeWeights(c)) |w| sum += w;
+        try std.testing.expectApproxEqAbs(@as(f32, 1), sum, 1e-6);
+    }
+    // Highlights count in the highlights, shadows in the shadows.
+    try std.testing.expectEqual(@as(f32, 1), rangeWeights(-1)[@backingInt(Range.highlights)]);
+    try std.testing.expectEqual(@as(f32, 1), rangeWeights(0)[@backingInt(Range.shadows)]);
+}
+
+test "temperatures saved before K convert" {
+    try std.testing.expectApproxEqAbs(@as(f32, reference_kelvin), kelvinFromShift(0), 1e-3);
+    try std.testing.expect(kelvinFromShift(100) > 9000 and kelvinFromShift(100) < 9400);
+    try std.testing.expect(kelvinFromShift(-100) < reference_kelvin);
 }
 
 test "the stock balance takes the stock's slopes, and the frame's own shadows" {
@@ -695,7 +792,7 @@ test "a new stock measures the frame again and keeps the user's choices" {
     var settings = automatic(.colour_negative, base, stats, null);
     settings.contrast = 5;
     settings.saturation = 1.3;
-    settings.temperature[1] = 20;
+    settings.temperature[1] = 6000;
     const slopes = [3]f32{ 1.3, 1, 0.9 };
     const restocked_settings = restocked(settings, stats, curves, slopes);
     try std.testing.expect(restocked_settings.stock_curves != null);
@@ -706,7 +803,7 @@ test "a new stock measures the frame again and keeps the user's choices" {
     // The user's choices stay.
     try std.testing.expectEqual(@as(f32, 5), restocked_settings.contrast);
     try std.testing.expectEqual(@as(f32, 1.3), restocked_settings.saturation);
-    try std.testing.expectEqual(@as(f32, 20), restocked_settings.temperature[1]);
+    try std.testing.expectEqual(@as(f32, 6000), restocked_settings.temperature[1]);
     // No stock: no curves, and a stock balance goes back to Auto neutral.
     const none = restocked(restocked_settings, stats, null, null);
     try std.testing.expectEqual(null, none.stock_curves);

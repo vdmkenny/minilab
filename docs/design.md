@@ -342,9 +342,17 @@ Each stage has its own parameters; presets set some or all of them.
    - darktable's `(1 + black − 10^c)^gamma` with highlight roll-off is one curve shape. It stays the default,
      and gives the same output as darktable for the same parameters.
    - A table lets the curves come from datasheet data or a fitted lab scanner instead.
-6. **Tone and colour.** Tone profile curve, highlight/midtone/shadow balance. Then the look
-   (section 9), then saturation: each pixel mixed with its own luminance in linear light, which
-   keeps its hue and luminance.
+6. **Tone and colour.** Tone profile curve, and the colour of the light per tonal range: a
+   temperature in K and a tint. Light of another colour shifts each layer's exposure by a fixed
+   amount, a fixed density on the negative, so the inversion undoes it with a fixed shift per
+   channel, as a colour printing filter does: the black body's colour at 5500 K (daylight, which
+   daylight film is balanced for, and where the balance as set counts) over its colour at the
+   temperature, as log exposure, times a colour negative's contrast (0.6), over the density
+   range. Highlights, midtones and shadows each have their own, weighted by the tone so that the
+   same light in all three is the same shift everywhere. The camera's own white balance in a raw
+   file only describes the light behind the film, which the film base cancels, so it isn't read.
+   Then the look (section 9), then saturation: each pixel mixed with its own luminance in linear
+   light, which keeps its hue and luminance.
 7. **Output.** Linear Rec.2020 internally.
    - lcms2 converts to the display profile for the viewer (SDL3 provides the window's ICC
      profile).
