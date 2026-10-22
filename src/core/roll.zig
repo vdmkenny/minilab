@@ -74,6 +74,9 @@ pub const Info = struct {
     name: []const u8,
     kind: develop.FilmKind = .colour_negative,
     stock: ?[]const u8 = null,
+    /// Whether the stock's datasheet corrects the frames: its curves, and on a calibrated scanner
+    /// its balance. Off, the stock is the roll's metadata alone.
+    stock_corrections: bool = true,
     /// One format for the whole roll.
     format: formats.Standard = .default,
     /// The day the roll was made here, YYYY-MM-DD.
@@ -748,4 +751,14 @@ test "frames keep their files past 99, and numbers that aren't finite aren't sav
     finite(develop.Settings, &settings, .{});
     try std.testing.expectEqual((develop.Settings{}).highlight_balance, settings.highlight_balance);
     try std.testing.expectEqual((develop.Settings{}).contrast, settings.contrast);
+}
+
+test "a roll saved before the stock's corrections could be turned off has them on" {
+    const gpa = std.testing.allocator;
+    const old = try std.json.parseFromSlice(Info, gpa, "{\"name\":\"Roll 1\",\"stock\":\"Kodak Portra 400\"}", .{ .ignore_unknown_fields = true });
+    defer old.deinit();
+    try std.testing.expect(old.value.stock_corrections);
+    const off = try std.json.parseFromSlice(Info, gpa, "{\"name\":\"Roll 1\",\"stock_corrections\":false}", .{ .ignore_unknown_fields = true });
+    defer off.deinit();
+    try std.testing.expect(!off.value.stock_corrections);
 }

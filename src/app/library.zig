@@ -113,17 +113,18 @@ pub const Library = struct {
     }
 
     /// The roll's stock's layer slopes on its scanner, for Stock balance: when the stock has a
-    /// preset with gammas and the scanner is calibrated.
+    /// preset with gammas, its corrections are on and the scanner is calibrated.
     pub fn stockSlopes(library: *const Library, rl: *const roll.Roll) ?[3]f32 {
-        if (rl.info.kind != .colour_negative) return null;
+        if (rl.info.kind != .colour_negative or !rl.info.stock_corrections) return null;
         const gamma = labels.stockGamma(rl.info.stock) orelse return null;
         const factors = library.calibrations.factors(scannerOf(rl.info) orelse return null) orelse return null;
         return minilab.calibration.stockSlopes(factors, gamma);
     }
 
     /// The roll's stock's curves on its scanner, for frames of film `kind`: null without a stock
-    /// with curves, or for film of another kind.
+    /// with curves, with its corrections off, or for film of another kind.
     pub fn stockCurves(library: *const Library, rl: *const roll.Roll, kind: minilab.develop.FilmKind) ?minilab.stock_curves.Curves {
+        if (!rl.info.stock_corrections) return null;
         const choice = labels.findStock(rl.info.stock orelse return null) orelse return null;
         const preset = choice.preset orelse return null;
         if (choice.kind != kind) return null;

@@ -418,6 +418,8 @@ white balance.
   1 / its calibration factor, green taken as reading Status M; without a calibration, 1. On our
   V200's Superia X-TRA 400 frames, the calibrated scale keeps neutrals neutral where Status M's
   leaves a slight magenta in the light greys.
+- Datasheet corrections, a checkbox under Stock, on by default, turns the curves and the stock's
+  balance off for the roll: the stock is then only its metadata.
 - Choosing a stock, or calibrating, measures the roll's developed frames again with the curves: the
   density range, offset and balance; the user's other settings stay. Frames not developed yet get
   the curves when they're opened. On a calibrated scanner, frames on Auto neutral take the stock's

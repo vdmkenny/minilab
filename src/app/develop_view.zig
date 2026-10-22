@@ -1449,11 +1449,18 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    if (labels.findStock(info.stock orelse "")) |choice| {
-        if (choice.preset) |preset| {
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
-        } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No preset: the maker publishes no numbers for this stock.");
+    const choice = labels.findStock(info.stock orelse "") orelse return;
+    if (choice.preset) |preset| {
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
+    } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No preset: the maker publishes no numbers for this stock.");
+    // With a preset there's something to correct by; off, the stock is only the roll's metadata.
+    if (choice.preset == null) return;
+    gui.rowLabel("");
+    if (gui.checkbox("Datasheet corrections", &info.stock_corrections)) {
+        library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
+        state.applyStock(gpa, io, library, r);
     }
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Straightens each layer by the stock's datasheet curve, and on a calibrated scanner balances by the stock. Off, the stock is only the roll's metadata.");
 }
 
 /// The film base: its colour, where it comes from, and picking it.
