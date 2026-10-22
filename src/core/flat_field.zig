@@ -1,42 +1,42 @@
-//! The flat field of a camera roll (design sections 5 and 7, "Linearise"): a shot of the light
-//! source with no film in front of it, at the frames' exposure. Light sources are rarely even and
-//! lenses darken towards the corners, so the shot is brighter in the middle than at the edges, and
-//! so is every frame. Smoothed, and divided by its brightest value per channel, the shot gives a
-//! gain between 0 and 1 at each point. Dividing a frame by it evens the light out, so that the
-//! film base reads the same across the frame.
+//! The flat field of a camera roll (design sections 5 and 7, "Linearise"). It's a shot of the
+//! light source with no film in front of it, at the same exposure as the frames. Light sources are
+//! rarely even, and lenses get darker towards the corners, so the shot is brighter in the middle
+//! than at the edges, and so is every frame. Once we smooth the shot and divide it by its
+//! brightest value per channel, it gives a gain between 0 and 1 at each point. Dividing a frame by
+//! that evens out the light, so the film base reads the same all across the frame.
 //!
-//! Smoothing: the shot is averaged over a coarse grid of cells, `grid_longest` along its longer
-//! side, and the grid is blurred over each cell's neighbours. Past the grid's edges it is extended
-//! by its own slope, so that the blur doesn't pull the edges towards the middle. Gains between
-//! cell centres are interpolated linearly, and extrapolated the same way in the half cell at each
-//! edge. Noise and dust on the light source disappear; the fall-off, which changes slowly, stays.
+//! Smoothing: we average the shot over a coarse grid of cells, `grid_longest` along its longer
+//! side, and blur the grid over each cell's neighbours. Past the grid's edges we extend it along
+//! its own slope, so the blur doesn't pull the edges towards the middle. Gains between cell
+//! centres are interpolated linearly, and extrapolated the same way in the half cell at each edge.
+//! Noise and dust on the light source disappear, and the fall-off, which changes slowly, stays.
 
 const std = @import("std");
 const image = @import("image.zig");
 
-/// Cells along the shot's longer side.
+/// How many cells go along the shot's longer side.
 pub const grid_longest = 64;
-/// The blur's reach, in cells either side.
+/// How far the blur reaches, in cells on either side.
 const blur_cells = 1;
 /// The smallest gain a frame is divided by. A corner darker than this is mostly the lens hood or
 /// the holder, and dividing by less would only bring up noise.
 const least_gain = 0.05;
 
 pub const Error = error{
-    /// The frame and the flat field are of different sizes: from another camera, or turned.
+    /// The frame and the flat field are different sizes: from another camera, or turned.
     FlatFieldSize,
     /// Some channel of the shot is black everywhere: no light reached the sensor.
     DarkFlatField,
 };
 
 pub const FlatField = struct {
-    /// The shot's size, which a frame's must match.
+    /// The shot's size. A frame has to be the same size.
     width: usize,
     height: usize,
     /// The gain per channel at each cell's centre, with 1 at the brightest.
     gains: image.Image([image.channel_count]f32),
 
-    /// The flat field from `shot`, the light source photographed with no film.
+    /// Makes the flat field from `shot`, a photo of the light source with no film.
     pub fn init(gpa: std.mem.Allocator, shot: image.Scan) (Error || std.mem.Allocator.Error)!FlatField {
         if (shot.width == 0 or shot.height == 0) return error.DarkFlatField;
         const longest = @max(shot.width, shot.height);
@@ -81,7 +81,7 @@ pub const FlatField = struct {
         flat.* = undefined;
     }
 
-    /// The gain per channel at the centre of pixel (`x`, `y`) of a frame.
+    /// Returns the gain per channel at the centre of pixel (`x`, `y`) of a frame.
     pub fn gainAt(flat: *const FlatField, x: usize, y: usize) [image.channel_count]f32 {
         const u: Between = .of(x, flat.width, flat.gains.width);
         const v: Between = .of(y, flat.height, flat.gains.height);
@@ -111,14 +111,14 @@ pub const FlatField = struct {
 };
 
 /// Where the centre of a pixel falls between the centres of the two nearest cells along an axis:
-/// the two cells, and how far it is from the lower one, 0 to 1 between them and past that in the
-/// half cell at either edge.
+/// the two cells, and how far it is from the lower one. That's 0 to 1 between them, and goes past
+/// that range in the half cell at either edge.
 const Between = struct {
     low: usize,
     high: usize,
     t: f32,
 
-    /// For pixel `at` of `size` along an axis of `cells` cells.
+    /// Works it out for pixel `at` of `size`, along an axis of `cells` cells.
     fn of(at: usize, size: usize, cells: usize) Between {
         if (cells == 1) return .{ .low = 0, .high = 0, .t = 0 };
         const cell = @as(f32, @floatFromInt(size)) / @as(f32, @floatFromInt(cells));
@@ -128,8 +128,8 @@ const Between = struct {
     }
 };
 
-/// The cells along a side of `size` pixels, when the longer side is `longest`: in proportion, at
-/// least 1, and no more than the pixels.
+/// How many cells go along a side of `size` pixels when the longer side has `longest`: in
+/// proportion, at least 1, and no more than there are pixels.
 fn cellsAlong(size: usize, longest: usize) usize {
     const cells = @max(1, (size * grid_longest + longest / 2) / longest);
     return @min(cells, size);
@@ -139,8 +139,8 @@ fn lerp(a: f32, b: f32, t: f32) f32 {
     return a + (b - a) * t;
 }
 
-/// Blurs `grid` over `blur_cells` either side, one axis at a time, with the grid extended past its
-/// edges by continuing its slope.
+/// Blurs `grid` over `blur_cells` on either side, one axis at a time. Past its edges, the grid
+/// carries on along its own slope.
 fn blur(gpa: std.mem.Allocator, grid: *image.Image([image.channel_count]f32)) !void {
     const Cell = [image.channel_count]f32;
     const line = try gpa.alloc(Cell, @max(grid.width, grid.height));
@@ -156,7 +156,7 @@ fn blur(gpa: std.mem.Allocator, grid: *image.Image([image.channel_count]f32)) !v
     }
 }
 
-/// The blur of `from` along one line, into every `stride`th cell of `to`.
+/// Blurs `from` along one line, writing into every `stride`th cell of `to`.
 fn blurLine(from: []const [image.channel_count]f32, to: [][image.channel_count]f32, stride: usize) void {
     const n: isize = @intCast(from.len);
     for (from, 0..) |_, i| {
@@ -170,8 +170,8 @@ fn blurLine(from: []const [image.channel_count]f32, to: [][image.channel_count]f
     }
 }
 
-/// Cell `at` of `line`, `n` cells long, where `at` may be past either end: there the line goes
-/// on in a straight line through its last two cells.
+/// Returns cell `at` of `line`, which is `n` cells long. `at` can be past either end, and there
+/// the line carries on straight through its last two cells.
 fn extended(line: []const [image.channel_count]f32, at: isize, n: isize) [image.channel_count]f32 {
     if (at >= 0 and at < n) return line[@intCast(at)];
     if (n == 1) return line[0];
@@ -183,8 +183,8 @@ fn extended(line: []const [image.channel_count]f32, at: isize, n: isize) [image.
     return cell;
 }
 
-/// A light falling off from the middle as `1 − fall_off · r²`, `r` 1 at the corners, at `peak`
-/// in each channel.
+/// A light that falls off from the middle as `1 − fall_off · r²`, with `r` 1 at the corners, and
+/// `peak` in each channel.
 fn testLight(gpa: std.mem.Allocator, width: usize, height: usize, peak: [image.channel_count]f32, fall_off: f32) !image.Scan {
     const scan: image.Scan = try .init(gpa, width, height);
     const cx = @as(f32, @floatFromInt(width)) / 2;
@@ -201,7 +201,7 @@ fn testLight(gpa: std.mem.Allocator, width: usize, height: usize, peak: [image.c
     return scan;
 }
 
-/// The largest over the smallest value of `channel` in `scan`.
+/// The largest value of `channel` in `scan`, over the smallest.
 fn spread(scan: image.Scan, channel: usize) f32 {
     var low: u16 = std.math.maxInt(u16);
     var high: u16 = 0;
@@ -229,7 +229,7 @@ test "a frame of even film comes out even once divided by the flat field" {
     defer frame.deinit(gpa);
     try std.testing.expect(spread(frame, 0) > 1.5);
     try flat.apply(frame);
-    // Even to within a per cent, and the middle at what the film passes of the brightest light.
+    // Even to within a per cent, with the middle at the film's share of the brightest light.
     const evenness = 1.01;
     for (0..image.channel_count) |channel| try std.testing.expect(spread(frame, channel) < evenness);
     const middle = frame.at(width / 2, height / 2);

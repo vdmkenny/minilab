@@ -1,10 +1,10 @@
-//! The Looks workspace: the looks a frame can be developed with, and making a look of one's own
-//! from pairs of images: our raw scan of a negative, and a reference rendering of the same
+//! The Looks workspace: the looks a frame can be developed with, and making your own look from
+//! pairs of images. Each pair is our raw scan of a negative and a reference rendering of the same
 //! negative, such as a lab's Frontier or Noritsu scan. See the design's Looks.dc.html.
 //!
 //! The work itself is in src/looks. Reading, lining up and fitting run off the page's thread
-//! (`looks.work`); the page starts a job, shows how far it got, and takes its results when it's
-//! done.
+//! (`looks.work`): the page starts a job, shows how far it's got, and picks up the results when
+//! it's done.
 
 const std = @import("std");
 const c = @import("c");
@@ -36,26 +36,29 @@ const main_padding_y = 16;
 const model_padding = 16;
 const table_min_width = 620;
 const figure_gap = 12;
-/// The labels' column beside a collection's credit and license.
+/// The width of the label column next to a collection's credit and licence.
 const pack_label_width = 90;
-/// The longer side of the Develop frame as the previews render it.
+/// How long the longer side of the Develop frame is in the previews.
 const preview_longest = 360;
-/// The tallest a preview of one look is drawn.
+/// The tallest a single look's preview is drawn.
 const preview_max_height = 320;
-/// Previews rendered each frame, so that a collection's fill in without holding up the page.
+/// How many previews to render each frame, so a collection's previews fill in without holding up
+/// the page.
 const previews_per_frame = 3;
-/// A collection's preview tiles: the narrowest and the tallest one, and the gap between them.
+/// The narrowest and the tallest tile in a collection's grid of previews.
 const tile_min_width = 150;
 const tile_max_height = 170;
 /// The height of the buttons under a look's preview.
 const use_button_height = 30;
+/// The gap between preview tiles.
 const tile_gap = 10;
 /// The figures are 3:2.
 const figure_ratio = 2.0 / 3.0;
-/// The figures' images, at most this many pixels across.
+/// The figures' images are at most this many pixels across.
 const view_longest = 640;
 
-/// A registration this good or better counts as lined up; below the second, as not.
+/// A registration at least this good counts as lined up, and one below the second value as not
+/// lined up.
 const aligned_quality = 0.8;
 const poor_quality = 0.5;
 
@@ -65,31 +68,31 @@ const Selected = union(enum) {
     frontier,
     /// A collection of bundled looks.
     pack: bundled.Pack,
-    /// An imported LUT, an index in `State.imported`.
+    /// An imported LUT, as an index into `State.imported`.
     imported: usize,
     own: usize,
 };
 
-/// A look of the user's, in the library's Looks folder.
+/// One of the user's own looks, in the library's Looks folder.
 const Own = struct {
     name: []u8,
     path: []u8,
-    /// Whether look.json is there, so that Develop can use it.
+    /// Whether look.json exists, so Develop can use the look.
     saved: bool,
-    /// The pairs' strings.
+    /// Holds the pairs' strings.
     arena: std.heap.ArenaAllocator,
     references: draft.Source = .frontier_software,
     options: fit.Options = .{},
     pairs: std.ArrayList(draft.Pair) = .empty,
-    /// Each pair read, once it is; or whether it couldn't be.
+    /// Each pair once it's been read (`prepared`), and whether it couldn't be read (`failed`).
     prepared: std.ArrayList(?*pairs.Prepared) = .empty,
     failed: std.ArrayList(bool) = .empty,
     /// Each pair's balance offsets from the last fit.
     balance: std.ArrayList([3]f32) = .empty,
     result: ?fit.Result = null,
-    /// Whether the pairs or the choices changed since the fit.
+    /// Whether the pairs or the choices have changed since the fit.
     stale: bool = false,
-    /// Whether the fit on hand is the one saved.
+    /// Whether the current fit is the one that's saved.
     kept: bool = false,
 
     fn open(gpa: std.mem.Allocator, io: std.Io, entry: looks.saved.Entry) !Own {
@@ -123,7 +126,7 @@ const Own = struct {
         own.arena.deinit();
     }
 
-    /// Adds `pair`, its strings copied.
+    /// Adds `pair`, with copies of its strings.
     fn append(own: *Own, gpa: std.mem.Allocator, pair: draft.Pair) !void {
         const a = own.arena.allocator();
         var copy = pair;
@@ -131,7 +134,7 @@ const Own = struct {
         copy.label = try a.dupe(u8, pair.label);
         copy.theirs = try a.dupe(u8, pair.theirs);
         copy.stock = if (pair.stock) |s| try a.dupe(u8, s) else null;
-        // The four lists run in step, so room in all of them first.
+        // The four lists stay in step, so make room in all of them first.
         try own.pairs.ensureUnusedCapacity(gpa, 1);
         try own.prepared.ensureUnusedCapacity(gpa, 1);
         try own.failed.ensureUnusedCapacity(gpa, 1);
@@ -170,15 +173,15 @@ const Own = struct {
         return n;
     }
 
-    /// Pairs not read yet that can be.
+    /// How many pairs haven't been read yet but can be.
     fn unread(own: *const Own) usize {
         var n: usize = 0;
         for (own.prepared.items, own.failed.items) |p, f| n += @intFromBool(p == null and !f);
         return n;
     }
 
-    /// The badge: Saved once look.json holds the fit on hand, Fitted once there is a fit that
-    /// isn't saved, and Draft until then.
+    /// The badge: Saved once look.json holds the current fit, Fitted when there's a fit that isn't
+    /// saved yet, and Draft before that (or once the fit is out of date).
     fn status(own: *const Own) []const u8 {
         if (own.result != null and !own.kept) return if (own.stale) "Draft" else "Fitted";
         return if (own.saved) "Saved" else "Draft";
@@ -191,7 +194,7 @@ const Figures = struct {
     neutral: ?Texture = null,
     reference: ?Texture = null,
     difference: ?Texture = null,
-    /// The pair's median ΔE2000 with the fit, when there's a fit.
+    /// The pair's median ΔE2000 after the fit, when there is a fit.
     median: ?f32 = null,
 
     const Key = struct { look: usize, pair: usize, prepared: *const pairs.Prepared, aligned: bool, generation: u32 };
@@ -206,18 +209,18 @@ const Figures = struct {
     }
 };
 
-/// The frame open in Develop, rendered with Neutral and with the selected look, or with each look
-/// of the selected collection: what a look does to a picture, before it's used.
+/// The frame that's open in Develop, rendered with Neutral and the selected look, or with each
+/// look in the selected collection. They show what a look does to a picture before you use it.
 const Previews = struct {
     key: ?Key = null,
-    /// The frame, reduced, and its settings in Develop.
+    /// A reduced copy of the frame, and its settings in Develop.
     small: ?minilab.image.Scan = null,
     settings: minilab.develop.Settings = .{},
     /// The looks shown, Neutral first, and their renders as they're made.
     ids: std.ArrayList(minilab.look.Id) = .empty,
     tiles: std.ArrayList(Tile) = .empty,
 
-    /// What the previews were made from: when it changes, they're made again.
+    /// What the previews were made from. When it changes, they're made again.
     const Key = struct {
         selected: Selected,
         pixels: [*]const [3]u16,
@@ -278,7 +281,7 @@ const Previews = struct {
     }
 };
 
-/// `small` with `settings` and the look `id`, on the GPU.
+/// Renders `small` with `settings` and the look `id`, and puts the result on the GPU.
 fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: minilab.develop.Settings, id: minilab.look.Id) !Texture {
     const gpa = ctx.gpa;
     var linear = try minilab.look.render(gpa, small, settings, ctx.library.looks.resolve(gpa, ctx.io, id));
@@ -294,7 +297,7 @@ fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: mini
 const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
-/// What "Add pairs" opens.
+/// The file types "Add pairs" lets you pick.
 const pair_files = [_]c.SDL_DialogFileFilter{
     .{ .name = "Scans and references (PPM, JPEG, TIFF)", .pattern = "ppm;jpg;jpeg;tif;tiff" },
 };
@@ -312,7 +315,7 @@ pub const State = struct {
     /// The selected pair of the selected look.
     pair: usize = 0,
     job: ?*work.Job = null,
-    /// The look the job works for, and what it does.
+    /// The look the job is working on, and what it's doing.
     job_look: usize = 0,
     doing: Doing = .reading,
     /// For a fit: each pair's place in the job's list.
@@ -320,7 +323,7 @@ pub const State = struct {
     dialog: Dialog = .{ .filters = &pair_files, .many = true },
     figures: Figures = .{},
     previews: Previews = .{},
-    /// Counts fits, so that the figures know when to work out the difference again.
+    /// Counts fits, so the figures know when to work out the difference again.
     generation: u32 = 0,
     rename: [128:0]u8 = @splat(0),
 
@@ -337,13 +340,13 @@ pub const State = struct {
         state.dialog.deinit(gpa);
     }
 
-    /// Whether everything the page shows has loaded: for a screenshot, which waits for it.
-    /// Whether previews are still to be rendered, a few each frame.
+    /// Whether previews are still waiting to be rendered, a few each frame.
     pub fn rendering(state: *const State) bool {
         for (state.previews.tiles.items) |tile| if (tile == .waiting) return true;
         return false;
     }
 
+    /// Whether everything on the page has loaded. A screenshot waits for this.
     pub fn settled(state: *const State) bool {
         if (!state.loaded or state.job != null or state.rendering()) return false;
         const own = state.current() orelse return true;
@@ -353,10 +356,10 @@ pub const State = struct {
         return state.figures.key != null;
     }
 
-    /// Adds `paths`, scans and references, to the selected look as pairs: for files dropped on
-    /// the window while the page shows. Our raw scans are PPM files and references JPEG or
-    /// TIFF; references on their own are matched to the frames of the roll open in Develop, or
-    /// of the whole library.
+    /// Adds `paths` (scans and references) to the selected look as pairs. It's for files dropped
+    /// on the window while this page is showing. Our raw scans are PPM files, and references are
+    /// JPEG or TIFF. References without a scan are matched to the frames of the roll open in
+    /// Develop, or of the whole library.
     pub fn addFiles(state: *State, ctx: context.Context, paths: []const []const u8) void {
         const index = switch (state.selected) {
             .own => |i| i,
@@ -391,7 +394,7 @@ pub const State = struct {
                 ctx.notice.set("{d} scans and {d} references: choose as many of each, or references alone.", .{ ours.items.len, theirs.items.len });
                 return;
             }
-            // Paired in the order of their names.
+            // Pair them up in name order.
             std.mem.sort([]const u8, ours.items, {}, byName);
             std.mem.sort([]const u8, theirs.items, {}, byName);
             for (ours.items, theirs.items) |o, t| {
@@ -437,14 +440,14 @@ pub const State = struct {
             state.own.append(ctx.gpa, own) catch return;
         }
         state.listImported(ctx);
-        // The page opens on the user's own looks, where the work is.
+        // The page opens on the user's own looks, since that's where the work is.
         if (state.own.items.len > 0) state.selected = .{ .own = 0 };
     }
 
     /// Reads the list of imported LUTs again.
     fn listImported(state: *State, ctx: context.Context) void {
         state.imported.clearRetainingCapacity();
-        // Whatever happens below, a selected LUT that isn't on the list any more isn't selected.
+        // Whatever happens below, a selected LUT that's no longer on the list gets unselected.
         defer if (state.selected == .imported and state.selected.imported >= state.imported.items.len) {
             state.selected = .neutral;
         };
@@ -455,7 +458,7 @@ pub const State = struct {
         }
     }
 
-    /// Imports the .cube files chosen, and selects the last.
+    /// Imports the chosen .cube files, and selects the last one.
     fn importCubes(state: *State, ctx: context.Context, paths: []const []const u8) void {
         var last: ?minilab.look.Id = null;
         for (paths) |path| {
@@ -483,8 +486,8 @@ pub const State = struct {
         state.selected = .neutral;
     }
 
-    /// Takes a finished job's results, and starts reading the selected look's pairs if they
-    /// aren't yet.
+    /// Picks up a finished job's results, and starts reading the selected look's pairs if they
+    /// haven't been read yet.
     fn pump(state: *State, ctx: context.Context) void {
         if (state.job) |job| {
             if (!job.isDone()) return;
@@ -532,7 +535,7 @@ pub const State = struct {
             .prepare => |*task| {
                 var aligned = false;
                 for (task.items) |*item| {
-                    // Items left unset when memory ran out.
+                    // Skip items left unset because memory ran out.
                     if (item.ours.len == 0 or item.pair >= own.pairs.items.len) continue;
                     if (item.prepared) |p| {
                         own.prepared.items[item.pair] = p;
@@ -587,8 +590,8 @@ pub const State = struct {
         }
     }
 
-    /// Finds the frames that `references` show, among the frames of the roll open in Develop,
-    /// or of every roll when none is.
+    /// Finds the frames that `references` show, among the frames of the roll open in Develop, or
+    /// of every roll if none is open.
     fn startMatch(state: *State, ctx: context.Context, look: usize, references: []const []const u8) void {
         const library = ctx.library;
         const open = ctx.develop.rollIndex(library);
@@ -642,7 +645,7 @@ pub const State = struct {
         state.start(ctx, look, .fitting, .{ .fit = .{ .prepared = prepared, .alignments = alignments, .held_out = held_out, .options = own.options } });
     }
 
-    /// A new look, "Look N", with no pairs yet, selected.
+    /// Makes a new look, "Look N", with no pairs yet, and selects it.
     fn newLook(state: *State, ctx: context.Context) void {
         var number: usize = state.own.items.len + 1;
         const name = while (true) : (number += 1) {
@@ -687,7 +690,7 @@ pub const State = struct {
         const copy = ctx.gpa.dupe(u8, name) catch return;
         ctx.gpa.free(own.name);
         own.name = copy;
-        // Frames name their look by its folder: they follow it to the new name.
+        // Frames refer to their look by its folder name, so they're updated to the new name.
         const old = old_id orelse return;
         const new = minilab.look.Id.ofFitted(name) catch return;
         ctx.library.lookChanged(ctx.gpa, old);
@@ -714,7 +717,7 @@ pub const State = struct {
         if (keys.contains(.last)) state.pair = n - 1;
     }
 
-    /// Puts the selected pair's images on the GPU when they changed.
+    /// Puts the selected pair's images on the GPU when they've changed.
     fn refreshFigures(state: *State, ctx: context.Context) void {
         const look = switch (state.selected) {
             .own => |i| i,
@@ -731,8 +734,8 @@ pub const State = struct {
         makeFigures(state, ctx, own, prepared, alignment) catch |err| std.log.err("can't show the pair: {t}", .{err});
     }
 
-    /// Starts the previews again when the selection or the frame in Develop changed, and renders
-    /// the next few. A fitted look shows its pairs instead.
+    /// Starts the previews over when the selection or the frame in Develop has changed, and
+    /// renders the next few. A fitted look shows its pairs instead.
     fn refreshPreviews(state: *State, ctx: context.Context) void {
         ctx.develop.ensureFrame(ctx.gpa, ctx.io, ctx.library);
         const frame = if (ctx.develop.frame) |*f| f else return state.previews.release(ctx.gpa, ctx.gpu);
@@ -757,7 +760,7 @@ pub const State = struct {
         state.previews.renderSome(ctx);
     }
 
-    /// The looks the selection previews, Neutral first: none for a fitted look.
+    /// The looks to preview for the selection, Neutral first. A fitted look has none.
     fn previewIds(state: *const State, buffer: []minilab.look.Id) []minilab.look.Id {
         buffer[0] = .neutral;
         var n: usize = 1;
@@ -800,7 +803,7 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
     defer gpa.free(colours);
     for (colours, errors, v.reference) |*out, e, r| out.* = if (r[3] == 0) .{ 0, 0, 0, 0 } else ramp(e);
     state.figures.difference = try .upload(ctx.gpu, w, h, colours);
-    // Only where the reference covers our frame: elsewhere there's nothing to compare.
+    // Only count where the reference covers our frame. Elsewhere there's nothing to compare.
     var covered: usize = 0;
     for (errors, v.reference) |e, r| if (r[3] != 0) {
         errors[covered] = e;
@@ -809,8 +812,8 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
     state.figures.median = if (covered > 0) looks.colour.percentile(errors[0..covered], 0.5) else null;
 }
 
-/// A colour for a ΔE2000: near black where the look matches, through grey and amber, to red
-/// from about 12 on.
+/// A colour for a ΔE2000 value: near black where the look matches, through grey and amber, to
+/// red from about 12 upwards.
 fn ramp(e: f32) [4]u8 {
     const stops = [_]struct { f32, theme.Color }{
         .{ 0, theme.histogram_ground },
@@ -836,15 +839,15 @@ fn isReference(path: []const u8) bool {
     return false;
 }
 
-/// Whether the pair's reference lined up well enough to fit from: a poor registration puts our
-/// colours beside the wrong parts of theirs.
+/// Whether the pair's reference lined up well enough to fit from. A poor registration would
+/// compare our colours with the wrong parts of theirs.
 fn linedUp(pair: draft.Pair) bool {
     const alignment = pair.alignment orelse return false;
     return alignment.quality >= poor_quality;
 }
 
-/// By file name, numbers by their value, so that `fr_2.jpg` comes before `fr_10.jpg` as `02.ppm`
-/// comes before `10.ppm`.
+/// Sorts by file name, comparing numbers by their value, so `fr_2.jpg` comes before `fr_10.jpg`
+/// just as `02.ppm` comes before `10.ppm`.
 fn byName(_: void, a: []const u8, b: []const u8) bool {
     return naturalLess(std.fs.path.basename(a), std.fs.path.basename(b));
 }
@@ -878,7 +881,7 @@ test "names sort by the numbers in them" {
     try std.testing.expect(naturalLess("roll", "roll 2"));
 }
 
-/// The roll frame whose raw scan is at `path`, named as the table names it.
+/// Finds the roll frame whose raw scan is at `path`, with the name the table uses for it.
 fn findFrame(library: *Library, path: []const u8) ?struct { label: []const u8, stock: ?[]const u8, placement: draft.Placement } {
     for (library.rolls.items) |*r| {
         if (!std.mem.startsWith(u8, path, r.path)) continue;
@@ -892,7 +895,7 @@ fn findFrame(library: *Library, path: []const u8) ?struct { label: []const u8, s
     return null;
 }
 
-/// Where frame `index` of `r` lies on its scan, and its film base, as the roll has them.
+/// Where frame `index` of `r` sits on its scan, and its film base, as the roll records them.
 fn placementOf(r: *const minilab.roll.Roll, index: usize) draft.Placement {
     const frame = r.frames.items[index];
     return .{
@@ -947,12 +950,13 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     return null;
 }
 
-/// The height of a line of text `size` pixels high, as the design sets lines: 1.4 times.
+/// The line height for text `size` pixels high. The design sets lines at 1.4 times the size.
 fn line(size: f32) f32 {
     return gui.px(size * 1.4);
 }
 
-/// Text in the current font, its line box's top-left at `at`, `height` high.
+/// Draws text in the current font, with the top-left of its line box at `at` and the box
+/// `height` high.
 fn textIn(list: *c.ImDrawList, at: gui.Vec2, height: f32, colour: theme.Color, value: []const u8) void {
     const shown = gui.print("{s}", .{value});
     c.ImDrawList_AddText(list, gui.vec2(at.x, at.y + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(colour), shown);
@@ -962,7 +966,7 @@ fn textWidth(value: []const u8) f32 {
     return c.ImGui_CalcTextSize(gui.print("{s}", .{value})).x;
 }
 
-/// `value` broken into lines no wider than `width`, at spaces.
+/// Breaks `value` at spaces into lines no wider than `width`.
 fn wrap(value: []const u8, width: f32, out: [][]const u8) [][]const u8 {
     var n: usize = 0;
     var start: usize = 0;
@@ -986,7 +990,8 @@ fn wrap(value: []const u8, width: f32, out: [][]const u8) [][]const u8 {
     return out[0..n];
 }
 
-/// A paragraph wrapped to `width` with the design's line spacing, from `at`. Returns its height.
+/// Draws a paragraph from `at`, wrapped to `width` with the design's line spacing. Returns its
+/// height.
 fn paragraph(list: *c.ImDrawList, at: gui.Vec2, width: f32, colour: theme.Color, value: []const u8) f32 {
     var buffer: [16][]const u8 = undefined;
     const lines = wrap(value, width, &buffer);
@@ -1008,7 +1013,7 @@ fn drawList(state: *State, ctx: context.Context) void {
     const width = c.ImGui_GetContentRegionAvail().x;
     var y = origin.y;
 
-    // In groups, as Develop's Look menu has them.
+    // In groups, the same as Develop's Look menu.
     y = groupHeading(list, origin.x, y, origin.y, "BUILT IN");
     const item_height = gui.px(8 + 8 + 1) + line(13) + line(12) + 2;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
@@ -1058,7 +1063,7 @@ fn drawList(state: *State, ctx: context.Context) void {
         y += item_height + gui.px(6);
     }
 
-    // New look from references: a dashed outline, a plus, the label.
+    // New look from references: a dashed outline, a plus sign and the label.
     y += gui.px(6);
     const height = gui.px(32);
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, y));
@@ -1094,8 +1099,8 @@ fn drawList(state: *State, ctx: context.Context) void {
     _ = paragraph(list, gui.vec2(origin.x, @max(y + height + gui.px(12), bottom - note_height)), width, theme.text_tertiary, note);
 }
 
-/// A group's heading in the list at `y`, with space above it unless it's at the list's `first` y.
-/// Returns the y under it.
+/// Draws a group's heading in the list at `y`, with space above it unless it's at the top of the
+/// list (`first`). Returns the y below it.
 fn groupHeading(list: *c.ImDrawList, x: f32, y: f32, first: f32, label: []const u8) f32 {
     const top = if (y > first) y + gui.px(8) else y;
     fonts.pushSized(.semibold, 12);
@@ -1104,7 +1109,7 @@ fn groupHeading(list: *c.ImDrawList, x: f32, y: f32, first: f32, label: []const 
     return top + line(12) + gui.px(8);
 }
 
-/// One look in the list: its name and where it comes from. True when clicked.
+/// Draws one look in the list: its name and where it comes from. Returns true when it's clicked.
 fn lookItem(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, name: []const u8, source: []const u8, selected: bool) bool {
     c.ImGui_SetCursorScreenPos(at);
     const clicked = c.ImGui_InvisibleButton("look", gui.vec2(width, height), 0);
@@ -1118,7 +1123,7 @@ fn lookItem(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, name: []
     }
     const x = at.x + gui.px(10) + 1;
     var y = at.y + gui.px(8) + 1;
-    // The design's medium weight, as semibold, the nearest the app carries.
+    // The design's medium weight. Semibold is the nearest weight the app has.
     fonts.push(.semibold);
     textIn(list, gui.vec2(x, y), line(13), theme.text, gui.elideEnd(name, width - gui.px(20) - 2));
     fonts.pop();
@@ -1154,7 +1159,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
         } },
     };
 
-    // The title and its badge, on one baseline.
+    // The title and its badge, on the same baseline.
     fonts.pushSized(.semibold, 18);
     const title_height = line(18);
     const title_width = textWidth(title);
@@ -1206,7 +1211,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
         },
     };
     const own = &state.own.items[look];
-    // A saved look can be used as it is; drafts and fits not saved yet can't.
+    // A saved look can be used as it is. Drafts and fits that aren't saved yet can't.
     if (own.saved) if (minilab.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| {
         y += gui.px(10);
         y = drawUseButton(ctx, gui.vec2(origin.x, y), id);
@@ -1226,7 +1231,7 @@ fn packLooks(pack: bundled.Pack) usize {
     return count;
 }
 
-/// A collection's credit, license, source and changes. Returns the y under them.
+/// Draws a collection's credit, licence, source and changes. Returns the y below them.
 fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f32 {
     const info = pack.info();
     var y = at.y;
@@ -1245,9 +1250,9 @@ fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f
     return y;
 }
 
-/// The frame open in Develop with the selected look beside Neutral, and a button to use it there;
-/// for a collection, a tile for each of its looks, which uses it when clicked. Returns the y under
-/// them.
+/// Draws the frame open in Develop with the selected look next to Neutral, and a button to use the
+/// look there. For a collection, it draws a tile for each look, and clicking a tile uses that
+/// look. Returns the y below them.
 fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     var y = at.y;
@@ -1260,7 +1265,8 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         return y;
     };
     const previews = &state.previews;
-    // The previews may be of the selection before a click this frame: they're made again next.
+    // The previews may still show the selection from before a click this frame. They're made
+    // again next frame.
     const key = previews.key orelse return y;
     if (!std.meta.eql(key.selected, state.selected)) return y;
     const ids = previews.ids.items;
@@ -1289,7 +1295,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     }
 
     // A grid for Neutral, then one for each film the collection's looks emulate. Tiles are no
-    // taller than `tile_max_height`, so that a portrait frame's fit as many to a row.
+    // taller than `tile_max_height`, so a portrait frame's tiles fit just as many to a row.
     const narrowest = @min(gui.px(tile_min_width), gui.px(tile_max_height) / aspect);
     const columns: usize = @max(1, @as(usize, @intFromFloat((width + gap) / (narrowest + gap))));
     const w = @min((width - gap * @as(f32, @floatFromInt(columns - 1))) / @as(f32, @floatFromInt(columns)), gui.px(tile_max_height) / aspect);
@@ -1320,7 +1326,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     return y;
 }
 
-/// The look the previews show beside Neutral, once they're of the selection.
+/// The look the previews show next to Neutral, once they're showing the current selection.
 fn previewedLook(state: *const State) ?minilab.look.Id {
     const key = state.previews.key orelse return null;
     if (!std.meta.eql(key.selected, state.selected)) return null;
@@ -1328,8 +1334,9 @@ fn previewedLook(state: *const State) ?minilab.look.Id {
     return ids[ids.len - 1];
 }
 
-/// "Use on Frame 3", which gives the frame open in Develop the look `id`: in use already, it's
-/// off. Leaves the cursor beside it, for another button on the same line. Returns the y under it.
+/// Draws the "Use on Frame 3" button, which gives the frame open in Develop the look `id`. It's
+/// disabled when the frame already uses the look. Leaves the cursor next to it, for another button
+/// on the same line. Returns the y below it.
 fn drawUseButton(ctx: context.Context, at: gui.Vec2, look_id: ?minilab.look.Id) f32 {
     const frame = if (ctx.develop.frame) |*f| f else return at.y;
     const id = look_id orelse return at.y;
@@ -1343,8 +1350,8 @@ fn drawUseButton(ctx: context.Context, at: gui.Vec2, look_id: ?minilab.look.Id) 
     return at.y + gui.px(use_button_height);
 }
 
-/// A look's preview in `min`..`max`, with its name under it, outlined when it's the frame's look.
-/// True when clicked, where `clickable`.
+/// Draws a look's preview in `min`..`max`, with its name underneath, outlined when it's the
+/// frame's look. Returns true when it's clicked, if `clickable`.
 fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Texture, name: []const u8, current: bool, clickable: bool) bool {
     const caption_top = max.y + gui.px(6);
     var clicked = false;
@@ -1383,7 +1390,8 @@ fn drawRename(state: *State, ctx: context.Context) void {
     if (gui.button("Cancel")) c.ImGui_CloseCurrentPopup();
 }
 
-/// References, where they come from, Add pairs, and the count. Returns the y below.
+/// Draws the references section: where they come from, Add pairs, and the count. Returns the y
+/// below.
 fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, at: gui.Vec2) f32 {
     const height = gui.px(32);
     const list = c.ImGui_GetWindowDrawList();
@@ -1434,7 +1442,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
 
 const Column = enum { ours, theirs, stock, registration, use };
 
-/// The pairs. Returns the y below.
+/// Draws the table of pairs. Returns the y below.
 fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, available: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     const n = own.pairs.items.len;
@@ -1443,12 +1451,12 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     const width = @max(available, gui.px(table_min_width));
     const height = header_height + row_height * @as(f32, @floatFromInt(n)) + 2;
     const far = gui.vec2(at.x + width, at.y + height);
-    // With no pairs, a row for the hint.
+    // With no pairs, there's a row for the hint.
     const box_height = if (n == 0) height + row_height else height;
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.panel), gui.px(6), 0);
 
-    // Column widths as a browser's automatic table layout gives them: each column's widest
-    // content, then the room left shared out in proportion.
+    // Column widths work like a browser's automatic table layout: each column gets its widest
+    // content, then the room that's left is shared out in proportion.
     const headers = [_][]const u8{ "Our raw scan", own.references.one(), "Stock", "Registration", "Use" };
     var widths: [headers.len]f32 = undefined;
     fonts.pushSized(.semibold, 12);
@@ -1490,13 +1498,14 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         c.ImGui_PushIDInt(@intCast(i));
         defer c.ImGui_PopID();
 
-        // The Use cell toggles; the rest of the row selects the pair.
+        // The Use cell toggles, and the rest of the row selects the pair.
         const use_x = far.x - 1 - widths[4];
         c.ImGui_SetCursorScreenPos(row_min);
         if (c.ImGui_InvisibleButton("row", gui.vec2(use_x - row_min.x, row_height), 0)) state.pair = i;
         const row_hovered = c.ImGui_IsItemHovered(0);
         if (c.ImGui_BeginPopupContextItem()) {
-            // Not while a fit runs: it would end up shown against a split it wasn't made from.
+            // Not while a fit is running, or the fit would end up shown against a split it wasn't
+            // made from.
             if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.job == null)) {
                 p.held_out = !p.held_out;
                 own.changed();
@@ -1568,7 +1577,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     return at.y + box_height;
 }
 
-/// The stock as the table shows it: without the maker.
+/// The stock as the table shows it, without the maker.
 fn stockName(stock: ?[]const u8) []const u8 {
     const s = stock orelse return "None";
     for ([_][]const u8{ "Kodak ", "Fujifilm ", "Fuji ", "Ilford ", "Agfa ", "Lomography " }) |maker| {
@@ -1585,7 +1594,8 @@ fn registrationText(own: *const Own, index: usize) []const u8 {
     return gui.print("Not aligned · {d:.2}", .{a.quality});
 }
 
-/// The selected pair: ours, the reference lined up, and their difference after the fit.
+/// Draws the selected pair: our scan, the reference lined up with it, and their difference after
+/// the fit.
 fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
     const list = c.ImGui_GetWindowDrawList();
     const gap = gui.px(figure_gap);
@@ -1741,13 +1751,13 @@ fn lutNote(own: *const Own) []const u8 {
     };
 }
 
-/// The width the text of a model option wraps at, and its height.
+/// The height of a model option `width` wide, with `note` wrapped under its name.
 fn optionHeight(width: f32, note: []const u8) f32 {
     return line(13) + paragraphHeight(width - gui.px(13 + 8), note);
 }
 
-/// A choice of the model: a check box, its name, and a note under it. Returns its height when
-/// it was clicked.
+/// Draws one of the model's choices: a check box, its name and a note under it. Returns its height
+/// if it was clicked, or null if not.
 fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, name: []const u8, note: []const u8, disabled: bool) ?f32 {
     const height = optionHeight(width, note);
     c.ImGui_SetCursorScreenPos(at);
@@ -1775,8 +1785,8 @@ fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, na
     return if (clicked) height else null;
 }
 
-/// What a built-in look is made of, as the model options are laid out, without check boxes.
-/// Returns the y below.
+/// Draws what a built-in look is made of, laid out like the model options but without check
+/// boxes. Returns the y below.
 fn drawStages(list: *c.ImDrawList, at: gui.Vec2, width: f32, stages: []const [2][]const u8) f32 {
     var y = at.y;
     for (stages, 0..) |stage, i| {
@@ -1809,8 +1819,8 @@ const Chart = union(enum) {
     }
 };
 
-/// `chart` as the design draws it: curves over density in, 300 × 180 units scaled to `width`.
-/// Returns the y below.
+/// Draws `chart` the way the design does: curves against density in, 300 × 180 units scaled to
+/// `width`. Returns the y below.
 fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     const k = width / 300;
     const height = 180 * k;
@@ -1839,7 +1849,7 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
             }
         },
         .neutral => {
-            // Neutral's inversion curve with Develop's default settings, the film base at full
+            // Neutral's inversion curve with Develop's default settings, and the film base at full
             // transmission.
             const prepared: minilab.develop.Prepared = .init(.{});
             var points: [65]gui.Vec2 = undefined;
@@ -1861,7 +1871,8 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     const density_in = "density in";
     const size = c.ImGui_CalcTextSize(density_in);
     c.ImDrawList_AddText(list, gui.vec2(at.x + 160 * k - size.x / 2, at.y + 176 * k - baseline), small, density_in);
-    // "out", turned to read upwards: drawn level, then its vertices turned about its anchor.
+    // The "out" label, turned to read upwards: it's drawn level, then its vertices are turned
+    // around its anchor.
     const out_size = c.ImGui_CalcTextSize("out");
     const anchor = p(at, k, 12, 90);
     const first = list.*.VtxBuffer.Size;
@@ -1875,8 +1886,8 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
         v.pos = gui.vec2(anchor.x + dy, anchor.y - dx);
     }
     fonts.pop();
-    // The label at the top right, as the design has it, or at the top left, out of the fitted
-    // curves' way.
+    // The label goes at the top right, as in the design, or at the top left to keep it out of the
+    // fitted curves' way.
     fonts.pushSized(.regular, 11 * k);
     const label = gui.print("{s}", .{chart.label()});
     const label_size = c.ImGui_CalcTextSize(label);
@@ -1886,13 +1897,14 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     return at.y + height;
 }
 
-/// How far below the top of a line of text its baseline is, for placing text the way SVG does,
-/// by its baseline: about 0.78 of the size for both fonts (ImGui's font data is opaque here).
+/// How far the baseline sits below the top of a line of text, so we can place text by its
+/// baseline the way SVG does. It's about 0.78 of the size for both fonts (ImGui's font data is
+/// opaque here).
 fn ascent() f32 {
     return c.ImGui_GetFontSize() * 0.78;
 }
 
-/// The density matrix, three by three. Returns the y below.
+/// Draws the density matrix, three by three. Returns the y below.
 fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matrix) f32 {
     const gap = gui.px(4);
     const cell_width = (width - 2 * gap) / 3;
@@ -1911,7 +1923,7 @@ fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matri
     return at.y + 3 * cell_height + 2 * gap;
 }
 
-/// The held-out ΔE2000. Returns the y below.
+/// Draws the ΔE2000 figures for the held-out pairs. Returns the y below.
 fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) f32 {
     const rows = [_][]const u8{ "Held-out ΔE2000, median", "Held-out ΔE2000, 95th percentile" };
     var values: [2][]const u8 = .{ "[after fit]", "[after fit]" };

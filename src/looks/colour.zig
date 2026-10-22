@@ -1,30 +1,31 @@
 //! Colour arithmetic for checking a fit: sRGB to CIELAB, and the CIEDE2000 colour difference.
 //!
-//! Values are sRGB-encoded 0..1 unless a name says linear. Lab is relative to D65, the sRGB white.
+//! Values are sRGB-encoded 0..1 unless the name says they're linear. Lab is relative to D65,
+//! sRGB's white point.
 
 const std = @import("std");
 
-/// The sRGB transfer curve: linear 0..1 to encoded 0..1.
+/// The sRGB transfer curve: turns linear 0..1 into encoded 0..1.
 pub fn encode(linear: f32) f32 {
     const v = std.math.clamp(linear, 0, 1);
     return if (v <= 0.0031308) 12.92 * v else 1.055 * std.math.pow(f32, v, 1.0 / 2.4) - 0.055;
 }
 
-/// The sRGB transfer curve backwards: encoded 0..1 to linear 0..1.
+/// The sRGB transfer curve in reverse: turns encoded 0..1 back into linear 0..1.
 pub fn decode(encoded: f32) f32 {
     const v = std.math.clamp(encoded, 0, 1);
     return if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
 }
 
-/// Relative luminance of linear sRGB.
+/// Returns the relative luminance of a linear sRGB colour.
 pub fn luminance(linear: [3]f32) f32 {
     return 0.2126729 * linear[0] + 0.7151522 * linear[1] + 0.0721750 * linear[2];
 }
 
-/// The D65 white of sRGB, in XYZ.
+/// sRGB's D65 white point, in XYZ.
 const white: [3]f64 = .{ 0.95047, 1.0, 1.08883 };
 
-/// Encoded sRGB to CIELAB.
+/// Converts encoded sRGB to CIELAB.
 pub fn lab(encoded: [3]f32) [3]f32 {
     var rgb: [3]f64 = undefined;
     for (&rgb, encoded) |*l, e| l.* = decode(e);
@@ -51,8 +52,8 @@ fn radians(deg: f64) f64 {
     return deg * std.math.pi / 180;
 }
 
-/// The CIEDE2000 difference between two Lab colours, as Sharma, Wu and Dalal (2005) give it, with
-/// kL = kC = kH = 1. About 1 is the smallest difference most people see.
+/// Returns the CIEDE2000 difference between two Lab colours, following Sharma, Wu and Dalal
+/// (2005), with kL = kC = kH = 1. A difference of about 1 is the smallest most people can see.
 pub fn deltaE2000(first: [3]f32, second: [3]f32) f32 {
     const l1: f64 = first[0];
     const a1: f64 = first[1];
@@ -109,14 +110,15 @@ pub fn deltaE2000(first: [3]f32, second: [3]f32) f32 {
     return @floatCast(@sqrt(@max(0, ql * ql + qc * qc + qh * qh + rt * qc * qh)));
 }
 
-/// Hue angle in degrees, 0..360, and 0 for a neutral.
+/// Returns the hue angle in degrees, 0..360, or 0 for a neutral colour.
 fn hue(b: f64, a: f64) f64 {
     if (a == 0 and b == 0) return 0;
     const h = degrees(std.math.atan2(b, a));
     return if (h < 0) h + 360 else h;
 }
 
-/// The value below which `share` of `values` fall, sorting them in place. 0 for none.
+/// Returns the value that `share` of `values` fall below. It sorts `values` in place, and returns
+/// 0 when there are none.
 pub fn percentile(values: []f32, share: f32) f32 {
     if (values.len == 0) return 0;
     std.mem.sort(f32, values, {}, std.sort.asc(f32));
@@ -125,7 +127,7 @@ pub fn percentile(values: []f32, share: f32) f32 {
 }
 
 test "CIEDE2000 matches Sharma's test data" {
-    // Pairs 1, 2, 7, 17, 25 and 34 of Sharma, Wu and Dalal's table.
+    // Pairs 1, 2, 7, 17, 25 and 34 from the table in Sharma, Wu and Dalal.
     const cases = [_]struct { [3]f32, [3]f32, f32 }{
         .{ .{ 50, 2.6772, -79.7751 }, .{ 50, 0, -82.7485 }, 2.0425 },
         .{ .{ 50, 3.1571, -77.2803 }, .{ 50, 0, -82.7485 }, 2.8615 },

@@ -1,6 +1,6 @@
-//! Bakes the looks `presets/looks/bundled.zig` lists into the file the app embeds: each look's
-//! 3D LUT at `bundled.size` points a side, in the list's order. The build runs it with each
-//! collection's folder, which `build.zig.zon` fetches.
+//! Bakes the looks listed in `presets/looks/bundled.zig` into the file the app embeds: each look's
+//! 3D LUT at `bundled.size` points a side, in the same order as the list. The build runs it with
+//! each collection's folder, which `build.zig.zon` fetches.
 //!
 //! usage: bake_looks <out file> <the folder of each collection, in `bundled.Pack`'s order>
 
@@ -10,7 +10,7 @@ const cube_lut = @import("core/cube_lut.zig");
 const image = @import("core/image.zig");
 const png = @import("io/png.zig");
 
-/// The largest collection file read: Street Monochrome's 64³ .cube files are 7 MB.
+/// The largest collection file we'll read. Street Monochrome's 64³ .cube files are 7 MB.
 const max_file_bytes = 64 << 20;
 
 pub fn main(init: std.process.Init) !void {
@@ -41,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = args[1], .data = out });
 }
 
-/// A collection's file as a LUT: a .cube file, or a HaldCLUT image.
+/// Reads a collection's file, either a .cube file or a HaldCLUT image, as a LUT.
 fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !cube_lut.Lut {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
     defer gpa.free(bytes);
@@ -51,8 +51,9 @@ fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !cube_lut.Lut {
     return fromHald(gpa, picture);
 }
 
-/// A HaldCLUT image as a LUT. One of level L is L³ pixels square and holds a cube of L² points a
-/// side, pixel by pixel from the top left, red changing fastest: the order of a .cube file.
+/// Turns a HaldCLUT image into a LUT. A HaldCLUT of level L is L³ pixels square and holds a cube
+/// of L² points a side. The points run pixel by pixel from the top left, with red changing
+/// fastest, the same order as a .cube file.
 fn fromHald(gpa: std.mem.Allocator, picture: image.Scan) !cube_lut.Lut {
     var level: usize = 2;
     while (level * level * level < picture.width) level += 1;
@@ -65,7 +66,7 @@ fn fromHald(gpa: std.mem.Allocator, picture: image.Scan) !cube_lut.Lut {
     return .{ .title = try gpa.dupe(u8, ""), .three = .{ .size = level * level, .values = values } };
 }
 
-/// `lut` at the baked grid's points, red changing fastest.
+/// Samples `lut` at the baked grid's points, with red changing fastest.
 fn sample(lut: *const cube_lut.Lut, values: [][3]f32) void {
     const top: f32 = bundled.size - 1;
     var i: usize = 0;

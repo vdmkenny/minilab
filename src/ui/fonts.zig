@@ -1,5 +1,5 @@
-//! The fonts the app carries: IBM Plex Sans for the interface, in two weights, and JetBrains Mono
-//! for values.
+//! The fonts built into the app: IBM Plex Sans in two weights for the interface, and JetBrains
+//! Mono for values.
 
 const std = @import("std");
 const c = @import("c");
@@ -18,7 +18,7 @@ const data: std.EnumArray(Face, []const u8) = .init(.{
     .mono = @embedFile("JetBrainsMono-Regular.ttf"),
 });
 
-/// Adds the fonts to ImGui's atlas at `scale`. The first one becomes the default.
+/// Adds the fonts to ImGui's atlas, scaled by `display_scale`. The first one becomes the default.
 pub fn load(display_scale: f32) void {
     scale = display_scale;
     const atlas = c.ImGui_GetIO().*.Fonts;
@@ -36,12 +36,12 @@ pub fn load(display_scale: f32) void {
     }
 }
 
-/// Draws with `face`, at the current size, until `pop`.
+/// Draws text in `face`, at the current size, until `pop`.
 pub fn push(face: Face) void {
     c.ImGui_PushFontFloat(faces.get(face), 0);
 }
 
-/// Draws with `face` at `size` in the design's pixels, until `pop`.
+/// Draws text in `face` at `size` (in the design's pixels), until `pop`.
 pub fn pushSized(face: Face, size: f32) void {
     c.ImGui_PushFontFloat(faces.get(face), size * scale);
 }

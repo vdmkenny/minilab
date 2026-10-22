@@ -23,7 +23,7 @@ pub const Options = struct {
     library: []const u8,
     /// The user's home folder, which the interface shows as ~.
     home: ?[]const u8 = null,
-    /// Scans to open on their own at start.
+    /// Scans to open at start, outside any roll.
     open: []const []const u8 = &.{},
     /// The name of a roll in the library to open at start.
     roll: ?[]const u8 = null,
@@ -34,13 +34,14 @@ pub const Options = struct {
     shortcuts: bool = false,
 };
 
-/// Which panels show: Tab hides the side panels, Shift-Tab everything but the viewer.
+/// Which panels are showing. Tab hides the side panels, and Shift-Tab hides everything but the
+/// viewer.
 const Panels = enum { all, viewer_and_header, viewer };
 
-/// The window's size at start, in the design's pixels.
+/// The window size at start, in the design's pixels.
 const start_width = 1440;
 const start_height = 900;
-/// Frames drawn before a screenshot at least, so that layout settles, and at most, in case
+/// The fewest frames to draw before a screenshot, so the layout settles, and the most, in case
 /// something never finishes loading.
 const screenshot_frames = 4;
 const screenshot_frames_max = 600;
@@ -109,8 +110,9 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         if (workspace == .develop) {
             if (develop.handle(gpa, io, &library, keys)) |message| notice.set("{s}", .{message});
         }
-        // Scanned frames go into their roll whichever workspace shows, and the header learns the
-        // scanner's state. A screenshot run leaves the scanners alone unless it shows Scan.
+        // Scanned frames go into their roll whichever workspace is showing, and the header picks
+        // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
+        // Scan.
         if (options.screenshot == null or workspace == .scan) {
             scan_view.update(&scan, .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
         }
@@ -131,10 +133,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         _ = c.ImGui_Begin("minilab", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
         c.ImGui_PopStyleVar();
         if (panels != .viewer) drawHeader(&workspace, &notice, &library, &develop, scan_view.status(&scan));
-        // An export finishing says so wherever the user is.
+        // When an export finishes, the user hears about it whichever workspace they're in.
         exporting.poll(.{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
-        // Each workspace in its own ID space: Develop and Export both have "settings" panels,
-        // which would otherwise be one child window with one scroll position.
+        // Each workspace gets its own ID space. Develop and Export both have "settings" panels,
+        // which would otherwise be the same child window, sharing one scroll position.
         c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
         switch (workspace) {
             .rolls => switch (rolls_view.draw(&rolls, &library, gpa, io, drop)) {
@@ -169,9 +171,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_End();
         if (show_help) show_help = shortcuts.drawHelp();
 
-        // Asked for while drawing and not made yet: some thumbnail was missing from this frame.
+        // If any thumbnail was asked for while drawing and isn't made yet, this frame was missing
+        // it.
         const complete = library.wanted.items.len == 0;
-        // Thumbnails are made one per frame, so that the window keeps answering meanwhile.
+        // Make one thumbnail per frame, so the window stays responsive in the meantime.
         library.work(gpa, io, window.gpu);
         if (library.wanted.items.len > 0 or notice.text() != null) window.keepBusy();
         if (workspace == .looks and looks.rendering()) window.keepBusy();
@@ -198,7 +201,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     }
 }
 
-/// Scans dropped on the window: added to the open roll, or opened on their own when there's none.
+/// Handles scans dropped on the window: adds them to the open roll, or opens them outside any roll
+/// when none is open.
 fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, paths: []const []const u8, notice: *Notice) void {
     if (develop.rollIndex(library)) |r| {
         const imported = library.importScans(gpa, io, r, paths);
@@ -280,7 +284,8 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + height));
 }
 
-/// The app's mark, 20 pixels square at `corner`: a frame of film with perforations above and below.
+/// Draws the app's mark, 20 pixels square, at `corner`: a frame of film with perforations above
+/// and below.
 fn drawMark(list: *c.ImDrawList, corner: gui.Vec2) void {
     const ink = theme.imU32(theme.accent);
     const thickness = gui.px(1.5);

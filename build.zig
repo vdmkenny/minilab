@@ -23,7 +23,8 @@ pub fn build(b: *std.Build) void {
     const looks = bakeLooks(b);
     core.addAnonymousImport("bundled_looks", .{ .root_source_file = looks.baked });
 
-    // Building for a Mac other than the host, SDL and the app need the SDK's paths: from xcrun.
+    // When building for a Mac other than the host, SDL and the app need the SDK's paths, which we
+    // get from xcrun.
     const macos_sdk: ?[]const u8 = if (target.result.os.tag == .macos and !target.query.isNative())
         std.mem.trimEnd(u8, b.run(&.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" }), "\n")
     else
@@ -37,12 +38,13 @@ pub fn build(b: *std.Build) void {
     }) else b.dependency("sdl", .{ .target = target, .optimize = optimize });
     const sdl_library = sdl_dependency.artifact("SDL3");
 
-    // Dear ImGui's docking branch draws the interface. It is C++: Dear Bindings' C API wraps it,
-    // and its own backends drive it with SDL3 and SDL_GPU.
+    // Dear ImGui's docking branch draws the interface. It's C++, so Dear Bindings' C API wraps it,
+    // and ImGui's own backends drive it with SDL3 and SDL_GPU.
     const interface = interfaceLibrary(b, target, sdl_library);
     if (macos_sdk) |sdk| addMacosSdk(b, interface.root_module, sdk);
 
-    // One translated header holds SDL and Dear ImGui, so the types they share are the same.
+    // One translated header holds both SDL and Dear ImGui, so the types they share come out as the
+    // same types.
     const translator: Translator = .init(b.dependency("translate_c", .{}), .{
         .c_source_file = b.path("src/platform/c.h"),
         .target = target,
@@ -53,8 +55,8 @@ pub fn build(b: *std.Build) void {
     translator.linkLibrary(sdl_library);
     for (interfaceIncludes(b)) |include| translator.addIncludePath(include);
 
-    // The version Release Please keeps in build.zig.zon, and where the checkout is past its last
-    // release, for `--version` (`src/version.zig`).
+    // The version Release Please keeps in build.zig.zon, and how far the checkout is past the last
+    // release, for `--version` (see `src/version.zig`).
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", @import("build.zig.zon").version);
     build_options.addOption([]const u8, "describe", describe(b));
@@ -73,7 +75,7 @@ pub fn build(b: *std.Build) void {
     if (macos_sdk) |sdk| addMacosSdk(b, app, sdk);
     addFonts(b, app);
 
-    // The Windows program carries the icon the window shows.
+    // The Windows program gets the same icon the window shows.
     if (target.result.os.tag == .windows) app.addWin32ResourceFile(.{ .file = windowsIcon(b) });
     const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
@@ -88,17 +90,18 @@ pub fn build(b: *std.Build) void {
     tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = app })).step);
     tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = looks.tool })).step);
 
-    // `zig build check` compiles the program and the tests without linking them:
-    // `zig build check -fincremental --watch` reports errors within moments of a save.
+    // `zig build check` compiles the program and the tests without linking them, so
+    // `zig build check -fincremental --watch` reports errors moments after you save.
     const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
     check.dependOn(&b.addTest(.{ .root_module = core }).step);
     check.dependOn(&b.addTest(.{ .root_module = app }).step);
     check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = app }).step);
 }
 
-/// `git describe` of the checkout against the release tags, such as `v0.0.1-12-gabc1234-dirty`, or
-/// nothing where there is no git or no tag, as in a source archive. The build can't track what
-/// the answer depends on, so asking makes the build run build.zig again each time.
+/// Runs `git describe` on the checkout against the release tags, giving something like
+/// `v0.0.1-12-gabc1234-dirty`, or nothing when there's no git or no tag, as in a source archive.
+/// The build can't track what the answer depends on, so asking makes it rerun build.zig every
+/// time.
 fn describe(b: *std.Build) []const u8 {
     b.graph.poisonCache();
     const root = b.root.toString(b.allocator) catch @panic("out of memory");
@@ -115,8 +118,8 @@ fn addMacosSdk(b: *std.Build, module: *std.Build.Module, sdk: []const u8) void {
     module.addLibraryPath(b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/lib" })));
 }
 
-/// Dear ImGui with its docking branch, Dear Bindings' C API over it, and its SDL3 and SDL_GPU
-/// backends, as one static library, built optimised whatever the app's mode.
+/// Builds Dear ImGui's docking branch, Dear Bindings' C API on top of it, and its SDL3 and SDL_GPU
+/// backends as one static library. It's always built optimised, whatever the app's mode.
 fn interfaceLibrary(b: *std.Build, target: std.Build.ResolvedTarget, sdl_library: *std.Build.Step.Compile) *std.Build.Step.Compile {
     const imgui = b.dependency("imgui", .{});
     const bindings = b.dependency("dear_bindings", .{});
@@ -151,8 +154,8 @@ fn interfaceIncludes(b: *std.Build) [4]std.Build.LazyPath {
     return .{ imgui.path("."), imgui.path("backends"), bindings.path("."), bindings.path("backends") };
 }
 
-/// minilab's icon as a Windows resource: `src/make_icon.zig` draws it into an .ico, and a resource
-/// script names it.
+/// minilab's icon as a Windows resource. `src/make_icon.zig` draws it into an .ico file, and a
+/// resource script points to it.
 fn windowsIcon(b: *std.Build) std.Build.LazyPath {
     const tool = b.addExecutable(.{
         .name = "make_icon",
@@ -165,9 +168,9 @@ fn windowsIcon(b: *std.Build) std.Build.LazyPath {
     return files.add("minilab.rc", "1 ICON \"minilab.ico\"\n");
 }
 
-/// The looks from other people's collections (`src/presets/looks/bundled.zig`): each collection
-/// fetched, its looks baked into one file for the core to embed, and its licence and credit
-/// installed.
+/// Sets up the looks from other people's collections (`src/presets/looks/bundled.zig`): fetches
+/// each collection, bakes its looks into one file for the core to embed, and installs its licence
+/// and credit.
 fn bakeLooks(b: *std.Build) struct { baked: std.Build.LazyPath, tool: *std.Build.Module } {
     // The tool runs on this machine as part of the build, so it's always optimised.
     const tool = b.createModule(.{
@@ -198,7 +201,8 @@ fn bakeLooks(b: *std.Build) struct { baked: std.Build.LazyPath, tool: *std.Build
     return .{ .baked = baked, .tool = tool };
 }
 
-/// The fonts the app carries: IBM Plex Sans for the interface and JetBrains Mono for values.
+/// Adds the fonts built into the app: IBM Plex Sans for the interface and JetBrains Mono for
+/// values.
 fn addFonts(b: *std.Build, module: *std.Build.Module) void {
     const plex = b.dependency("plex_sans", .{});
     const mono = b.dependency("jetbrains_mono", .{});

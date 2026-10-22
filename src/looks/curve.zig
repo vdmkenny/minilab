@@ -1,5 +1,6 @@
-//! A look's channel curve: 33 points evenly spaced over 0..1, joined by straight lines, never
-//! falling. Fitted from samples by least squares with a little smoothing, then made monotone.
+//! The curve a look uses for one channel: 33 evenly spaced points over 0..1, joined by straight
+//! lines, and never falling. We fit it to samples by least squares with a little smoothing, then
+//! make it monotone.
 
 const std = @import("std");
 const linear = @import("linear.zig");
@@ -16,7 +17,7 @@ pub const identity: Curve = blk: {
     break :blk c;
 };
 
-/// The curve at `x`, which is held to 0..1.
+/// Returns the curve's value at `x`, with `x` clamped to 0..1.
 pub fn eval(curve: *const Curve, x: f32) f32 {
     const t = std.math.clamp(x, 0, 1) * segments;
     const i: usize = @min(@as(usize, @intFromFloat(t)), segments - 1);
@@ -24,8 +25,9 @@ pub fn eval(curve: *const Curve, x: f32) f32 {
     return curve[i] + (curve[i + 1] - curve[i]) * f;
 }
 
-/// The curve's slope at `x`, measured over a point's spacing either side: smoother than a
-/// segment's own slope, which a fit's steps prefer. 0 outside 0..1, where the curve is flat.
+/// Returns the curve's slope at `x`, measured over one point's spacing on either side. The fit's
+/// steps prefer this to a single segment's slope, because it's smoother. Outside 0..1 the curve is
+/// flat, so the slope there is 0.
 pub fn slope(curve: *const Curve, x: f32) f32 {
     const h = 1.0 / @as(f32, segments);
     const lo = @max(x - h, 0);
@@ -34,10 +36,10 @@ pub fn slope(curve: *const Curve, x: f32) f32 {
     return (eval(curve, hi) - eval(curve, lo)) / (hi - lo);
 }
 
-/// Gathers samples for one curve, then solves for it.
+/// Collects the samples for one curve, then solves for the curve.
 pub const Fitter = struct {
-    /// The normal equations of the least-squares fit: each sample spread over the two points
-    /// either side of it, by how near it is.
+    /// The normal equations of the least-squares fit. Each sample is shared between the two points
+    /// on either side of it, weighted by how close it is to each.
     a: [points * points]f64 = @splat(0),
     b: [points]f64 = @splat(0),
     total: f64 = 0,
@@ -58,9 +60,9 @@ pub const Fitter = struct {
         fitter.total += w;
     }
 
-    /// The fitted curve. `smoothness` weighs the curve's bending against the samples, relative to
-    /// their total weight; where there are no samples, the curve carries on straight. The result
-    /// never falls and stays in 0..1.
+    /// Solves for the fitted curve. `smoothness` sets how much bending costs compared with missing
+    /// the samples, relative to their total weight. Where there are no samples, the curve carries
+    /// on in a straight line. The result never falls and stays within 0..1.
     pub fn solve(fitter: *const Fitter, smoothness: f64) Curve {
         if (fitter.total <= 0) return identity;
         var a = fitter.a;
@@ -68,7 +70,7 @@ pub const Fitter = struct {
         var data_weight: [points]f64 = undefined;
         for (&data_weight, 0..) |*w, i| w.* = fitter.a[i * points + i];
 
-        // Bending: the second differences, squared.
+        // Bending is measured as the squared second differences.
         const bend = smoothness * fitter.total;
         for (1..segments) |k| {
             const row = [3]usize{ k - 1, k, k + 1 };
@@ -77,7 +79,7 @@ pub const Fitter = struct {
                 for (row, coefficient) |s, cs| a[r * points + s] += bend * cr * cs;
             }
         }
-        // A faint pull towards the identity, so that the system is never singular.
+        // A very weak pull towards the identity, so the system is never singular.
         const pull = 1e-7 * fitter.total;
         for (0..points) |i| {
             a[i * points + i] += pull;
@@ -93,7 +95,8 @@ pub const Fitter = struct {
     }
 };
 
-/// Makes `values` non-decreasing with the least weighted change: pool adjacent violators.
+/// Makes `values` non-decreasing with the smallest weighted change, using the pool adjacent
+/// violators algorithm.
 fn monotone(values: *[points]f64, weights: *const [points]f64) void {
     var mean: [points]f64 = undefined;
     var weight: [points]f64 = undefined;

@@ -1,6 +1,6 @@
-//! Work done away from the page, so that it keeps answering: reading and lining up pairs,
-//! finding which frame a reference shows, and fitting. A job runs on its own thread; the page
-//! looks at `done` each frame and takes the results once it's set.
+//! Work done off the page's thread, so the page stays responsive: reading and lining up pairs,
+//! finding which frame a reference shows, and fitting. A job runs on its own thread. The page
+//! checks `done` every frame and takes the results once it's set.
 
 const std = @import("std");
 const pairs = @import("pairs.zig");
@@ -16,15 +16,16 @@ pub const Job = struct {
     done: std.atomic.Value(bool) = .init(false),
     /// Set by the page to stop the job early.
     cancelled: std.atomic.Value(bool) = .init(false),
-    /// Steps done, of `steps`, for the page to show.
+    /// How many of the `steps` are done, for the page to show.
     progress: std.atomic.Value(u32) = .init(0),
     steps: u32 = 1,
     future: ?std.Io.Future(void) = null,
 
-    /// Starts `task` on its own thread, or here when there's no thread to be had. The job owns
-    /// what the task holds from now on.
+    /// Starts `task` on its own thread, or runs it right here when no thread is available. From
+    /// now on the job owns whatever the task holds.
     pub fn start(gpa: std.mem.Allocator, io: std.Io, task: Task) !*Job {
-        // The task is the job's from here, and goes with it; a job that can't be made frees it.
+        // The task belongs to the job from here on, and is freed with it. If we can't make the
+        // job, we free the task right away.
         const job = gpa.create(Job) catch |err| {
             var dropped = task;
             dropped.deinit(gpa);
@@ -45,8 +46,8 @@ pub const Job = struct {
         return job.done.load(.acquire);
     }
 
-    /// Waits for the job, stopping it early if `stop`, and frees it with whatever results the
-    /// page didn't take.
+    /// Waits for the job, stopping it early if `stop` is set, then frees it along with any
+    /// results the page didn't take.
     pub fn finish(job: *Job, stop: bool) void {
         if (stop) job.cancelled.store(true, .release);
         if (job.future) |*f| f.await(job.io);
@@ -75,25 +76,25 @@ pub const Task = union(enum) {
     }
 };
 
-/// Reads pairs, and lines up those that aren't yet.
+/// Reads pairs, and lines up the ones that aren't lined up yet.
 pub const Prepare = struct {
     items: []Item,
 
     pub const Item = struct {
-        /// The pair's place in its look.
+        /// The pair's index in its look.
         pair: usize,
         ours: []u8,
         theirs: []u8,
-        /// Where our frame lies on its scan; null to find it.
+        /// Where our frame sits on its scan, or null to find it.
         placement: ?draft.Placement = null,
-        /// Known already, or worked out by the job.
+        /// Either known already, or worked out by the job.
         alignment: ?register.Alignment,
         /// The result, which the page takes.
         prepared: ?*pairs.Prepared = null,
         failure: ?anyerror = null,
     };
 
-    /// A task for `count` pairs, their paths to be filled in with `set`.
+    /// Makes a task for `count` pairs. Fill in their paths with `set`.
     pub fn init(gpa: std.mem.Allocator, count: usize) !Prepare {
         const items = try gpa.alloc(Item, count);
         for (items) |*i| i.* = .{ .pair = 0, .ours = &.{}, .theirs = &.{}, .alignment = null };
@@ -151,21 +152,21 @@ pub const Prepare = struct {
 pub const Match = struct {
     references: [][]u8,
     frames: []Frame,
-    /// For each reference: the frame it shows, if one matches well enough, and how well.
+    /// For each reference, the frame it shows if one matches well enough, and how well it matches.
     found: []?usize,
     quality: []f32,
 
     pub const Frame = struct {
-        /// The raw scan, and its thumbnail, which the matching reads.
+        /// The raw scan and its thumbnail, which the matching reads.
         scan: []u8,
         thumbnail: []u8,
         label: []u8,
         stock: ?[]u8,
-        /// Where the frame lies on its scan and thumbnail: frames of a strip share both.
+        /// Where the frame sits on its scan and thumbnail. The frames of a strip share both.
         placement: draft.Placement = .{},
     };
 
-    /// The correlation at the coarse level a reference needs to count as showing a frame.
+    /// The correlation a reference needs at the coarse level to count as showing a frame.
     pub const least_quality = 0.6;
 
     pub fn init(gpa: std.mem.Allocator, references: []const []const u8, frames: usize) !Match {
@@ -240,7 +241,7 @@ pub const Match = struct {
 
 /// Samples every pair and fits a look to them.
 pub const Fit = struct {
-    /// The pairs, read; the page keeps them and doesn't change them while the job runs.
+    /// The pairs, already read. The page keeps them and doesn't change them while the job runs.
     prepared: []const *const pairs.Prepared,
     alignments: []register.Alignment,
     held_out: []bool,
@@ -282,19 +283,19 @@ fn run(job: *Job) void {
     }
 }
 
-/// A made-up negative of a scene of soft blobs, `seed` choosing them: 16-bit transmission, as a
-/// scanner gives it, with a film base that's orange like a colour negative's.
+/// Makes up a negative of a scene of soft blobs, with `seed` choosing the blobs. It's 16-bit
+/// transmission, the way a scanner gives it, with an orange film base like a colour negative's.
 fn testNegative(gpa: std.mem.Allocator, seed: u64, width: usize, height: usize) !minilab.image.Scan {
     var prng = std.Random.DefaultPrng.init(seed);
     const random = prng.random();
     var blobs: [16][6]f32 = undefined;
     for (&blobs) |*b| {
-        // A level, and a little colour about it, as a photograph has.
+        // A level with a little colour around it, like a photograph has.
         const level = random.float(f32) * 0.8;
         b.* = .{ random.float(f32), random.float(f32) * 0.7, 0.03 + random.float(f32) * 0.1, level, level, level };
         for (b[3..6]) |*v| v.* += (random.float(f32) - 0.5) * 0.3;
     }
-    // A gentle slope across the frame, its own way for each scene.
+    // A gentle slope across the frame, in a different direction for each scene.
     const slope = [2]f32{ random.float(f32) - 0.5, random.float(f32) - 0.5 };
     var scan: minilab.image.Scan = try .init(gpa, width, height);
     const base = [3]f32{ 0.8, 0.5, 0.3 };
@@ -329,8 +330,8 @@ test "jobs read, match and fit pairs" {
     defer arena.deinit();
     const a = arena.allocator();
 
-    // Three negatives, each with its thumbnail, and a reference of each: our Neutral rendering,
-    // turned a quarter for the second, as a JPEG.
+    // Three negatives, each with a thumbnail, and a reference for each: our Neutral rendering as a
+    // JPEG, turned a quarter for the second one.
     var scans: [3][]const u8 = undefined;
     var thumbnails: [3][]const u8 = undefined;
     var references: [3][]const u8 = undefined;
@@ -392,7 +393,8 @@ test "jobs read, match and fit pairs" {
     }
     try std.testing.expectEqual(register.Orientation.three_quarters, alignments[1].orientation);
 
-    // Fit to two, check on the third: the reference is our own rendering, so the look is close.
+    // Fit to two and check on the third. The reference is our own rendering, so the look comes
+    // out close.
     const fitting = try Job.start(gpa, io, .{ .fit = .{
         .prepared = try gpa.dupe(*const pairs.Prepared, &prepared),
         .alignments = try gpa.dupe(register.Alignment, &alignments),

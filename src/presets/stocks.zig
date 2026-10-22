@@ -1,11 +1,12 @@
-//! Film stock presets: per stock, the starting values the density inversion needs (minimum
-//! density, contrast and density range per channel) and, where the source has them, its
-//! characteristic curves. Every value comes from a published source named in `source`; a value no
-//! source gives is null. data/stocks/README.md says how each value was derived.
+//! Film stock presets. For each stock there are the starting values the density inversion needs
+//! (minimum density, contrast and density range per channel) and, where the source has them, its
+//! characteristic curves. Every value comes from a published source, named in `source`. A value
+//! that no source gives is null. data/stocks/README.md explains how each value was worked out.
 //!
 //! Densities are Status M for colour negatives and Status A for colour slides. Black-and-white
-//! entries use diffuse visual density where the maker states it, and repeat one value for R, G
-//! and B. Log exposure is log10 of lux-seconds unless `source` says it is relative.
+//! entries use diffuse visual density where the maker says that's what they measured, and repeat
+//! one value for R, G and B. Log exposure is log10 of lux-seconds unless `source` says it's
+//! relative.
 
 const std = @import("std");
 
@@ -15,21 +16,22 @@ pub const Kind = enum { colour_negative, bw_negative, colour_positive, bw_positi
 pub const Point = struct { log_exposure: f32, density: f32 };
 
 pub const Stock = struct {
-    /// Product name, e.g. "Kodak Portra 400".
+    /// The product name, such as "Kodak Portra 400".
     name: []const u8,
     maker: []const u8,
     kind: Kind,
-    /// Box speed, or the exposure index the data is for (pushed entries).
+    /// The box speed or, for pushed entries, the exposure index the data is for.
     iso: u16,
-    /// Minimum density (base + fog; D-min for slides), R, G, B.
+    /// The minimum density (base + fog, or D-min for slides), for R, G and B.
     base_density: ?[3]f32,
-    /// Slope of the straight part of the characteristic curve, density per log exposure, R, G, B.
-    /// Positive for slides too, although their density falls with exposure.
+    /// The slope of the straight part of the characteristic curve, in density per log exposure,
+    /// for R, G and B. It's positive for slides too, even though their density falls with
+    /// exposure.
     gamma: ?[3]f32,
-    /// Density above `base_density` that the source's curve covers, R, G, B. For slides, D-max
-    /// minus D-min.
+    /// How far the source's curve goes above `base_density`, in density, for R, G and B. For
+    /// slides it's D-max minus D-min.
     density_range: ?[3]f32,
-    /// Characteristic curves, R, G, B, in increasing log exposure.
+    /// The characteristic curves for R, G and B, in order of increasing log exposure.
     curves: ?[3][]const Point,
     /// Where the numbers come from.
     source: []const u8,
@@ -647,8 +649,8 @@ pub const stocks = [_]Stock{
     },
 };
 
-/// Characteristic curves, kept apart from the table so that it stays readable. Each channel is a
-/// log exposure grid and the densities on it.
+/// The characteristic curves, kept separate from the table so the table stays readable. Each
+/// channel is a log exposure grid plus the densities on it.
 const curve_data = struct {
     const kodak_portra_160: [3][]const Point = .{
         sampled(&.{

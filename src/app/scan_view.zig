@@ -4,19 +4,20 @@
 //!
 //! The flow, as in design section 4:
 //!
-//! 1. Pick the scanner and the settings: film type, which sets the scanner's own film mode, and
-//!    resolution. The transparency unit is used whenever the scanner has one.
-//! 2. Preview: the scanner's whole film area at its lowest resolution of at least 300 dpi.
-//! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. Frames use
-//!    the holder opening's full height by default, since holders hide the film's edges.
-//! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, add, split and
-//!    delete them. Frames edited by hand stay when frames are detected again.
-//! 5. Scan: each frame at full resolution with a margin around it, on the scan thread
+//! 1. Pick the scanner and the settings: the film type, which sets the scanner's own film mode,
+//!    and the resolution. We use the transparency unit whenever the scanner has one.
+//! 2. Preview: scan the scanner's whole film area at its lowest resolution of 300 dpi or more.
+//! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. By
+//!    default a frame takes the full height of the holder's opening, since holders hide the
+//!    film's edges.
+//! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, and add, split
+//!    or delete them. Frames edited by hand are kept when frames are detected again.
+//! 5. Scan each frame at full resolution with a margin around it, on the scan thread
 //!    (`scan_worker.zig`). Each scan's frame is found again for its crop, and the scan is added to
 //!    the open roll with `addScanAt`.
 //!
 //! The preview and the boxes are kept in the roll's folder as `preview.ppm` and `preview.json`, so
-//! they come back with the roll.
+//! they come back when you open the roll again.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -40,9 +41,9 @@ const roll = minilab.roll;
 
 /// Sizes in the design's pixels.
 const scanner_width = 300;
-/// The scanner's film mode, for every film: Positive Film, so that the scan is raw. A scanner's
+/// The scanner's film mode, for every kind of film: Positive Film, so the scan is raw. A scanner's
 /// Negative Film mode takes the orange mask out and inverts, so the film base can't be measured any
-/// more (on the V200 it also clips blue on B&W film); minilab inverts instead.
+/// more (and on the V200 it also clips blue on B&W film). minilab does the inverting itself.
 const scanner_film: scan.Film = .positive;
 
 const queue_width = 280;
@@ -75,35 +76,35 @@ const slider_label_column = 110;
 const slider_value_column = 56;
 const button_height = 32;
 const slider_row_height = 20;
-/// The base drawn beside the frames of film with no set width, mm.
+/// How much film base to draw beside the frames of film with no set width, in mm.
 const plain_film_margin_mm = 2;
-/// The holes of film holed per frame, as drawn: their size, how far in from the edge, and how far
-/// apart a pair is, mm.
+/// How we draw the holes on film that has a few per frame: their size, how far in from the edge
+/// they are, and how far apart a pair is, in mm.
 const per_frame_hole_mm = 1.5;
 const per_frame_hole_inset_mm = 1;
 const per_frame_hole_spacing_mm = 3;
-/// The smallest box a drag leaves, in preview pixels.
+/// The smallest a drag can make a box, in preview pixels.
 const min_box_px = 8;
 /// The design's line height, as a multiple of the font size.
 const line_spacing = 1.4;
 
 const mm_per_inch = formats.mm_per_inch;
-/// The resolution previews are scanned at, or the scanner's next above it.
+/// The resolution previews are scanned at, or the scanner's next one up.
 const preview_dpi = 300;
-/// The resolution chosen first, where the scanner has it.
+/// The resolution picked to start with, if the scanner has it.
 const default_dpi = 2400;
-/// The most resolutions offered.
+/// The most resolutions to offer.
 const max_resolution_choices = 4;
-/// The frame view shows this share of the frame's length beyond each end, as the design does.
+/// The frame view shows this share of the frame's length past each end, as in the design.
 const view_overhang = 0.068;
-/// Margins and insets the controls allow.
+/// The largest margin, inset and rotation the controls allow.
 const max_margin_mm = 10;
 const max_inset = 5;
 const max_rotation = 5;
-/// A detected frame whose length is within this share of its height times the roll's ratio
-/// follows the roll's format; else it keeps its measured box.
+/// A detected frame follows the roll's format if its length is within this share of its height
+/// times the roll's ratio. Otherwise it keeps its measured box.
 const ratio_tolerance = 0.03;
-/// Two boxes overlapping by more than this share of the shorter one's length are the same frame.
+/// Two boxes that overlap by more than this share of the shorter one's length are the same frame.
 const same_frame_overlap = 0.3;
 
 const preview_file = "preview.ppm";
@@ -152,18 +153,18 @@ const FilmType = enum {
 const Shape = enum {
     /// The roll format's ratio.
     roll,
-    /// Length and height apart.
+    /// Length and height set separately.
     free,
-    /// A ratio of the user's.
+    /// A ratio the user sets.
     custom,
 };
 
 /// Why a frame is marked for checking.
 const Check = enum {
     none,
-    /// Placed from the pitch of its neighbours, its own edges hardly showing.
+    /// Its own edges hardly show, so it was placed from the pitch of its neighbours.
     pitch,
-    /// Measured far from the format's length, so it keeps its measured box.
+    /// It measured far from the format's length, so it keeps its measured box.
     length,
     /// Cut off by the end of the preview.
     cut,
@@ -178,9 +179,9 @@ const Box = struct {
     /// The size, before the inset.
     length: f32,
     height: f32,
-    /// Degrees, clockwise as shown.
+    /// In degrees, clockwise as shown.
     rotation: f32 = 0,
-    /// The rotation detection found: what Rotation resets to.
+    /// The rotation detection found, which is what Rotation resets to.
     detected_rotation: f32 = 0,
     shape: Shape = .roll,
     /// Length over height, for `Shape.custom`.
@@ -189,7 +190,7 @@ const Box = struct {
     inset: f32 = 0,
     full_height: bool = true,
     check: Check = .none,
-    /// Edited by hand: it stays when frames are detected again, and its crop isn't refined.
+    /// Edited by hand. It's kept when frames are detected again, and its crop isn't refined.
     hand: bool = false,
 
     fn start(box: Box) f32 {
@@ -200,7 +201,7 @@ const Box = struct {
         return box.along + box.length / 2;
     }
 
-    /// The crop: the box less the inset.
+    /// The crop: the box minus the inset.
     fn crop(box: Box) Box {
         var out = box;
         const share = 1 - 2 * box.inset / 100;
@@ -214,17 +215,19 @@ const Box = struct {
 const Preview = struct {
     scan: image.Scan,
     dpi: [2]f32,
-    /// What it covers on the scanner, mm.
+    /// The area it covers on the scanner, in mm.
     area: scan.Area,
     axis: frames.Axis,
-    /// The holder opening across the strip, and its middle, in preview pixels; null until
+    /// The holder opening's size across the strip, and its middle, in preview pixels. Null until
     /// detection has found it.
     opening: ?f32 = null,
     opening_middle: ?f32 = null,
-    /// Whether frames have been detected on it, so that a preview saved before is detected once.
+    /// Whether frames have been detected on it, so a preview saved earlier only gets detected
+    /// once.
     detected: bool = false,
     texture: ?Texture = null,
-    /// The film base as the texture shows it, for the strip between the frames; null without one.
+    /// The film base colour as the texture shows it, for the strip between the frames. Null when
+    /// there's no base.
     base_colour: ?[4]u8 = null,
 
     fn deinit(preview: *Preview, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
@@ -238,7 +241,7 @@ const Preview = struct {
         return .{ preview.dpi[0] / mm_per_inch, preview.dpi[1] / mm_per_inch };
     }
 
-    /// The strip's length and width in preview pixels.
+    /// The strip's length in preview pixels. `acrossSize` below gives its width.
     fn alongSize(preview: Preview) f32 {
         return @floatFromInt(if (preview.axis == .y) preview.scan.height else preview.scan.width);
     }
@@ -252,7 +255,7 @@ const Preview = struct {
         return preview.pxPerMm()[if (preview.axis == .y) 1 else 0];
     }
 
-    /// A box in strip coordinates as an image rectangle: x0, y0, x1, y1.
+    /// Converts a box in strip coordinates to an image rectangle: x0, y0, x1, y1.
     fn rect(preview: Preview, box: Box) [4]f32 {
         const a0 = box.along - box.length / 2;
         const a1 = box.along + box.length / 2;
@@ -261,7 +264,7 @@ const Preview = struct {
         return if (preview.axis == .y) .{ c0, a0, c1, a1 } else .{ a0, c0, a1, c1 };
     }
 
-    /// An image rectangle as mm on the scanner.
+    /// Converts an image rectangle to mm on the scanner.
     fn toScanner(preview: Preview, r: [4]f32) scan.Area {
         const ppm = preview.pxPerMm();
         return .{
@@ -273,7 +276,7 @@ const Preview = struct {
     }
 };
 
-/// What happened to a frame of the queue.
+/// What's happened to a frame in the queue.
 const Progress = enum { waiting, scanning, checking, done, check_crop, failed, cancelled };
 
 const QueueItem = struct {
@@ -301,19 +304,19 @@ const Drag = union(enum) {
     none,
     /// A box along the strip, from the preview or the frame view.
     move: usize,
-    /// One corner of a box in the frame view: 0 top left, then clockwise, as shown.
+    /// One corner of a box in the frame view: 0 is top left, then clockwise, as shown.
     corner: struct { box: usize, corner: u2 },
 };
 
 pub const State = struct {
     worker: ?*Worker = null,
     devices: []scan.Device = &.{},
-    /// The device open, or being opened.
+    /// The device that's open or being opened.
     device: ?usize = null,
     capabilities: ?scan.Capabilities = null,
-    /// The device list has come back at least once.
+    /// Whether the device list has come back at least once.
     listed: bool = false,
-    /// The last failure, for the panel; a static string.
+    /// The last failure, for the panel. It's a static string.
     problem: ?[]const u8 = null,
 
     film: FilmType = .colour_negative,
@@ -327,16 +330,17 @@ pub const State = struct {
     preview: ?Preview = null,
     boxes: std.ArrayList(Box) = .empty,
     selected: ?usize = null,
-    /// Why the last detection found nothing; a static string.
+    /// Why the last detection found nothing. It's a static string.
     detect_note: ?[]const u8 = null,
-    /// The boxes changed since they were saved.
+    /// Whether the boxes have changed since they were saved.
     boxes_dirty: bool = false,
     drag: Drag = .none,
 
     queue: std.ArrayList(QueueItem) = .empty,
     /// The roll the queue scans into, as a path.
     queue_roll: ?[]u8 = null,
-    /// How the queue's frames turn to stand upright: a quarter for a strip down the scanner.
+    /// How far the queue's frames turn to stand upright: a quarter turn for a strip that runs down
+    /// the scanner.
     queue_turns: u2 = 0,
     scanning: bool = false,
 
@@ -352,8 +356,8 @@ pub const State = struct {
         state.* = undefined;
     }
 
-    /// Whether everything the page shows has loaded: for a screenshot, which waits for it. That
-    /// includes the scanner list, which takes a few seconds.
+    /// Whether everything on the page has loaded. A screenshot waits for this. It includes the
+    /// scanner list, which takes a few seconds.
     pub fn settled(state: *const State) bool {
         const worker = state.worker orelse return false;
         if (worker.pending()) return false;
@@ -361,8 +365,8 @@ pub const State = struct {
         return true;
     }
 
-    /// Starts the scan thread, which finds the scanners. `draw` does it too; calling it at start
-    /// lets the header know the scanner before Scan is opened.
+    /// Starts the scan thread, which finds the scanners. `draw` does this too, but calling it at
+    /// start lets the header show the scanner before Scan is opened.
     pub fn start(state: *State, gpa: std.mem.Allocator, io: std.Io) void {
         if (state.worker != null) return;
         state.worker = Worker.start(gpa, io) catch |err| {
@@ -401,9 +405,9 @@ pub fn status(state: *const State) struct { text: []const u8, ready: bool } {
     return .{ .text = text, .ready = std.mem.eql(u8, doing, "ready") };
 }
 
-/// Takes what the scan thread has done, and adds scanned frames to their roll. `draw` does it;
-/// calling it every frame from the app keeps scans going into the roll while another workspace
-/// shows.
+/// Picks up what the scan thread has done, and adds scanned frames to their roll. `draw` does
+/// this, and the app also calls it every frame, so scans keep going into the roll while another
+/// workspace is showing.
 pub fn update(state: *State, ctx: context.Context) void {
     state.start(ctx.gpa, ctx.io);
     const worker = state.worker orelse return;
@@ -423,7 +427,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.device = null;
             if (state.capabilities) |*caps| caps.deinit(gpa);
             state.capabilities = null;
-            // Open the first scanner straight away: there's usually one.
+            // Open the first scanner straight away, since there's usually only one.
             if (list.len > 0) {
                 state.device = 0;
                 worker.submit(.{ .open = 0 }) catch {};
@@ -503,8 +507,8 @@ fn queueItem(state: *State, index: usize) ?*QueueItem {
     return &state.queue.items[index];
 }
 
-/// The resolution to keep after the scanner changed: the one chosen if it has it, else the
-/// default, else its nearest above.
+/// The resolution to use after the scanner changes: the chosen one if the scanner has it, or else
+/// the default, or else the nearest one above.
 fn chooseDpi(capabilities: scan.Capabilities, current: u32) u32 {
     if (std.mem.indexOfScalar(u32, capabilities.resolutions, current) != null) return current;
     return capabilities.resolutionFrom(default_dpi) orelse current;
@@ -537,7 +541,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     const roll_index = ctx.develop.rollIndex(ctx.library);
     followRoll(state, ctx, roll_index);
     handleKeys(state, ctx);
-    // Results of an earlier run go once the frames have changed.
+    // Clear the results of an earlier run once the frames have changed.
     if (!state.scanning and state.queue.items.len > 0 and state.queue.items.len != state.boxes.items.len) state.queue.clearRetainingCapacity();
 
     const top = c.ImGui_GetCursorScreenPos();
@@ -579,7 +583,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     return next;
 }
 
-/// Follows the open roll: its saved preview and boxes come in when another roll opens.
+/// Follows the open roll: when another roll opens, its saved preview and boxes are loaded.
 fn followRoll(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const path = if (roll_index) |r| ctx.library.rolls.items[r].path else null;
     if (state.roll_path) |current| {
@@ -663,7 +667,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     c.ImGui_PopStyleVar();
     y += gui.px(device_height) + gui.px(scanner_gap);
 
-    // What the scanner is set up for, or why there's none.
+    // What the scanner is set up for, or why there isn't one.
     if (state.capabilities) |caps| {
         y += drawProfile(list, x, y, width, caps) + gui.px(scanner_gap);
         y += paragraphAt(list, x, y, width, theme.text_tertiary, filmAreaNote(caps, ctx, roll_index)) + gui.px(scanner_gap);
@@ -754,7 +758,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     c.ImGui_EndDisabled();
 }
 
-/// "Profile: …" with a tick, or a note that the scanner has none.
+/// Draws "Profile: …" with a tick, or a note that the scanner doesn't have one.
 fn drawProfile(list: *c.ImDrawList, x: f32, y: f32, width: f32, caps: scan.Capabilities) f32 {
     const pad_x = gui.px(10);
     const pad_y = gui.px(8);
@@ -771,8 +775,8 @@ fn drawProfile(list: *c.ImDrawList, x: f32, y: f32, width: f32, caps: scan.Capab
     return height;
 }
 
-/// What fits on the scanner's film area. A frame fits when its extent across the film does; the
-/// film itself may be wider, its edges under the holder.
+/// A note on what fits on the scanner's film area. A frame fits when its size across the film
+/// does. The film itself can be wider, with its edges under the holder.
 fn filmAreaNote(caps: scan.Capabilities, ctx: context.Context, roll_index: ?usize) []const u8 {
     const width = caps.area.width;
     if (roll_index) |r| {
@@ -789,7 +793,8 @@ fn filmAreaNote(caps: scan.Capabilities, ctx: context.Context, roll_index: ?usiz
     return gui.print("Film area {d:.2} × {d:.2} mm.", .{ width, caps.area.height });
 }
 
-/// The resolutions offered: all of the scanner's when there are few, else a spread of them.
+/// The resolutions to offer: all of the scanner's when there are only a few, or else a spread of
+/// them.
 fn resolutionChoices(state: *const State, buffer: *[max_resolution_choices]u32) []const u32 {
     const caps = state.capabilities orelse return buffer[0..0];
     const all = caps.resolutions;
@@ -797,7 +802,7 @@ fn resolutionChoices(state: *const State, buffer: *[max_resolution_choices]u32) 
         @memcpy(buffer[0..all.len], all);
         return buffer[0..all.len];
     }
-    // The preview's, then the highest three.
+    // The preview's resolution, then the highest three.
     buffer[0] = caps.resolutionFrom(preview_dpi) orelse all[0];
     var n: usize = 1;
     var i = all.len;
@@ -814,7 +819,7 @@ fn resolutionChoices(state: *const State, buffer: *[max_resolution_choices]u32) 
 /// How big each frame's scan will be at the chosen resolution.
 fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []const u8 {
     const dpi: f32 = @floatFromInt(state.dpi);
-    // Across: the whole film area; along: the frame and its margins.
+    // Across the film it's the whole film area, and along it the frame plus its margins.
     const across_mm = if (state.capabilities) |caps| caps.area.width else if (state.preview) |p| p.area.width else 33.02;
     var estimate = true;
     var along_mm: f32 = formats.Standard.default.format().width_mm;
@@ -833,7 +838,7 @@ fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []con
     return gui.print("{s}{d} × {d} px, {d} MB per frame.", .{ about, width, height, megabytes });
 }
 
-/// The margin, in mm: a field that shows "1.0 mm" and edits as a number.
+/// The margin field, in mm. It shows "1.0 mm" and edits as a plain number.
 fn drawMarginField(state: *State, corner: gui.Vec2) void {
     const width = gui.px(margin_field_width);
     const height = gui.px(pill_height);
@@ -917,7 +922,7 @@ fn drawMain(state: *State, ctx: context.Context, roll_index: usize) void {
     drawFrameSection(state, ctx, roll_index, list, section_x, y, section_width);
 }
 
-/// The preview with the frames on it. Returns the column's width.
+/// Draws the preview with the frames on it. Returns the column's width.
 fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, film: formats.FilmSize) f32 {
     var y = top;
     const dpi_shown: u32 = if (state.preview) |p| @intFromFloat(@round(p.dpi[0])) else if (state.capabilities) |caps| caps.resolutionFrom(preview_dpi) orelse preview_dpi else preview_dpi;
@@ -929,8 +934,8 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     const mono_line = gui.px(12) * line_spacing;
     const below = gui.px(8) + mono_line + gui.px(8) + 2 * lineHeight();
     const room = top + height - y - below;
-    // Once there are frames, the strip is drawn as film, straight, as the design has it: the
-    // film's own width, and the length the preview covers. Before, the scan as it lies.
+    // Once there are frames, the strip is drawn as straight film, as in the design: the film's
+    // own width, and the length the preview covers. Before that, we draw the scan as it lies.
     const as_film = if (state.preview) |p| state.boxes.items.len > 0 and p.texture != null else false;
     const film_mm = if (as_film) gui.vec2(filmWidthMm(state, &state.preview.?, film), state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
     const natural = gui.vec2(gui.px(film_mm.x * preview_px_per_mm), gui.px(film_mm.y * preview_px_per_mm));
@@ -967,8 +972,8 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     return @max(@max(shown.x, mm_width), note_width);
 }
 
-/// Where a frame on the preview goes when the strip is drawn as film: along the column as along
-/// the strip, and across it centred, at the film's own scale.
+/// Where a frame on the preview goes when the strip is drawn as film. Along the strip maps to
+/// along the column, and across the strip is centred, at the film's own scale.
 const StripMap = struct {
     corner: gui.Vec2,
     shown: gui.Vec2,
@@ -986,7 +991,7 @@ const StripMap = struct {
         };
     }
 
-    /// The box's rectangle on the screen, its corners top-left and bottom-right.
+    /// The box's rectangle on the screen, as its top-left and bottom-right corners.
     fn rect(map: StripMap, box: Box) [2]gui.Vec2 {
         const middle = map.corner.x + map.shown.x / 2;
         const half = box.height * map.across / 2;
@@ -995,8 +1000,8 @@ const StripMap = struct {
     }
 };
 
-/// The film's width in mm: the format's, or for film of no set width, its frames' with a little
-/// base beside them.
+/// The film's width in mm: the format's film width, or for film with no set width, the frames'
+/// width plus a little base on each side.
 fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmSize) f32 {
     if (film.filmWidthMm()) |w| return w;
     var widest: f32 = 0;
@@ -1004,8 +1009,9 @@ fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmS
     return widest / preview.pxPerMm()[if (preview.axis == .y) 0 else 1] + 2 * plain_film_margin_mm;
 }
 
-/// The film drawn as it looks on a light table: its base's own colour, the perforations along both
-/// edges where it has them, and each frame's picture straight and centred.
+/// Draws the film as it looks on a light table: the base in its own colour, the film's holes if it
+/// has any (rows along both edges, or a few per frame), and each frame's picture straight and
+/// centred.
 fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
     const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
     const base = preview.base_colour orelse theme.rgba8(theme.raised);
@@ -1018,8 +1024,8 @@ fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: f
         .none => {},
         .rows => |holes| drawRows(state, map, holes, per_mm, across_per_mm, list),
         .per_frame => |count| for (state.boxes.items) |box| {
-            // At the start of each frame, along one edge: drawn sizes, as the formats' own
-            // aren't to hand.
+            // At the start of each frame, along one edge. The sizes are our own drawing sizes,
+            // since we don't have the formats' real ones to hand.
             const side = per_frame_hole_mm * across_per_mm;
             const x = map.corner.x + per_frame_hole_inset_mm * across_per_mm;
             const start = map.corner.y + (box.along - box.length / 2) * map.along;
@@ -1034,8 +1040,8 @@ fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: f
     drawPictures(state, preview, map, list);
 }
 
-/// 135's perforations along both edges, at the film's pitch and in step with the first frame, as
-/// a camera advances it.
+/// Draws 135's perforations along both edges, at the film's pitch and in step with the first
+/// frame, the way a camera advances the film.
 fn drawRows(state: *const State, map: StripMap, holes: formats.Perforations, per_mm: f32, across_per_mm: f32, list: *c.ImDrawList) void {
     const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
     const first = if (state.boxes.items.len > 0) state.boxes.items[0] else return;
@@ -1056,7 +1062,7 @@ fn drawRows(state: *const State, map: StripMap, holes: formats.Perforations, per
     }
 }
 
-/// Each frame's picture, straight and centred in its box.
+/// Draws each frame's picture, straight and centred in its box.
 fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, list: *c.ImDrawList) void {
     const texture = preview.texture orelse return;
     const size = gui.vec2(@floatFromInt(preview.scan.width), @floatFromInt(preview.scan.height));
@@ -1069,7 +1075,8 @@ fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, lis
         const corners = map.rect(box.crop());
         const min = corners[0];
         const max = corners[1];
-        // Along the strip is down the column: for a strip lying along x, the picture turns.
+        // Along the strip means down the column, so for a strip lying along x the picture is
+        // turned.
         if (preview.axis == .y) {
             c.ImDrawList_AddImageQuadEx(list, texture.ref(), min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), gui.vec2(left, upper), gui.vec2(right, upper), gui.vec2(right, lower), gui.vec2(left, lower), c.IM_COL32_WHITE);
         } else {
@@ -1078,8 +1085,8 @@ fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, lis
     }
 }
 
-/// The boxes over the preview: amber, dashed white where they need checking, the selected one
-/// ringed. Click to select, drag to move along the strip.
+/// Draws the boxes over the preview: amber, dashed white where they need checking, and a ring
+/// around the selected one. Click a box to select it, and drag it to move it along the strip.
 fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.ImDrawList) void {
     for (state.boxes.items, 0..) |box, i| {
         const corners = map.rect(box.crop());
@@ -1092,7 +1099,7 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
             state.selected = i;
             state.drag = .{ .move = i };
         }
-        // A click only selects; the box moves once the mouse has moved past the drag threshold.
+        // A click only selects. The box moves once the mouse has gone past the drag threshold.
         if (c.ImGui_IsItemActive() and c.ImGui_IsMouseDragging(0, -1) and state.drag == .move and state.drag.move == i) {
             const moved = c.ImGui_GetIO().*.MouseDelta.y / map.along;
             if (moved != 0) moveBox(state, preview, i, moved, 0);
@@ -1138,7 +1145,7 @@ fn selectedBox(state: *const State) ?Box {
     return state.boxes.items[i];
 }
 
-/// The selected frame, its crop and the tools for the frames.
+/// Draws the selected frame, its crop and the frame tools.
 fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list: *c.ImDrawList, x: f32, top: f32, width: f32) void {
     var y = top;
     const info = ctx.library.rolls.items[roll_index].info;
@@ -1237,8 +1244,9 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     _ = paragraphAt(list, x, y, width, theme.text_tertiary, "Hand edits stay when frames are detected again.");
 }
 
-/// The selected frame on the film around it, turned so its long side runs across, with the crop
-/// and its corner handles. Drag the crop to move it, a corner to resize it. Returns the height.
+/// Draws the selected frame and the film around it, turned so its long side runs across, with the
+/// crop and its corner handles. Drag the crop to move it, or a corner to resize it. Returns the
+/// height.
 fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDrawList, x: f32, y: f32, width: f32) f32 {
     const box = state.boxes.items[index];
     const pad = gui.px(frame_view_padding);
@@ -1246,7 +1254,7 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     const total = view_height + 2 * pad;
     c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + total), theme.imU32(theme.page), gui.px(6), 0);
 
-    // The region shown: the frame and a little beyond its ends, and the opening across.
+    // The region to show: the frame plus a little past each end, and the whole opening across.
     const across = @max(box.height, preview.opening orelse box.height);
     const along = box.length * (1 + 2 * view_overhang);
     const scale = @min(view_height / across, (width - 2 * pad) / along);
@@ -1255,8 +1263,8 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     const region: Box = .{ .along = box.along, .across = box.across, .length = along, .height = across };
     drawRegion(list, preview, region, origin, shown);
 
-    // The crop, in the view's coordinates. Across runs top to bottom; along runs left to right,
-    // or right to left on a strip turned clockwise, whose start is on the right.
+    // The crop, in the view's coordinates. Across runs top to bottom. Along runs left to right,
+    // or right to left on a strip turned clockwise, since its start is on the right.
     const crop = box.crop();
     const flip = preview.axis == .y;
     const crop_left = if (flip) region.end() - crop.end() else crop.start() - region.start();
@@ -1270,7 +1278,7 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
         c.ImDrawList_AddQuadEx(list, corners[0], corners[1], corners[2], corners[3], ink, gui.px(2));
     }
 
-    // Dragging: the crop moves the frame along the strip, a corner resizes it.
+    // Dragging the crop moves the frame along the strip, and dragging a corner resizes it.
     const handle = gui.px(handle_size);
     c.ImGui_PushID("frame view");
     defer c.ImGui_PopID();
@@ -1297,8 +1305,8 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     return total;
 }
 
-/// Draws `region` of the preview into `shown` at `origin`, with the strip's direction running
-/// left to right: a strip down the scanner is turned a quarter clockwise.
+/// Draws `region` of the preview into `shown` at `origin`, with the strip running left to right.
+/// A strip that runs down the scanner is turned a quarter turn clockwise.
 fn drawRegion(list: *c.ImDrawList, preview: *const Preview, region: Box, origin: gui.Vec2, shown: gui.Vec2) void {
     const texture = preview.texture orelse return;
     const r = preview.rect(region);
@@ -1312,18 +1320,18 @@ fn drawRegion(list: *c.ImDrawList, preview: *const Preview, region: Box, origin:
     const p2 = gui.vec2(origin.x + shown.x, origin.y);
     const p3 = gui.vec2(origin.x + shown.x, origin.y + shown.y);
     const p4 = gui.vec2(origin.x, origin.y + shown.y);
-    // The film beyond the scan, where the region runs off it.
+    // The film past the edge of the scan, where the region runs off it.
     c.ImDrawList_AddRectFilled(list, p1, p3, theme.imU32(theme.header));
     if (preview.axis == .y) {
-        // Turned clockwise: the shown top left is the image's bottom left.
+        // Turned clockwise, so the top left as shown is the image's bottom left.
         c.ImDrawList_AddImageQuadEx(list, texture.ref(), p1, p2, p3, p4, gui.vec2(left, bottom), gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom), 0xFFFFFFFF);
     } else {
         c.ImDrawList_AddImageQuadEx(list, texture.ref(), p1, p2, p3, p4, gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom), gui.vec2(left, bottom), 0xFFFFFFFF);
     }
 }
 
-/// The corners of the rectangle from `min` to `max` turned `degrees` clockwise about its centre:
-/// top left, top right, bottom right, bottom left.
+/// The corners of the rectangle from `min` to `max`, turned `degrees` clockwise around its
+/// centre: top left, top right, bottom right, bottom left.
 fn rotatedCorners(min: gui.Vec2, max: gui.Vec2, degrees: f32) [4]gui.Vec2 {
     const centre = gui.vec2((min.x + max.x) / 2, (min.y + max.y) / 2);
     const angle = std.math.degreesToRadians(degrees);
@@ -1338,9 +1346,9 @@ fn rotatedCorners(min: gui.Vec2, max: gui.Vec2, degrees: f32) [4]gui.Vec2 {
     return out;
 }
 
-/// Resizes box `index` from corner `corner` of the frame view (0 top left, then clockwise) by
-/// `dx`, `dy` view pixels in preview units: the opposite corner stays. A box with a fixed ratio and
-/// the full height can only move.
+/// Resizes box `index` by dragging corner `corner` of the frame view (0 is top left, then
+/// clockwise) by `dx`, `dy` view pixels in preview units. The opposite corner stays put. A box
+/// with a fixed ratio and the full height can only move.
 fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, dx: f32, dy: f32) void {
     const box = &state.boxes.items[index];
     // The view runs along the strip right to left when the strip is turned.
@@ -1351,7 +1359,7 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
     const right = corner == 1 or corner == 2;
     const bottom = corner == 2 or corner == 3;
     const length = @max(box.length + (if (right) dx else -dx) / share, min_box_px);
-    // The centre follows the dragged side by half the change.
+    // The centre moves with the dragged side, by half the change.
     const shift = (length - box.length) / 2 * @as(f32, if (right) 1 else -1);
     box.along += if (flip) -shift else shift;
     if (locked) {
@@ -1367,8 +1375,8 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
     state.boxes_dirty = true;
 }
 
-/// Makes a box follow its shape: the opening's height when it's full height, and the length from
-/// the ratio.
+/// Makes a box match its shape: the opening's height if it's full height, and the length from the
+/// ratio.
 fn reshape(box: *Box, preview: *const Preview, format: formats.Format) void {
     if (box.full_height) {
         if (preview.opening) |opening| box.height = opening;
@@ -1381,7 +1389,7 @@ fn reshape(box: *Box, preview: *const Preview, format: formats.Format) void {
     }
 }
 
-/// The note on a frame marked for checking, in a dashed box. Returns its height.
+/// Draws the note on a frame marked for checking, in a dashed box. Returns its height.
 fn drawCheckNote(state: *const State, preview: *const Preview, index: usize, list: *c.ImDrawList, x: f32, y: f32, width: f32) f32 {
     const box = state.boxes.items[index];
     const message: []const u8 = switch (box.check) {
@@ -1402,7 +1410,7 @@ fn drawCheckNote(state: *const State, preview: *const Preview, index: usize, lis
     return height;
 }
 
-/// Why a weak frame sits where it does: the pitch of the confident frames around it.
+/// Explains why a weak frame sits where it does: the pitch of the confident frames around it.
 fn pitchNote(state: *const State, preview: *const Preview, index: usize) []const u8 {
     const boxes = state.boxes.items;
     var before: ?usize = null;
@@ -1480,8 +1488,8 @@ fn insertBox(state: *State, gpa: std.mem.Allocator, box: Box) void {
     state.boxes_dirty = true;
 }
 
-/// Finds the frames on the preview. Frames edited by hand stay; detected ones that overlap them
-/// are dropped.
+/// Finds the frames on the preview. Frames edited by hand stay, and detected frames that overlap
+/// them are dropped.
 fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const preview = if (state.preview) |*p| p else return;
     const r = roll_index orelse return;
@@ -1534,7 +1542,7 @@ fn keepHandBoxes(state: *State) void {
     state.selected = if (kept > 0) 0 else null;
 }
 
-/// A detected frame as a box.
+/// Turns a detected frame into a box.
 fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format) Box {
     const x: f32 = @floatFromInt(frame.area.x);
     const y: f32 = @floatFromInt(frame.area.y);
@@ -1568,8 +1576,8 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const jobs = gpa.alloc(scan_worker.FrameJob, state.boxes.items.len) catch return;
     for (state.boxes.items, jobs, 0..) |box, *job, i| {
         const crop = preview.toScanner(preview.rect(box.crop()));
-        // Along the strip: the crop and the margin each side. Across: the whole film area, so the
-        // holder's edges show for finding the frame again.
+        // Along the strip, scan the crop plus the margin on each side. Across it, scan the whole
+        // film area, so the holder's edges show up for finding the frame again.
         const margin = state.margin_mm;
         var area: scan.Area = if (preview.axis == .y)
             .{ .x = caps.area.x, .y = crop.y - margin, .width = caps.area.width, .height = crop.height + 2 * margin }
@@ -1590,8 +1598,8 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
     };
     if (state.queue_roll) |p| gpa.free(p);
     state.queue_roll = gpa.dupe(u8, ctx.library.rolls.items[r].path) catch null;
-    // A strip that runs down the scanner holds its frames on their side; they turn as the frame
-    // view shows them.
+    // A strip that runs down the scanner has its frames on their side, so they get turned the way
+    // the frame view shows them.
     state.queue_turns = if (preview.axis == .y) 1 else 0;
     worker.submit(.{ .frames = jobs }) catch {
         gpa.free(jobs);
@@ -1602,7 +1610,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
 
 // The queue, on the right.
 
-/// The queue panel. Returns Develop when a frame's crop is opened there.
+/// Draws the queue panel. Returns Develop when a frame's crop is opened there.
 fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
     var next: ?context.Workspace = null;
     const origin = c.ImGui_GetWindowPos();
@@ -1658,7 +1666,7 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
     return next;
 }
 
-/// One frame of the queue. Returns its height, and whether its Check link was clicked.
+/// Draws one frame in the queue. Returns its height, and whether its Check link was clicked.
 fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, item: QueueItem, worker: ?*Worker) struct { height: f32, check: bool } {
     const pad_x = gui.px(queue_row_padding_x);
     const pad_y = gui.px(queue_row_padding_y);
@@ -1690,8 +1698,9 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
     var check = false;
     switch (item.status) {
         .done => drawTick(list, gui.vec2(right - gui.px(14), y + pad_y + (line - gui.px(14)) / 2), theme.ready),
-        // Its edges weren't found again on the scan: a link to the frame's crop in Develop, which
-        // works while the rest of the queue scans, since the frame is in the roll.
+        // Its edges weren't found again on the scan, so show a link to the frame's crop in
+        // Develop. The link works while the rest of the queue scans, since the frame is already in
+        // the roll.
         .check_crop => if (item.frame != null) {
             const link = "Check";
             const link_width = c.ImGui_CalcTextSize(link).x;
@@ -1735,7 +1744,7 @@ fn errorText(err: ?anyerror) []const u8 {
     };
 }
 
-// The preview's arrival, and keeping it with the roll.
+// Receiving the preview, and keeping it with the roll.
 
 fn setPreview(state: *State, ctx: context.Context, picture: scan_worker.Preview) void {
     if (state.preview) |*p| p.deinit(ctx.gpa, ctx.gpu);
@@ -1752,8 +1761,8 @@ fn setPreview(state: *State, ctx: context.Context, picture: scan_worker.Preview)
     savePreviewSettings(state, ctx);
 }
 
-/// Puts the preview on the GPU as the strip looks on a light table: its base nearly white
-/// through the mask.
+/// Puts the preview on the GPU the way the strip looks on a light table, with its base nearly
+/// white through the mask.
 fn uploadPreview(state: *State, ctx: context.Context) void {
     const preview = if (state.preview) |*p| p else return;
     if (preview.texture != null) return;
@@ -1839,27 +1848,28 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
 
 // Drawing helpers.
 
-/// One line of text in the design's line height.
+/// The height of one line of text, at the design's line height.
 fn lineHeight() f32 {
     return c.ImGui_GetFontSize() * line_spacing;
 }
 
-/// `text` on one line at `x`, `y`, centred in the design's line height. Returns the line height.
+/// Draws `text` on one line at `x`, `y`, centred in the design's line height. Returns the line
+/// height.
 fn lineAt(list: *c.ImDrawList, x: f32, y: f32, color: theme.Color, text: []const u8) f32 {
     const shown = gui.print("{s}", .{text});
     c.ImDrawList_AddText(list, gui.vec2(x, y + (lineHeight() - c.ImGui_GetFontSize()) / 2), theme.imU32(color), shown);
     return lineHeight();
 }
 
-/// A panel heading: 12 pixels, semibold, secondary. Returns its height.
+/// Draws a panel heading: 12 pixels, semibold, in the secondary colour. Returns its height.
 fn headingAt(list: *c.ImDrawList, x: f32, y: f32, text: [:0]const u8) f32 {
     fonts.pushSized(.semibold, 12);
     defer fonts.pop();
     return lineAt(list, x, y, theme.text_secondary, text);
 }
 
-/// "Frame 4" at 18 pixels, then `detail` in the secondary colour on the same baseline. Returns
-/// the row's height.
+/// Draws a title like "Frame 4" at 18 pixels, then `detail` in the secondary colour on the same
+/// baseline. Returns the row's height.
 fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:0]const u8) f32 {
     fonts.pushSized(.semibold, 18);
     const title_size = c.ImGui_CalcTextSize(title);
@@ -1872,7 +1882,7 @@ fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:
     return height;
 }
 
-/// The lines `text` wraps to at `width`.
+/// Splits `text` into the lines it wraps to at `width`.
 fn wrapLines(text: []const u8, width: f32, buffer: [][]const u8) [][]const u8 {
     const font = c.ImGui_GetFont();
     const size = c.ImGui_GetFontSize();
@@ -1895,7 +1905,7 @@ fn paragraphHeight(text: []const u8, width: f32) f32 {
     return @as(f32, @floatFromInt(wrapLines(text, width, &buffer).len)) * lineHeight();
 }
 
-/// `text` wrapped at `width` with the design's line height. Returns its height.
+/// Draws `text` wrapped at `width`, with the design's line height. Returns its height.
 fn paragraphAt(list: *c.ImDrawList, x: f32, y: f32, width: f32, color: theme.Color, text: []const u8) f32 {
     var buffer: [16][]const u8 = undefined;
     const lines = wrapLines(text, width, &buffer);
@@ -1903,8 +1913,8 @@ fn paragraphAt(list: *c.ImDrawList, x: f32, y: f32, width: f32, color: theme.Col
     return @as(f32, @floatFromInt(lines.len)) * lineHeight();
 }
 
-/// A row of choices that wraps at `width`; with `fill`, one row whose choices share the width.
-/// Moves `y` past it and returns the choice clicked.
+/// Draws a row of choices that wraps at `width`, or with `fill`, a single row whose choices share
+/// the width. Moves `y` past it and returns the choice that was clicked.
 fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f32, fill: bool) ?usize {
     var clicked: ?usize = null;
     const gap = gui.px(pill_gap);
@@ -1930,10 +1940,11 @@ fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f
     return clicked;
 }
 
-/// A slider row of the frame tools: a 110-pixel label, the slider, the value in a 56-pixel
-/// column, and a button that resets it to `default`. Moves `y` past it. True when it moved.
+/// Draws a slider row for the frame tools: a 110-pixel label, the slider, the value in a 56-pixel
+/// column, and a button that resets it to `default`. Moves `y` past it. Returns true when the
+/// value changed.
 fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min: f32, max: f32, comptime format: []const u8, default: f32) bool {
-    // A range input is 20 pixels high in the design; the slider fills the row.
+    // A range input is 20 pixels high in the design, and the slider fills the row.
     const height = gui.px(slider_row_height);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (height - c.ImGui_GetFontSize()) / 2));
     defer c.ImGui_PopStyleVar();
@@ -1958,12 +1969,13 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     return changed;
 }
 
-/// `v` with `format`, with no minus sign on what rounds to nothing.
+/// Formats `v` with `format`, without a minus sign on values that round to zero.
 fn signed(comptime format: []const u8, v: f32) [:0]const u8 {
     return if (v < -0.05) gui.print("−" ++ format, .{-v}) else gui.print(format, .{@abs(v)});
 }
 
-/// A check box as the design draws it here: the label in the text colour, 8 pixels after the box.
+/// A check box drawn the way the design has it here: the label in the text colour, 8 pixels after
+/// the box.
 fn checkbox(label: [:0]const u8, checked: *bool) bool {
     const box = gui.px(14);
     const label_size = c.ImGui_CalcTextSize(label);
@@ -1988,7 +2000,7 @@ fn checkbox(label: [:0]const u8, checked: *bool) bool {
     return clicked;
 }
 
-/// A button with a border and secondary text on no fill: the design's lesser actions.
+/// A button with a border, secondary text and no fill, for the design's less important actions.
 fn quietButton(label: [:0]const u8, size: gui.Vec2) bool {
     c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, theme.withAlpha(theme.page, 0));
     c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, theme.control_hover);
@@ -1999,7 +2011,7 @@ fn quietButton(label: [:0]const u8, size: gui.Vec2) bool {
     return c.ImGui_ButtonEx(label.ptr, gui.vec2(gui.px(size.x), gui.px(size.y)));
 }
 
-/// A tick, 14 pixels square at `corner`.
+/// Draws a tick, 14 pixels square, at `corner`.
 fn drawTick(list: *c.ImDrawList, corner: gui.Vec2, color: theme.Color) void {
     const ink = theme.imU32(color);
     const t = gui.px(1.6);
@@ -2007,7 +2019,7 @@ fn drawTick(list: *c.ImDrawList, corner: gui.Vec2, color: theme.Color) void {
     c.ImDrawList_AddLineEx(list, gui.vec2(corner.x + gui.px(5), corner.y + gui.px(10.5)), gui.vec2(corner.x + gui.px(12), corner.y + gui.px(3.5)), ink, t);
 }
 
-/// An "i" in a circle, `size` square at `corner`.
+/// Draws an "i" in a circle, `size` square, at `corner`.
 fn drawInfo(list: *c.ImDrawList, corner: gui.Vec2, size: f32, color: theme.Color) void {
     const ink = theme.imU32(color);
     const unit = size / 16;
@@ -2024,7 +2036,7 @@ fn drawDashedQuad(list: *c.ImDrawList, corners: [4]gui.Vec2, color: u32, thickne
     for (0..4) |i| gui.dashedLine(list, corners[i], corners[(i + 1) % 4], color, thickness, gui.px(dash), gui.px(dash_gap));
 }
 
-/// A ratio as people say it: 3:2, 4:3, 1:1, or the number.
+/// A ratio the way people say it (3:2, 4:3, 1:1), or else just the number.
 fn ratioLabel(r: f32) []const u8 {
     const known = [_]struct { f32, []const u8 }{ .{ 1.5, "3:2" }, .{ 1.0, "1:1" }, .{ 4.0 / 3.0, "4:3" }, .{ 0.75, "3:4" }, .{ 2.0 / 3.0, "2:3" }, .{ 1.25, "5:4" }, .{ 0.8, "4:5" }, .{ 2.0, "2:1" }, .{ 3.0, "3:1" } };
     for (known) |k| if (@abs(r - k[0]) < 0.02) return k[1];

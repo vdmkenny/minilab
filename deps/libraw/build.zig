@@ -1,12 +1,13 @@
-//! Builds LibRaw as the static library `raw`, C++17 on libc++, for its C API (`libraw/libraw.h`):
-//! the upstream's library sources (`Makefile.am`), with zlib for floating-point DNG (`USE_ZLIB`)
-//! and libjpeg-turbo for lossy DNG (`USE_JPEG`). LittleCMS, OpenMP, RawSpeed and the DNG SDK are
-//! left out. The library catches its own C++ exceptions, so none reaches a C caller.
+//! Builds LibRaw as the static library `raw`, in C++17 on libc++, for its C API
+//! (`libraw/libraw.h`). It compiles the upstream's library sources (`Makefile.am`), with zlib for
+//! floating-point DNG (`USE_ZLIB`) and libjpeg-turbo for lossy DNG (`USE_JPEG`). LittleCMS,
+//! OpenMP, RawSpeed and the DNG SDK are left out. The library catches its own C++ exceptions, so
+//! none of them reach a C caller.
 //!
-//! LibRaw is offered under the LGPL 2.1 or the CDDL 1.0 (the upstream's `COPYRIGHT`,
-//! `LICENSE.LGPL` and `LICENSE.CDDL`), which the package exposes as named lazy paths. A program
-//! that links it statically under the LGPL must let its users relink it with a changed LibRaw,
-//! which a GPL program's published source does.
+//! LibRaw is offered under the LGPL 2.1 or the CDDL 1.0 (see the upstream's `COPYRIGHT`,
+//! `LICENSE.LGPL` and `LICENSE.CDDL`), and the package exposes those files as named lazy paths. A
+//! program that links it statically under the LGPL has to let its users relink it with a changed
+//! LibRaw. Publishing the program's source and build does that.
 
 const std = @import("std");
 
@@ -29,7 +30,7 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFiles(.{
         .root = upstream.path(""),
         .files = &sources,
-        // The GNU dialect, as the upstream's own build gets by default: MinGW's `math.h` hides
+        // The GNU dialect, which the upstream's own build gets by default: MinGW's `math.h` hides
         // `M_PI` in strict ISO mode. dcraw's decoders shift negative numbers and overflow on
         // purpose, which the undefined behaviour sanitiser would trap.
         .flags = &.{ "-std=gnu++17", "-fno-sanitize=undefined" },

@@ -1,32 +1,34 @@
 //! The scan thread. It owns the scanner library and the open scanner, and runs the Scan
-//! workspace's jobs one at a time, since every scanner call blocks: listing devices takes
-//! seconds, and a frame at 2400 dpi takes minutes. The window keeps answering meanwhile.
+//! workspace's jobs one at a time, because every scanner call blocks: listing devices takes
+//! seconds, and a frame at 2400 dpi takes minutes. The window stays responsive in the meantime.
 //!
-//! The workspace hands jobs over with `submit` and collects what happened with `take`. Each
-//! scanned frame is finished here too: its edges are found again on the full-resolution scan to
-//! refine the crop, and it's turned into the PPM bytes the roll stores. Only adding it to the roll
-//! is left to the window's thread, which owns the library of rolls.
+//! The workspace hands jobs over with `submit` and collects the results with `take`. Each scanned
+//! frame is also finished here: we find its edges again on the full-resolution scan to refine the
+//! crop, and turn it into the PPM bytes the roll stores. The only thing left for the window's
+//! thread is adding the frame to the roll, since that thread owns the library of rolls.
 //!
-//! A scan always runs to its end. Cancelling skips the frames after the current one and throws the
-//! current one away once it's read, because interrupting the V200 mid-scan leaves it stuck.
+//! A scan always runs to the end. Cancelling skips the frames after the current one, and throws
+//! the current one away once it's been read, because interrupting the V200 mid-scan leaves it
+//! stuck.
 
 const std = @import("std");
 const c = @import("c");
 const minilab = @import("minilab");
-/// The scanner interface. It's imported here and nowhere else in the app, so that moving it
-/// into the core (as `minilab.scan`) changes this one line.
+/// The scanner interface, which lives in the core as `minilab.scan`. The rest of the app gets it
+/// from here.
 pub const scan = minilab.scan;
 
 const image = minilab.image;
 const frames = minilab.frames;
 
-/// Full-resolution scans are reduced to about this resolution to find their frame's edges again.
+/// Full-resolution scans are reduced to about this resolution before we look for the frame's
+/// edges again.
 const refine_dpi = 300;
-/// A detected frame refines the crop only when its centre is within this share of the frame's
-/// length of where the preview put it.
+/// A detected frame only refines the crop when its centre is close to where the preview put it:
+/// within this share of the frame's length.
 const refine_reach = 0.25;
 
-/// How long `stop` waits for a thread that isn't reading a scan, and how often it looks.
+/// How long `stop` waits for a thread that isn't reading a scan, and how often it checks.
 const stop_wait_ms = 5000;
 const stop_poll_ms = 50;
 
@@ -50,17 +52,17 @@ pub const FrameJob = struct {
     /// The frame's place in the workspace's queue.
     index: usize,
     request: scan.Request,
-    /// Where the crop should fall, mm on the scanner, from the frame's box on the preview.
+    /// Where the crop should go, in mm on the scanner, from the frame's box on the preview.
     crop: scan.Area,
-    /// When set, the frame's edges are found again on the scan and the crop follows them; hand
-    /// edits are kept as they are.
+    /// When this is set, the frame's edges are found again on the scan and the crop follows them.
+    /// Hand edits are kept as they are.
     refine: ?Refine,
 
     pub const Refine = struct {
         format: frames.Format,
         kind: frames.Kind,
         axis: frames.Axis,
-        /// Taken off each side of the detected frame, as a share of its size.
+        /// How much to take off each side of the detected frame, as a share of its size.
         inset: f32,
     };
 };
@@ -68,30 +70,30 @@ pub const FrameJob = struct {
 pub const Job = union(enum) {
     /// List the scanners again.
     list,
-    /// Open a device from the last list, and read its transparency source's capabilities.
+    /// Open a device from the last list, and read what its transparency source can do.
     open: usize,
     preview: scan.Request,
-    /// Scan these, in order. The thread owns the slice once submitted.
+    /// Scan these, in order. The thread owns the slice once it's submitted.
     frames: []FrameJob,
 };
 
 pub const Stage = enum { list, open, preview, scan };
 
 pub const Event = union(enum) {
-    /// The thread's list of devices, owned by the receiver now.
+    /// The thread's list of devices. Whoever receives the event owns it now.
     devices: []scan.Device,
     opened: struct { device: usize, capabilities: scan.Capabilities },
     failed: struct { stage: Stage, err: anyerror },
     preview: Preview,
     frame_started: usize,
-    /// The frame is read, and is being checked and converted.
+    /// The frame has been read, and is being checked and converted.
     frame_checking: usize,
     frame_done: Scanned,
     frame_failed: struct { index: usize, err: anyerror },
     frame_cancelled: usize,
     queue_done: struct { cancelled: bool },
 
-    /// Frees what the event owns, for events that are dropped.
+    /// Frees what the event owns, for events that get dropped.
     pub fn deinit(event: *Event, gpa: std.mem.Allocator) void {
         switch (event.*) {
             .devices => |d| scan.freeDevices(gpa, d),
@@ -109,11 +111,11 @@ pub const Preview = struct {
     scan: image.Scan,
     /// Pixels per inch, across and down.
     dpi: [2]f32,
-    /// What it covers on the scanner, mm.
+    /// The area it covers on the scanner, in mm.
     area: scan.Area,
 };
 
-/// A frame scanned and ready for the roll.
+/// A frame that's been scanned and is ready for the roll.
 pub const Scanned = struct {
     index: usize,
     /// The scan as a 16-bit binary PPM.
@@ -138,10 +140,10 @@ pub const Worker = struct {
     cancel: std.atomic.Value(bool) = .init(false),
     phase: std.atomic.Value(Phase) = .init(.loading),
     progress: scan.Progress = .{},
-    /// Set when the thread has ended, for `stop` to know it can join.
+    /// Set when the thread has ended, so `stop` knows it can join it.
     finished: std.atomic.Value(bool) = .init(false),
 
-    // The thread's own.
+    // These belong to the thread.
     library: ?scan.Library = null,
     devices: []scan.Device = &.{},
     scanner: ?scan.Scanner = null,
@@ -157,11 +159,11 @@ pub const Worker = struct {
         return worker;
     }
 
-    /// Stops the thread and frees everything. A scan under way is read to its end first, which
-    /// can take a minute or two at full resolution: stopping mid-frame leaves the V200 stuck.
-    /// Otherwise the thread gets a few seconds; a SANE call that doesn't return in that time (a
-    /// backend probing a device that doesn't answer) is left to end with the process, and the
-    /// worker isn't freed.
+    /// Stops the thread and frees everything. A scan that's under way is read to the end first,
+    /// which can take a minute or two at full resolution, because stopping mid-frame leaves the
+    /// V200 stuck. Otherwise the thread gets a few seconds. If a SANE call doesn't return in that
+    /// time (say, a backend probing a device that doesn't answer), it's left to end with the
+    /// process, and the worker isn't freed.
     pub fn stop(worker: *Worker) void {
         const gpa = worker.gpa;
         worker.cancel.store(true, .release);
@@ -199,7 +201,7 @@ pub const Worker = struct {
         worker.wake.signal(worker.io);
     }
 
-    /// The next thing that happened, oldest first. The caller owns it.
+    /// Returns the next thing that happened, oldest first. The caller owns it.
     pub fn take(worker: *Worker) ?Event {
         worker.mutex.lockUncancelable(worker.io);
         defer worker.mutex.unlock(worker.io);
@@ -207,7 +209,7 @@ pub const Worker = struct {
         return worker.events.orderedRemove(0);
     }
 
-    /// Whether jobs are waiting or running, or events wait to be taken.
+    /// Whether any jobs are waiting or running, or any events are waiting to be taken.
     pub fn pending(worker: *Worker) bool {
         worker.mutex.lockUncancelable(worker.io);
         defer worker.mutex.unlock(worker.io);
@@ -220,8 +222,8 @@ pub const Worker = struct {
     /// Asks the thread to stop after the frame it's reading, and to drop that frame.
     pub fn cancelQueue(worker: *Worker) void {
         worker.cancel.store(true, .release);
-        // In one step: the thread may go idle between a separate check and store, and then
-        // `.finishing` would stay for good.
+        // Do this in one step. With a separate check and store, the thread could go idle in
+        // between, and then `.finishing` would stay for good.
         _ = worker.phase.cmpxchgStrong(.scanning, .finishing, .acq_rel, .acquire);
     }
 
@@ -289,7 +291,8 @@ pub const Worker = struct {
                 worker.scanner = null;
                 if (index >= worker.devices.len) return worker.post(.{ .failed = .{ .stage = .open, .err = error.NotFound } });
                 worker.scanner = library.open(gpa, worker.devices[index]) catch |err| return worker.post(.{ .failed = .{ .stage = .open, .err = err } });
-                // Film wants the transparency source; scanners without one show their own.
+                // Film needs the transparency source. A scanner without one falls back to its
+                // default source.
                 const capabilities = worker.scanner.?.capabilities(gpa, .transparency) catch worker.scanner.?.capabilities(gpa, null) catch |err| {
                     return worker.post(.{ .failed = .{ .stage = .open, .err = err } });
                 };
@@ -345,8 +348,8 @@ pub const Worker = struct {
     }
 };
 
-/// Turns a frame's scan into what the roll keeps: its PPM bytes, and the crop, found again on the
-/// scan where the frame was detected rather than placed by hand.
+/// Turns a frame's scan into what the roll keeps: its PPM bytes and the crop. If the frame was
+/// detected rather than placed by hand, the crop is found again on this scan.
 fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
     const whole: image.Scan = .{ .width = picture.width, .height = picture.height, .pixels = picture.pixels };
     const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
@@ -369,7 +372,7 @@ fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
     };
 }
 
-/// `area` on the scanner as pixels of a scan of `scanned`, clipped to the scan.
+/// Converts `area` on the scanner to pixels of a scan that covers `scanned`, clipped to the scan.
 fn toPixels(area: scan.Area, scanned: scan.Area, px_per_mm: [2]f32, width: usize, height: usize) image.Area {
     const x0 = std.math.clamp((area.x - scanned.x) * px_per_mm[0], 0, @as(f32, @floatFromInt(width)));
     const y0 = std.math.clamp((area.y - scanned.y) * px_per_mm[1], 0, @as(f32, @floatFromInt(height)));
@@ -383,14 +386,14 @@ fn toPixels(area: scan.Area, scanned: scan.Area, px_per_mm: [2]f32, width: usize
     };
 }
 
-/// The frame detected on `whole` nearest to `planned`, with the inset taken off, or null when
-/// detection finds none close enough, or isn't sure of it.
+/// Returns the frame detected on `whole` that's nearest to `planned`, with the inset taken off.
+/// Returns null when detection finds none close enough, or isn't sure of the one it finds.
 fn refineCrop(gpa: std.mem.Allocator, whole: image.Scan, dpi: f32, planned: image.Area, refine: FrameJob.Refine) ?image.Area {
     const factor: usize = @max(1, @as(usize, @intFromFloat(@round(dpi / refine_dpi))));
     const longest = @max(whole.width, whole.height) / factor;
     var reduced = image.downscale(gpa, whole, longest) catch return null;
     defer reduced.deinit(gpa);
-    // The whole factor `downscale` reduced by, which may be more than `factor`.
+    // The whole-number factor `downscale` actually reduced by, which may be more than `factor`.
     const scale: f32 = @floatFromInt(image.reductionFactor(whole.width, whole.height, longest));
     var detection = frames.detect.detect(gpa, reduced, dpi / scale, refine.format, refine.kind, .{ .axis = refine.axis }) catch return null;
     defer detection.deinit(gpa);
@@ -422,7 +425,7 @@ fn centreOf(area: image.Area) [2]f32 {
     return .{ @as(f32, @floatFromInt(area.x)) + @as(f32, @floatFromInt(area.width)) / 2, @as(f32, @floatFromInt(area.y)) + @as(f32, @floatFromInt(area.height)) / 2 };
 }
 
-/// `area` less `share` of its size off each side, clipped to the scan.
+/// Returns `area` with `share` of its size taken off each side, clipped to the scan.
 pub fn inset(area: image.Area, share: f32, width: usize, height: usize) image.Area {
     const dx: usize = @intFromFloat(@as(f32, @floatFromInt(area.width)) * share);
     const dy: usize = @intFromFloat(@as(f32, @floatFromInt(area.height)) * share);

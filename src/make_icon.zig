@@ -1,4 +1,4 @@
-//! Writes minilab's icon as a Windows .ico, which the build puts in the Windows program.
+//! Writes minilab's icon as a Windows .ico file. The build puts it into the Windows program.
 //!
 //! usage: make_icon <out.ico>
 

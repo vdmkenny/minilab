@@ -1,5 +1,5 @@
-//! Small helpers over Dear ImGui's C API: text from slices, strings made for the frame, sizes in
-//! the design's pixels, and the design's controls built from ImGui's.
+//! Small helpers on top of Dear ImGui's C API: text from slices, strings that last for one frame,
+//! sizes in the design's pixels, and the design's own controls built out of ImGui's.
 
 const std = @import("std");
 const c = @import("c");
@@ -8,12 +8,12 @@ const fonts = @import("fonts.zig");
 
 pub const Vec2 = c.ImVec2;
 
-/// The display's scale, which turns the design's pixels into ImGui's.
+/// The display's scale, which converts the design's pixels into ImGui's.
 pub var scale: f32 = 1;
 
 var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 
-/// Frees the last frame's strings.
+/// Frees the strings made during the last frame.
 pub fn newFrame() void {
     _ = frame_arena.reset(.retain_capacity);
 }
@@ -26,7 +26,7 @@ pub fn vec2(x: f32, y: f32) Vec2 {
     return .{ .x = x, .y = y };
 }
 
-/// A line of text kept between frames, cut short when it doesn't fit.
+/// A line of text that's kept between frames, and cut short when it doesn't fit.
 pub fn Line(comptime capacity: usize) type {
     return struct {
         buffer: [capacity]u8 = undefined,
@@ -42,13 +42,13 @@ pub fn Line(comptime capacity: usize) type {
     };
 }
 
-/// A string for this frame, formatted, ending in a NUL for ImGui.
+/// Formats a string that lasts for this frame, ending in a NUL for ImGui.
 pub fn print(comptime format: []const u8, args: anytype) [:0]const u8 {
     return std.fmt.allocPrintSentinel(frame_arena.allocator(), format, args, 0) catch "";
 }
 
-/// `value`, shortened from the start with an ellipsis until it fits in `width`: for paths, whose
-/// end says the most.
+/// Shortens `value` from the start with an ellipsis until it fits in `width`. Good for paths,
+/// where the end says the most.
 pub fn elideStart(value: []const u8, width: f32) [:0]const u8 {
     var start: usize = 0;
     var shown = print("{s}", .{value});
@@ -61,7 +61,7 @@ pub fn elideStart(value: []const u8, width: f32) [:0]const u8 {
     return shown;
 }
 
-/// `value`, shortened at the end with an ellipsis until it fits in `width`.
+/// Shortens `value` at the end with an ellipsis until it fits in `width`.
 pub fn elideEnd(value: []const u8, width: f32) [:0]const u8 {
     var end = value.len;
     var shown = print("{s}", .{value});
@@ -91,7 +91,7 @@ pub fn paragraph(color: theme.Color, value: []const u8) void {
 }
 
 /// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
-/// writes them in capitals; so do the callers.
+/// writes headings in capitals, and so do the callers.
 pub fn heading(value: []const u8) void {
     fonts.pushSized(.semibold, 12);
     textColored(theme.text_secondary, value);
@@ -107,22 +107,22 @@ pub fn title(value: []const u8, size: f32) void {
 
 /// How a button looks.
 pub const Kind = enum {
-    /// Grey, with a border: most buttons.
+    /// Grey, with a border. Most buttons are this kind.
     normal,
-    /// Amber: the one action a page is for.
+    /// Amber, for the one main action on a page.
     primary,
     /// A border only.
     outline,
-    /// Chosen among choices: amber border on a dark amber fill.
+    /// The chosen one in a set of choices: an amber border on a dark amber fill.
     selected,
-    /// Not chosen among choices: grey, with secondary text.
+    /// An unchosen one in a set of choices: grey, with secondary text.
     unselected,
-    /// No fill or border until hovered: icons and grouped choices.
+    /// No fill or border until it's hovered, for icons and grouped choices.
     quiet,
 };
 
-/// A button of `kind`, `size` in the design's pixels, where 0 means fit the label (and the
-/// height of a control).
+/// A button of `kind`. `size` is in the design's pixels, and 0 means fit the label (or, for the
+/// height, use a control's usual height).
 pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
     const colours: struct { fill: theme.Color, hover: theme.Color, line: theme.Color, ink: theme.Color } = switch (kind) {
         .normal => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
@@ -147,13 +147,13 @@ pub fn button(label: [:0]const u8) bool {
     return buttonOf(.normal, label, vec2(0, 0));
 }
 
-/// A button that shows whether it is chosen, for a row of choices.
+/// A button that shows whether it's chosen, for a row of choices.
 pub fn choice(label: [:0]const u8, selected: bool) bool {
     return buttonOf(if (selected) .selected else .unselected, label, vec2(0, 0));
 }
 
-/// Choices in one grey box, the chosen one marked, as the viewer's Split / Negative / Positive.
-/// Returns the one clicked.
+/// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
+/// Negative / Positive. Returns the one that was clicked.
 pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) ?usize {
     c.ImGui_PushID(id.ptr);
     defer c.ImGui_PopID();
@@ -185,16 +185,16 @@ pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) 
 /// Where the controls of a labelled row start: after a 96-pixel label column and a 10-pixel gap.
 pub const label_column = 96;
 pub const label_gap = 10;
-/// Width of the value column after a slider.
+/// The width of the value column after a slider.
 pub const value_column = 52;
-/// The reset button after a slider's value: its size, and the room it takes with its gap.
+/// The reset button after a slider's value: its size, and the room it takes up including its gap.
 pub const reset_size = 14;
 pub const reset_space = reset_size + 6;
-/// The reset button's arrow: the radius of its circle, smaller than the turn buttons'.
+/// The radius of the reset button's arrow, which is smaller than on the turn buttons.
 const reset_icon_radius = 4;
 
-/// Starts a row of a settings grid: `label` in the label column, then the cursor where the
-/// control goes.
+/// Starts a row of a settings grid: draws `label` in the label column, then moves the cursor to
+/// where the control goes.
 pub fn rowLabel(label: []const u8) void {
     const x = c.ImGui_GetCursorPosX();
     c.ImGui_AlignTextToFramePadding();
@@ -202,13 +202,13 @@ pub fn rowLabel(label: []const u8) void {
     c.ImGui_SameLineEx(x + px(label_column + label_gap), 0);
 }
 
-/// A drop-down of `items`, `width` in the design's pixels (0 fills the row). Returns the index
-/// chosen, when it changed.
+/// A drop-down of `items`, `width` wide in the design's pixels (0 fills the row). Returns the
+/// chosen index when it changes.
 pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32) ?usize {
     c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
     const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
     const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton);
-    // A small chevron, as a native drop-down has, instead of ImGui's arrow button.
+    // A small chevron, like a native drop-down has, instead of ImGui's arrow button.
     chevron();
     if (!open) return null;
     defer c.ImGui_EndCombo();
@@ -221,12 +221,12 @@ pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: 
     return picked;
 }
 
-/// What's typed in the open searchable drop-down; only one is open at a time.
+/// What's typed into the open searchable drop-down. Only one can be open at a time.
 var search_buffer: [64:0]u8 = @splat(0);
 
-/// A drop-down of `items` with a search field at its top, for long lists such as film stocks.
-/// Every word typed must appear in an item, in any case. Enter picks the first match. Returns
-/// the index chosen, when it changed.
+/// A drop-down of `items` with a search field at the top, for long lists such as film stocks.
+/// An item matches when it contains every word typed, ignoring case. Enter picks the first match.
+/// Returns the chosen index when it changes.
 pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32, hint: [:0]const u8) ?usize {
     c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
     const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
@@ -278,7 +278,7 @@ pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     return false;
 }
 
-/// The small chevron of a drop-down, at the right of the item just drawn.
+/// Draws a drop-down's small chevron at the right of the item just drawn.
 pub fn chevron() void {
     const max = c.ImGui_GetItemRectMax();
     const middle = (c.ImGui_GetItemRectMin().y + max.y) / 2;
@@ -289,7 +289,7 @@ pub fn chevron() void {
     c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + px(4), tip.y - px(4)), ink, px(1.5));
 }
 
-/// A ticked check box `size` pixels square at `min`: amber, with the design's tick.
+/// Draws a ticked check box, `size` pixels square, at `min`: amber, with the design's tick.
 pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
     // The design draws its 12-pixel tick in a 16-pixel box: M2.5 6.5 l2.5 2.5 4.5 −5.5.
     const design_box = 16;
@@ -305,7 +305,8 @@ pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
     c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.on_accent), 1.8 * unit, 0);
 }
 
-/// A small check box with its label, as the design draws one. True when it was clicked.
+/// A small check box with its label, drawn the way the design draws one. Returns true when it was
+/// clicked.
 pub fn checkbox(label: [:0]const u8, checked: *bool) bool {
     const box = px(14);
     const label_size = c.ImGui_CalcTextSize(label.ptr);
@@ -330,29 +331,31 @@ pub fn checkbox(label: [:0]const u8, checked: *bool) bool {
 /// How many bytes a one-line text field holds.
 pub const text_capacity = 128;
 
-/// A text field's buffer, holding `value` to start with.
+/// Makes a text field's buffer, holding `value` to start with.
 pub fn initText(comptime capacity: usize, comptime value: []const u8) [capacity:0]u8 {
     var buffer: [capacity:0]u8 = @splat(0);
     @memcpy(buffer[0..value.len], value);
     return buffer;
 }
 
-/// Puts `value` in a text field's buffer. A value that doesn't fit leaves the buffer as it was,
-/// since a path or name cut short would be wrong.
+/// Puts `value` into a text field's buffer. If it doesn't fit, the buffer stays as it was, because
+/// a path or name that's cut short would be wrong.
 pub fn setText(buffer: [:0]u8, value: []const u8) error{TooLong}!void {
     if (value.len > buffer.len) return error.TooLong;
     @memcpy(buffer[0..value.len], value);
     buffer[value.len] = 0;
 }
 
-/// A text field filling the row, with `hint` shown while it's empty.
+/// A text field `width` wide in the design's pixels (0 fills the row), with `hint` shown while
+/// it's empty.
 pub fn textField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f32) bool {
     c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
     return c.ImGui_InputTextWithHint(print("##{s}", .{id}).ptr, hint.ptr, buffer, buffer.len + 1, 0);
 }
 
-/// A range slider as the design draws one: a thin track, amber up to the value, and a round
-/// thumb. `width` in the design's pixels, 0 to fill up to the value column. True when it moved.
+/// A range slider drawn the way the design draws one: a thin track, amber up to the value, and a
+/// round thumb. `width` is in the design's pixels, and 0 fills up to the value column. Returns true
+/// when it moved.
 pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) bool {
     const room = c.ImGui_GetContentRegionAvail().x;
     const w = if (width == 0) room - px(value_column + label_gap + reset_space) else px(width);
@@ -384,7 +387,7 @@ pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) boo
     return changed;
 }
 
-/// A value in the value column after a slider: monospaced, to the right.
+/// Draws a value in the value column after a slider, monospaced and right-aligned.
 pub fn valueText(shown: []const u8) void {
     c.ImGui_SameLineEx(0, px(label_gap));
     const end = c.ImGui_GetCursorPosX() + px(value_column);
@@ -396,7 +399,8 @@ pub fn valueText(shown: []const u8) void {
     fonts.pop();
 }
 
-/// A labelled slider row with its value: the settings grid's commonest row. True when it moved.
+/// A labelled slider row with its value, the most common row in a settings grid. Returns true when
+/// it moved.
 pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format: []const u8, options: SliderOptions) bool {
     c.ImGui_PushID(print("{s}", .{label}).ptr);
     defer c.ImGui_PopID();
@@ -422,8 +426,8 @@ pub const SliderOptions = struct {
     help: ?[:0]const u8 = null,
 };
 
-/// A small button at `at` that puts a value back to its default: off while the value, `shown`,
-/// reads as the default does, `default_shown`. True when clicked.
+/// A small button at `at` that puts a value back to its default. It's disabled while the value as
+/// shown (`shown`) reads the same as the default (`default_shown`). Returns true when clicked.
 pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown: []const u8) bool {
     const at_default = std.mem.eql(u8, shown, default_shown);
     const disabled = at_default or c.ImGui_GetStyle().*.Alpha < 1 or (c.ImGui_GetItemFlags() & c.ImGuiItemFlags_Disabled) != 0;
@@ -439,14 +443,14 @@ pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown:
     return clicked and !at_default;
 }
 
-/// A turning arrow, three quarters of a circle of `radius`, centred at `centre`: clockwise for
-/// turn right, anticlockwise for turn left and for reset.
+/// Draws a turning arrow: three quarters of a circle of `radius`, centred at `centre`. It goes
+/// clockwise for turn right, and anticlockwise for turn left and for reset.
 pub fn turnIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, clockwise: bool, colour: theme.Color) void {
     const ink = theme.imU32(colour);
     const thickness = radius / 4;
     const top = -std.math.pi / 2.0;
     const sweep = 1.5 * std.math.pi;
-    // Screen angles grow clockwise, as y grows downwards.
+    // Screen angles increase clockwise, because y grows downwards.
     if (clockwise) c.ImDrawList_PathArcTo(list, centre, radius, top - sweep, top, 16) else c.ImDrawList_PathArcTo(list, centre, radius, top, top + sweep, 16);
     c.ImDrawList_PathStroke(list, ink, thickness, 0);
     const tip = vec2(centre.x, centre.y - radius);
@@ -456,10 +460,10 @@ pub fn turnIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, clockwise: bool,
     c.ImDrawList_AddLineEx(list, tip, vec2(tip.x - along * head, tip.y + head), ink, thickness);
 }
 
-/// `v` printed with `format`, with a true minus sign as in the design.
+/// Prints `v` with `format`, using a real minus sign as the design does.
 pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
     const shown = print(format, .{@abs(v)});
-    // −0.00 reads as a mistake: a value that prints as zero gets no sign.
+    // −0.00 looks like a mistake, so a value that prints as zero gets no sign.
     const zero = for (shown) |ch| {
         if (ch >= '1' and ch <= '9') break false;
     } else true;
@@ -467,7 +471,7 @@ pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
     return shown;
 }
 
-/// A horizontal line across the window at the cursor, in the divider colour.
+/// Draws a horizontal line across the window at the cursor, in the divider colour.
 pub fn divider() void {
     const origin = c.ImGui_GetCursorScreenPos();
     const window = c.ImGui_GetWindowPos();
@@ -475,12 +479,12 @@ pub fn divider() void {
     c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(window.x, origin.y), vec2(window.x + width, origin.y), theme.imU32(theme.divider));
 }
 
-/// A section of a side panel: 12 pixels of space above and below, and a divider under it. The
-/// panel's own padding gives the sides. Call `endSection` after.
+/// Starts a section of a side panel: 12 pixels of space above and below, and a divider under it.
+/// The panel's own padding takes care of the sides. Call `endSection` afterwards.
 pub fn beginSection(id: [:0]const u8) void {
     c.ImGui_PushID(id.ptr);
     const y = c.ImGui_GetCursorPosY();
-    // After an earlier section the cursor is a line's spacing below its divider.
+    // After an earlier section, the cursor sits one line's spacing below that section's divider.
     const at_top = y <= c.ImGui_GetCursorStartPos().y;
     c.ImGui_SetCursorPosY(y + px(12) - if (at_top) 0 else c.ImGui_GetStyle().*.ItemSpacing.y);
 }
@@ -493,8 +497,8 @@ pub fn endSection(line: bool) void {
     c.ImGui_PopID();
 }
 
-/// An image `width` × `height` filling the box from `min` to `max`, cut to the box's shape from
-/// the middle.
+/// Draws a `width` × `height` image filling the box from `min` to `max`, cropped from the middle
+/// to the box's shape.
 pub fn imageCover(list: *c.ImDrawList, texture: c.ImTextureRef, width: u32, height: u32, min: Vec2, max: Vec2, rounding: f32) void {
     const box = (max.x - min.x) / (max.y - min.y);
     const picture = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
@@ -510,12 +514,12 @@ pub fn imageCover(list: *c.ImDrawList, texture: c.ImTextureRef, width: u32, heig
     c.ImDrawList_AddImageRounded(list, texture, min, max, uv_min, uv_max, 0xFFFFFFFF, rounding, 0);
 }
 
-/// A rectangle outline.
+/// Draws a rectangle outline.
 pub fn outline(min: Vec2, max: Vec2, color: theme.Color, rounding: f32, thickness: f32) void {
     c.ImDrawList_AddRectEx(c.ImGui_GetWindowDrawList(), min, max, theme.imU32(color), rounding, thickness, 0);
 }
 
-/// A divider along one side of the current child window.
+/// Draws a divider along one side of the current child window.
 pub fn edge(side: enum { left, right }) void {
     const pos = c.ImGui_GetWindowPos();
     const size = c.ImGui_GetWindowSize();
@@ -523,7 +527,8 @@ pub fn edge(side: enum { left, right }) void {
     c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(x, pos.y), vec2(x, pos.y + size.y), theme.imU32(theme.divider));
 }
 
-/// A dashed line from `from` to `to`: dashes `dash` long with `gap` between, in screen pixels.
+/// Draws a dashed line from `from` to `to`, with dashes `dash` long and `gap` between them, in
+/// screen pixels.
 pub fn dashedLine(list: *c.ImDrawList, from: Vec2, to: Vec2, colour: u32, thickness: f32, dash: f32, gap: f32) void {
     const dx = to.x - from.x;
     const dy = to.y - from.y;
@@ -536,7 +541,7 @@ pub fn dashedLine(list: *c.ImDrawList, from: Vec2, to: Vec2, colour: u32, thickn
     }
 }
 
-/// The dashed outline of the rectangle from `min` to `max`, its lines inside it.
+/// Draws a dashed outline of the rectangle from `min` to `max`, with the lines on the inside.
 pub fn dashedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, thickness: f32, dash: f32, gap: f32) void {
     const inset = thickness / 2;
     const a = vec2(min.x + inset, min.y + inset);
@@ -546,8 +551,8 @@ pub fn dashedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, thickn
     for ([_][2]Vec2{ .{ a, b }, .{ b, d }, .{ e, d }, .{ a, e } }) |side| dashedLine(list, side[0], side[1], colour, thickness, dash, gap);
 }
 
-/// The design's dashed box for something to add or not yet available: a one-pixel dashed outline
-/// with rounded corners of `radius`.
+/// Draws the design's dashed box, for something you can add or that isn't available yet: a
+/// one-pixel dashed outline with rounded corners of `radius`.
 pub fn dashedRoundedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, radius: f32) void {
     const dash = px(3);
     const gap = px(3);
@@ -555,7 +560,7 @@ pub fn dashedRoundedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32,
     dashedLine(list, vec2(min.x + radius, max.y - 0.5), vec2(max.x - radius, max.y - 0.5), colour, 1, dash, gap);
     dashedLine(list, vec2(min.x + 0.5, min.y + radius), vec2(min.x + 0.5, max.y - radius), colour, 1, dash, gap);
     dashedLine(list, vec2(max.x - 0.5, min.y + radius), vec2(max.x - 0.5, max.y - radius), colour, 1, dash, gap);
-    // The corners, whole.
+    // The corners, drawn whole.
     const corners = [_]struct { Vec2, f32 }{
         .{ vec2(min.x + radius, min.y + radius), std.math.pi },
         .{ vec2(max.x - radius, min.y + radius), 1.5 * std.math.pi },

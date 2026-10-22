@@ -1,5 +1,6 @@
-//! A look being made: the pairs it is fitted from and the choices for the fit, kept in its
-//! folder as draft.json as they change, so that work on a look survives closing the app.
+//! A look that's still being made: the pairs it's fitted from and the options for the fit. They're
+//! saved in the look's folder as draft.json whenever they change, so the work on a look survives
+//! closing the app.
 
 const std = @import("std");
 const Io = std.Io;
@@ -22,7 +23,7 @@ pub const Source = enum {
         };
     }
 
-    /// As the list of looks says it.
+    /// The short name the list of looks shows.
     pub fn short(source: Source) []const u8 {
         return switch (source) {
             .frontier_software => "Frontier software",
@@ -30,7 +31,7 @@ pub const Source = enum {
         };
     }
 
-    /// What one reference is called: the table's column, and the figure's caption.
+    /// What we call a single reference, in the table's column header and the figure's caption.
     pub fn one(source: Source) []const u8 {
         return switch (source) {
             .frontier_software => "Frontier output",
@@ -38,7 +39,7 @@ pub const Source = enum {
         };
     }
 
-    /// Whose correction of each frame the balance stands for.
+    /// Whose correction of each frame the balance stands for, such as "the lab's".
     pub fn corrector(source: Source) []const u8 {
         return switch (source) {
             .frontier_software => "the Frontier's",
@@ -47,20 +48,20 @@ pub const Source = enum {
     }
 };
 
-/// Our raw scan of a negative and a reference rendering of the same negative.
-/// Where a frame lies on its scan, and its film base, as its roll has them. Frames of a strip share
-/// their scan, and each has its own place on it.
+/// Where a frame sits on its scan, and its film base, as the roll records them. The frames of a
+/// strip share one scan, and each has its own place on it.
 pub const Placement = struct {
-    /// In the scan's pixels; null for all of it.
+    /// In the scan's pixels, or null for the whole scan.
     crop: ?image.Area = null,
-    /// The scan's size, which the crop is measured in, for smaller copies of the scan.
+    /// The size of the scan the crop was measured on, so the crop can be scaled to smaller copies.
     width: usize = 0,
     height: usize = 0,
     quarter_turns: u2 = 0,
     mirrored: bool = false,
     film_base: ?[3]f32 = null,
 
-    /// `scan`, a copy of the scan at any size, cut to the frame and turned. The caller frees it.
+    /// Cuts `scan` (a copy of the scan at any size) to the frame and turns it. The caller frees the
+    /// result.
     pub fn apply(placement: Placement, gpa: std.mem.Allocator, scan: image.Scan) !image.Scan {
         const area: image.Area = if (placement.crop != null and placement.width > 0) placement.crop.?.rescale(placement.width, scan.width, scan.width, scan.height) else .whole(scan.width, scan.height);
         var cut = try scan.crop(gpa, area);
@@ -69,20 +70,22 @@ pub const Placement = struct {
     }
 };
 
+/// Our raw scan of a negative, and a reference rendering of the same negative.
 pub const Pair = struct {
-    /// Our raw scan's path.
+    /// The path of our raw scan.
     ours: []const u8,
-    /// How the table names it: "Roll 014 / 03", or the file's name for a scan outside a roll.
+    /// The name the table shows: "Roll 014 / 03", or the file name for a scan outside a roll.
     label: []const u8,
-    /// The reference's path.
+    /// The path of the reference.
     theirs: []const u8,
-    /// The film, as its roll says.
+    /// The film stock, as the roll records it.
     stock: ?[]const u8 = null,
-    /// Kept out of the fit, to check it.
+    /// Left out of the fit, so we can check the fit against it.
     held_out: bool = false,
-    /// Where the reference lies on ours, once it's been worked out.
+    /// Where the reference lines up on our scan, once that's been worked out.
     alignment: ?register.Alignment = null,
-    /// Where our frame lies on its scan; null for a scan outside a roll, whose frame is found.
+    /// Where our frame sits on its scan. Null for a scan outside a roll, where we find the frame
+    /// ourselves.
     placement: ?Placement = null,
 };
 
@@ -92,7 +95,7 @@ pub const Draft = struct {
     pairs: []const Pair = &.{},
 };
 
-/// Reads the draft in `folder`, allocated in `arena`; an empty draft when there's none.
+/// Reads the draft in `folder`, allocated in `arena`. Returns an empty draft when there isn't one.
 pub fn load(arena: std.mem.Allocator, io: Io, folder: []const u8) !Draft {
     const path = try std.fs.path.join(arena, &.{ folder, saved.draft_file });
     const bytes = Io.Dir.cwd().readFileAlloc(io, path, arena, .limited(4 << 20)) catch |err| switch (err) {
@@ -112,8 +115,8 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, draft: Draft) !v
     try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
 }
 
-/// Every third pair from the third on is held out: about a third of them, and none while there
-/// are only two.
+/// Holds out every third pair, starting with the third. That's about a third of them, and none
+/// while there are only two.
 pub fn heldOutByDefault(index: usize) bool {
     return index % 3 == 2;
 }

@@ -1,26 +1,27 @@
-//! Fitting a look to pairs of images: samples of our density and the reference's colour at the
-//! same places, from every pair.
+//! Fitting a look to pairs of images. From every pair we take samples of our density and the
+//! reference's colour at the same places.
 //!
 //! The steps, in order:
 //!
 //! 1. Channel curves. With the matrix at the identity and no balance, each channel's curve is a
 //!    least-squares fit from density to the reference's encoded value, made monotone.
-//! 2. The density matrix and the per-frame balance. With the curves held, Gauss-Newton steps on
-//!    each channel's row of the matrix (its two crosstalk terms; the row adds up to 1) and on the
-//!    channel's offset for every frame. Crosstalk costs a little in itself, so that where the
-//!    pairs hardly tell one matrix from another, the matrix stays near the identity. The offsets stand for whatever the reference's software
-//!    did to each frame on its own, and aren't part of the look; their mean is held at 0, so
-//!    that the curves keep the look's own balance.
+//! 2. The density matrix and the per-frame balance. With the curves fixed, we take Gauss-Newton
+//!    steps on each channel's row of the matrix (its two crosstalk terms; the row adds up to 1)
+//!    and on that channel's offset for every frame. Crosstalk has a small cost of its own, so
+//!    where the pairs can hardly tell one matrix from another, the matrix stays near the
+//!    identity. The offsets stand for whatever the reference's software did to each frame on its
+//!    own, and aren't part of the look. Their mean is held at 0, so the curves keep the look's own
+//!    balance.
 //!
-//!    Steps 1 and 2 alternate a few rounds, and the curves are fitted once more at the end.
-//! 3. The LUT, only when asked for and only when the residual shows structure: the matrix and
-//!    curves' errors are averaged into a 33³ grid, smoothed, and tried out of fold, half the
-//!    fitted pairs against the other half. It is kept if it takes away at least a tenth of the
-//!    error there; noise doesn't.
+//!    Steps 1 and 2 take turns for a few rounds, and the curves are fitted once more at the end.
+//! 3. The LUT, only when it's asked for and only when the leftover error shows some structure.
+//!    The errors the matrix and curves leave are averaged into a 33³ grid, smoothed, and tried out
+//!    of fold: fitted on half the fitted pairs and checked on the other half. We keep the LUT if
+//!    it removes at least a tenth of the error there. Noise doesn't.
 //!
-//! Held-out pairs take no part. Each gets its own balance offsets, fitted with the look held,
-//! since the balance isn't part of the look; then the ΔE2000 between the look and the reference
-//! over its samples is the measure of the fit.
+//! Held-out pairs take no part in the fit. Each one gets its own balance offsets, fitted with the
+//! look fixed, since the balance isn't part of the look. Then the ΔE2000 between the look and the
+//! reference over its samples tells us how good the fit is.
 
 const std = @import("std");
 const curve = @import("curve.zig");
@@ -31,7 +32,7 @@ const linear = @import("linear.zig");
 const Model = model_.Model;
 const Lut = model_.Lut;
 
-/// One place in one pair.
+/// One sample: a single place in one pair.
 pub const Sample = struct {
     /// Our density there, 0..1 per channel, as Develop's Log tone gives it.
     density: [3]f32,
@@ -42,7 +43,7 @@ pub const Sample = struct {
     pair: u16,
 };
 
-/// What the fit may change: the Model section's choices.
+/// What the fit is allowed to change: the choices in the page's Model section.
 pub const Options = struct {
     balance: bool = true,
     curves: bool = true,
@@ -50,35 +51,36 @@ pub const Options = struct {
     lut: bool = false,
 };
 
-/// What became of the LUT.
+/// What happened to the LUT.
 pub const LutVerdict = enum {
     not_asked,
     kept,
-    /// The residual is noise: a LUT didn't help out of fold.
+    /// The leftover error is just noise: a LUT didn't help out of fold.
     no_structure,
-    /// Trying it out of fold takes two fitted pairs at least.
+    /// Trying a LUT out of fold needs at least two fitted pairs.
     too_few_pairs,
 };
 
 pub const Report = struct {
-    /// ΔE2000 over the held-out pairs' samples, or null when none is held out.
+    /// The median and 95th percentile of ΔE2000 over the held-out pairs' samples, or null when no
+    /// pair is held out.
     median: ?f32 = null,
     p95: ?f32 = null,
-    /// The median over the fitted pairs, for comparison.
+    /// The median ΔE2000 over the fitted pairs, for comparison.
     fitted_median: f32 = 0,
-    /// The root of the weighted mean squared error over the fitted pairs, in encoded values:
-    /// what the fit makes small.
+    /// The root weighted mean squared error over the fitted pairs, in encoded values. This is what
+    /// the fit minimises.
     fitted_rms: f32 = 0,
     fitted_pairs: usize = 0,
     held_out_pairs: usize = 0,
     lut: LutVerdict = .not_asked,
-    /// The share of the error the LUT took away out of fold, when it was tried.
+    /// The share of the error the LUT removed out of fold, when it was tried.
     lut_gain: f32 = 0,
 };
 
 pub const Result = struct {
     model: Model,
-    /// The model's LUT, owned here.
+    /// The model's LUT. The result owns it.
     lut: ?*Lut,
     /// Each pair's balance offsets in density.
     balance: [][3]f32,
@@ -95,19 +97,19 @@ const rounds = 8;
 const steps_per_round = 2;
 /// How much the curves resist bending, relative to the samples.
 const smoothness = 2e-5;
-/// What a crosstalk term costs, squared, against the mean squared error per sample: a term of
-/// 0.1 costs as much as an error of 0.0014 everywhere.
+/// The cost of a crosstalk term, squared, compared with the mean squared error per sample. A term
+/// of 0.1 costs as much as an error of 0.0014 on every sample.
 const crosstalk_cost = 2e-4;
-/// The LUT is kept when it takes away at least this share of the error out of fold.
+/// We keep the LUT when it removes at least this share of the error out of fold.
 const lut_threshold = 0.1;
 
-/// Fits a look to `samples`. `held_out` has one entry per pair: true for the pairs kept out of
-/// the fit to check it.
+/// Fits a look to `samples`. `held_out` has one entry per pair, true for the pairs left out of the
+/// fit so we can check it.
 pub fn fit(gpa: std.mem.Allocator, samples: []const Sample, held_out: []const bool, options: Options) !Result {
     const balance = try gpa.alloc([3]f32, held_out.len);
     @memset(balance, @splat(0));
     var result: Result = .{ .model = .{}, .lut = null, .balance = balance, .report = .{} };
-    // The balance, and the LUT once there is one, go with a failure anywhere below.
+    // If anything below fails, this frees the balance, and the LUT once there is one.
     errdefer result.deinit(gpa);
 
     const counts = try gpa.alloc(usize, held_out.len);
@@ -161,8 +163,8 @@ fn fitCurves(model: *Model, samples: []const Sample, balance: []const [3]f32, he
     for (&model.curves, &fitters) |*c, *f| c.* = f.solve(smoothness);
 }
 
-/// The weighted squared error of one channel over the fitted pairs, with the balance's mean
-/// held at 0 by a penalty, and the crosstalk's cost.
+/// Returns one channel's weighted squared error over the fitted pairs, plus a penalty that holds
+/// the balance's mean at 0, plus the crosstalk's cost.
 fn channelLoss(model: *const Model, samples: []const Sample, balance: []const [3]f32, held_out: []const bool, channel: usize, gauge: f64) f64 {
     var loss: f64 = 0;
     var total: f64 = 0;
@@ -184,7 +186,7 @@ fn channelLoss(model: *const Model, samples: []const Sample, balance: []const [3
     return loss + gauge * mean * mean + crosstalk_cost * total * crosstalk;
 }
 
-/// One damped Gauss-Newton step on one channel's matrix row and balance offsets.
+/// Takes one damped Gauss-Newton step on one channel's matrix row and balance offsets.
 fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balance: [][3]f32, held_out: []const bool, counts: []const usize, options: Options, channel: usize) !void {
     // The unknowns: the row's two crosstalk terms, then one offset per fitted pair with samples.
     const others = [3][2]usize{ .{ 1, 2 }, .{ 0, 2 }, .{ 0, 1 } };
@@ -262,7 +264,7 @@ fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balan
     }
     linear.solve(n, a, g) catch return;
 
-    // Take the step, or a part of it, if it lowers the error.
+    // Take the step, or part of it, if that lowers the error.
     const before = channelLoss(model, samples, balance, held_out, channel, gauge);
     const row = model.matrix[channel];
     const saved = try gpa.dupe([3]f32, balance);
@@ -285,7 +287,8 @@ fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balan
     @memcpy(balance, saved);
 }
 
-/// Each held-out pair's balance offsets, with the look held: a few Newton steps per channel.
+/// Fits each held-out pair's balance offsets with the look fixed, using a few Newton steps per
+/// channel.
 fn balanceHeldOut(model: *const Model, samples: []const Sample, balance: [][3]f32, held_out: []const bool) void {
     for (held_out, 0..) |out, pair| {
         if (!out) continue;
@@ -310,12 +313,14 @@ fn balanceHeldOut(model: *const Model, samples: []const Sample, balance: [][3]f3
     }
 }
 
-/// Which pairs a LUT is fitted from: null for every fitted pair, or one fold of them.
+/// One fold of the fitted pairs, for fitting a LUT to. Where a `?Fold` is null, the LUT is fitted
+/// to all of them.
 const Fold = struct { which: u1, of: []const ?u1 };
 
-/// Fits the LUT to what the matrix and curves leave over the fitted pairs, or one fold of them:
-/// each sample's error is shared out over the grid points around it, and the grid is smoothed so
-/// that points with few samples follow their neighbours and empty ones fade back to no change.
+/// Fits the LUT to the error the matrix and curves leave over the fitted pairs, or over one fold
+/// of them. Each sample's error is shared out over the grid points around it. Then the grid is
+/// smoothed, so points with few samples follow their neighbours and empty ones fade back to no
+/// change.
 fn fitLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, balance: []const [3]f32, held_out: []const bool, fold: ?Fold, lut: *Lut) !void {
     const size = model_.lut_size;
     const sum = try gpa.alloc([3]f64, model_.lut_entries);
@@ -359,7 +364,7 @@ fn fitLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, 
         total += s.weight;
         used += 1;
     }
-    // Shrinking and smoothing in units of an average sample.
+    // Shrinking and smoothing are measured in units of an average sample.
     const unit = if (used > 0) total / @as(f64, @floatFromInt(used)) else 1;
     const shrink = 2 * unit;
     const smooth = 1 * unit;
@@ -389,8 +394,8 @@ fn fitLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, 
     }
 }
 
-/// The share of the error a LUT takes away out of fold: fitted on half the fitted pairs and
-/// tried on the other half, both ways.
+/// Returns the share of the error a LUT removes out of fold. The LUT is fitted on half the fitted
+/// pairs and tried on the other half, both ways round.
 fn crossValidateLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, balance: []const [3]f32, held_out: []const bool, counts: []const usize) !f32 {
     const folds = try gpa.alloc(?u1, held_out.len);
     defer gpa.free(folds);
@@ -468,8 +473,9 @@ const Synthetic = struct {
         return out;
     }
 
-    /// Samples of `pairs` pairs: densities spread like a photograph's, a level with some colour
-    /// about it, and each pair with its own balance, which adds up to 0 over the fitted pairs.
+    /// Makes samples for `pairs` pairs. The densities are spread like a photograph's (a level
+    /// with some colour around it), and each pair has its own balance, which adds up to 0 over
+    /// the fitted pairs.
     fn samples(gpa: std.mem.Allocator, pairs: usize, per_pair: usize, balances: []const [3]f32, twist: bool) ![]Sample {
         var prng = std.Random.DefaultPrng.init(7);
         const random = prng.random();
@@ -481,7 +487,8 @@ const Synthetic = struct {
             for (&d) |*v| v.* = std.math.clamp(level + (random.float(f32) - 0.5) * 0.4, 0.02, 0.98);
             var target = render(d, balances[pair]);
             if (twist) {
-                // Something no matrix and curves can do: greens get bluer, only where green leads.
+                // Something the matrix and curves can't do: greens get bluer, but only where
+                // green is the strongest channel.
                 const lead = @max(0, target[1] - @max(target[0], target[2]));
                 target[2] = @min(1, target[2] + 1.5 * lead);
             }

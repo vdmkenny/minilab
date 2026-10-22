@@ -1,4 +1,5 @@
-//! The library as the app holds it: the rolls in a folder, and their thumbnails on the GPU.
+//! The library as the app keeps it in memory: the rolls in a folder, and their thumbnails on the
+//! GPU.
 
 const std = @import("std");
 const c = @import("c");
@@ -17,21 +18,21 @@ pub const Library = struct {
     label: []const u8,
     rolls: std.ArrayList(roll.Roll) = .empty,
     thumbnails: std.AutoHashMapUnmanaged(Key, Texture) = .empty,
-    /// Thumbnails asked for and not made yet.
+    /// Thumbnails that have been asked for but aren't made yet.
     wanted: std.ArrayList(Key) = .empty,
-    /// Thumbnails that couldn't be made, not tried again until their frame changes.
+    /// Thumbnails that couldn't be made. They aren't tried again until their frame changes.
     failed: std.AutoHashMapUnmanaged(Key, void) = .empty,
     /// The looks frames can be developed with: the built-in ones, and the LUTs and fitted looks
     /// in the library's Looks folder.
     looks: minilab.look.Catalog,
     /// The scanners calibrated against the film makers' datasheets, for Stock balance.
     calibrations: minilab.calibration.Calibrations,
-    /// Thumbnails let go of during a frame. ImGui may still draw them in it, so they are released
-    /// once it has been drawn (`releaseRetired`).
+    /// Thumbnails dropped during a frame. ImGui may still draw them in that frame, so they're only
+    /// released once it has been drawn (`releaseRetired`).
     retired: std.ArrayList(Texture) = .empty,
     gpa: std.mem.Allocator,
 
-    /// The library at `path`; `home` is the user's home folder, for the label.
+    /// Loads the library at `path`. `home` is the user's home folder, used for the label.
     pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, home: ?[]const u8) !Library {
         const label = if (home != null and home.?.len > 0 and std.mem.startsWith(u8, path, home.?))
             try std.mem.concat(gpa, u8, &.{ "~", path[home.?.len..] })
@@ -77,13 +78,13 @@ pub const Library = struct {
         _ = gpa;
     }
 
-    /// Keeps `texture` until the frame has been drawn. Should that fail, it stays on the GPU
-    /// until the app ends rather than going while it may be drawn.
+    /// Keeps `texture` until the frame has been drawn. If there's no memory to keep it, it stays on
+    /// the GPU until the app ends, rather than being released while it might still be drawn.
     fn retire(library: *Library, texture: Texture) void {
         library.retired.append(library.gpa, texture) catch std.log.warn("a thumbnail stays on the GPU: out of memory", .{});
     }
 
-    /// Releases the thumbnails let go of during the frame just drawn.
+    /// Releases the thumbnails dropped during the frame that was just drawn.
     pub fn releaseRetired(library: *Library, gpu: *c.SDL_GPUDevice) void {
         for (library.retired.items) |*t| t.release(gpu);
         library.retired.clearRetainingCapacity();
@@ -91,7 +92,7 @@ pub const Library = struct {
 
     /// Reads the rolls again, after one was added or changed.
     pub fn reload(library: *Library, gpa: std.mem.Allocator, io: std.Io) !void {
-        // The new list first: should reading it fail, the old one stays good.
+        // Read the new list first, so if that fails the old one is still good.
         const rolls = try roll.listRolls(gpa, io, library.path);
         library.forgetThumbnails(gpa);
         for (library.rolls.items) |*r| r.close();
@@ -107,13 +108,14 @@ pub const Library = struct {
         return null;
     }
 
-    /// The scanner or camera a roll was made with, by the name its calibration goes by.
+    /// The scanner or camera a roll was made with, under the name its calibration uses.
     pub fn scannerOf(info: roll.Info) ?[]const u8 {
         return info.scanner orelse info.camera;
     }
 
-    /// The roll's stock's layer slopes on its scanner, for Stock balance: when the stock has a
-    /// preset with gammas, its corrections are on and the scanner is calibrated.
+    /// The layer slopes of the roll's stock on the roll's scanner, for Stock balance. You only get
+    /// them when the stock has a preset with gammas, its corrections are on, and the scanner is
+    /// calibrated.
     pub fn stockSlopes(library: *const Library, rl: *const roll.Roll) ?[3]f32 {
         if (rl.info.kind != .colour_negative or !rl.info.stock_corrections) return null;
         const gamma = labels.stockGamma(rl.info.stock) orelse return null;
@@ -121,15 +123,16 @@ pub const Library = struct {
         return minilab.calibration.stockSlopes(factors, gamma);
     }
 
-    /// The roll's stock's curves on its scanner, for frames of film `kind`: null without a stock
-    /// with curves, with its corrections off, or for film of another kind.
+    /// The curves of the roll's stock on the roll's scanner, for frames of film `kind`. Null when
+    /// the stock has no curves, its corrections are off, or the film is a different kind.
     pub fn stockCurves(library: *const Library, rl: *const roll.Roll, kind: minilab.develop.FilmKind) ?minilab.stock_curves.Curves {
         if (!rl.info.stock_corrections) return null;
         const choice = labels.findStock(rl.info.stock orelse return null) orelse return null;
         const preset = choice.preset orelse return null;
         if (choice.kind != kind) return null;
-        // Each layer's density against Status M: green taken as reading it, and the others scaled
-        // by the scanner's calibration, or as Status M without one.
+        // Each layer's density relative to Status M. Green is taken to read Status M, and the
+        // others are scaled by the scanner's calibration. Without a calibration, they all count as
+        // Status M.
         var scale: [3]f32 = @splat(1);
         if (scannerOf(rl.info)) |scanner| if (library.calibrations.factors(scanner)) |factors| {
             for (&scale, factors) |*s, f| s.* = if (f > 0) 1 / f else 1;
@@ -137,7 +140,7 @@ pub const Library = struct {
         return minilab.stock_curves.of(preset.*, scale);
     }
 
-    /// What `importScans` added: the frames from `first` on, out of `files` files.
+    /// What `importScans` added: the frames from index `first` onwards, from `files` files.
     pub const Imported = struct { first: usize, files: usize };
 
     /// Adds the scans at `paths` (PNM, TIFF or camera RAW) to roll `index` as new frames, in the
@@ -167,7 +170,8 @@ pub const Library = struct {
         _ = library.failed.remove(key);
     }
 
-    /// The thumbnail of `key`, or null while it's still to be made.
+    /// Returns the thumbnail for `key`. Returns null if it isn't made yet (it's then asked for) or
+    /// couldn't be made.
     pub fn thumbnail(library: *Library, gpa: std.mem.Allocator, key: Key) ?Texture {
         if (library.thumbnails.get(key)) |t| return t;
         if (library.failed.contains(key)) return null;
@@ -176,7 +180,7 @@ pub const Library = struct {
         return null;
     }
 
-    /// Makes one wanted thumbnail.
+    /// Makes one of the wanted thumbnails.
     pub fn work(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.SDL_GPUDevice) void {
         const key = library.wanted.pop() orelse return;
         const texture = makeThumbnail(library, gpa, io, gpu, key) catch |err| {

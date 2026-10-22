@@ -1,14 +1,14 @@
-//! Reading scans from files (design section 5). Three kinds of file give a scan: binary PNM, as
+//! Reads scans from files (design section 5). Three kinds of file can hold a scan: binary PNM, as
 //! SANE's scanimage writes it; TIFF from other scanning software, such as VueScan's or
-//! SilverFast's raw output; and camera RAW, through LibRaw. Each comes out the same way: linear
-//! 16-bit transmission in the scanner's or the camera's own channels, full scale at 65535.
+//! SilverFast's raw output; and camera RAW, through LibRaw. They all come out the same way: linear
+//! 16-bit transmission in the scanner's or the camera's own channels, with full scale at 65535.
 //!
-//! - PNM and TIFF are taken as they are. They should be 16-bit and linear. An 8-bit file is read
-//!   too, widened to 16 bits, with a warning: it's probably gamma-encoded, and nothing undoes that
-//!   yet.
+//! - PNM and TIFF are taken as they are. They should be 16-bit and linear. We read 8-bit files
+//!   too, widened to 16 bits, but with a warning: they're probably gamma-encoded, and nothing
+//!   undoes that yet.
 //! - Camera RAW is demosaiced with no white balance, no colour matrix and no gamma (`raw.read`),
 //!   and scaled so that the sensor's white level is full scale. Its white balance and matrix come
-//!   with it, for slides (`develop.SlideColour`).
+//!   along with it, for slides (`develop.SlideColour`).
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -19,7 +19,7 @@ const develop = @import("develop.zig");
 
 const log = std.log.scoped(.input);
 
-/// The largest file read, 2 GiB.
+/// The largest file we read: 2 GiB.
 pub const max_file_bytes = 2 << 30;
 
 pub const Kind = enum {
@@ -27,9 +27,9 @@ pub const Kind = enum {
     tiff,
     camera_raw,
 
-    /// The kind of the file at `path`, by its extension. Anything that is neither PNM nor TIFF is
-    /// taken for a camera RAW file, which LibRaw then reads or refuses: many RAW formats are TIFF
-    /// inside, so the contents don't tell them apart.
+    /// Works out the kind of file at `path` from its extension. Anything that isn't PNM or TIFF is
+    /// taken to be a camera RAW file, which LibRaw then reads or refuses. Many RAW formats are
+    /// TIFF inside, so the contents can't tell them apart.
     pub fn of(path: []const u8) Kind {
         const extension = std.fs.path.extension(path);
         for (pnm_extensions) |e| if (std.ascii.eqlIgnoreCase(extension, e)) return .pnm;
@@ -41,12 +41,13 @@ pub const Kind = enum {
 const pnm_extensions = [_][]const u8{ ".ppm", ".pnm", ".pgm" };
 const tiff_extensions = [_][]const u8{ ".tif", ".tiff" };
 
-/// The extensions of the files a scan is read from, without their dots, as SDL's file dialogs
-/// take them: PNM, TIFF, and the camera RAW formats of the makers LibRaw reads.
+/// The extensions of the files we read scans from, without their dots, the way SDL's file
+/// dialogs take them: PNM, TIFF, and the camera RAW formats of the makers LibRaw reads.
 pub const extensions = "ppm;pnm;pgm;tif;tiff;" ++ raw_extensions;
 pub const raw_extensions = "dng;nef;nrw;cr2;cr3;crw;arw;srf;sr2;raf;orf;rw2;rwl;pef;srw;3fr;fff;iiq;erf;kdc;dcr;mos;mrw;x3f";
 
-/// Bits per sample in the file. Camera RAW counts as 16: it's linear whatever the sensor's depth.
+/// Bits per sample in the file. Camera RAW counts as 16, since it's linear whatever the sensor's
+/// depth.
 pub const Depth = enum { eight, sixteen };
 
 /// A file read into a scan.
@@ -54,8 +55,8 @@ pub const Read = struct {
     scan: image.Scan,
     kind: Kind,
     depth: Depth,
-    /// A camera raw file's colour: its white balance as shot, for the light behind the film, or
-    /// for daylight where it has none, and its matrix to sRGB. Null for scans.
+    /// A camera RAW file's colour: its white balance as shot, for the light behind the film (or
+    /// its daylight balance if it has none), and its matrix to sRGB. Null for scans.
     camera: ?develop.SlideColour = null,
 
     pub fn deinit(read_scan: *Read, gpa: std.mem.Allocator) void {
@@ -63,14 +64,14 @@ pub const Read = struct {
         read_scan.* = undefined;
     }
 
-    /// Whether the samples can be taken as linear. An 8-bit file almost never is: 8 bits are too
+    /// Whether we can take the samples as linear. An 8-bit file almost never is: 8 bits are too
     /// few for linear data, so software that writes them applies a gamma.
     pub fn linear(read_scan: Read) bool {
         return read_scan.depth == .sixteen;
     }
 };
 
-/// Reads the scan in the file at `path`, of the kind its extension says.
+/// Reads the scan in the file at `path`, as the kind of file its extension says.
 pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Read {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
     defer gpa.free(bytes);
@@ -91,8 +92,8 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
         },
         .tiff => {
             const decoded = try tiff.read(gpa, bytes);
-            // A profile says how to show the file's colours; the density stage works in the
-            // scanner's own channels, so it isn't used.
+            // A profile says how to show the file's colours, but the density stage works in the
+            // scanner's own channels, so we don't use it.
             if (decoded.icc_profile) |profile| gpa.free(profile);
             return .{ .scan = decoded.scan, .kind = kind, .depth = switch (decoded.depth) {
                 .eight => .eight,
@@ -113,8 +114,8 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
     }
 }
 
-/// Scales `scan`, whose samples run from 0 to `white`, so that `white` is full scale. Demosaicing
-/// overshoots the white level a little at sharp edges; those samples clip.
+/// Scales `scan`, whose samples run from 0 to `white`, so that `white` is full scale.
+/// Demosaicing overshoots the white level a little at sharp edges, and those samples clip.
 fn toFullScale(scan: image.Scan, white: u16) void {
     if (white == 0 or white == image.full_scale) return;
     const gain = @as(f32, image.full_scale) / @as(f32, @floatFromInt(white));
@@ -170,8 +171,8 @@ test "a camera's white level becomes full scale" {
     try std.testing.expectEqual(@as([3]u16, @splat(image.full_scale)), scan.pixels[2]);
 }
 
-/// The environment variable naming a camera RAW file for the test below, which skips without it:
-/// the same one `raw.zig`'s test reads.
+/// The environment variable that names a camera RAW file for the test below, which is skipped
+/// without it. It's the same one `raw.zig`'s test reads.
 const raw_sample_variable = "MINILAB_RAW_SAMPLE";
 
 test "a camera RAW file reads as a linear scan up to full scale" {

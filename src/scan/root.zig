@@ -1,9 +1,9 @@
-//! Scanners: one interface over the platform's scanner libraries, SANE on macOS and Linux and
-//! TWAIN on Windows (design section 5). Both are loaded at run time, so minilab starts, and does
-//! everything but scan, on a machine that has neither.
+//! Scanners. This is one interface over the platform's scanner library: SANE on macOS and Linux,
+//! and TWAIN on Windows (design section 5). Both are loaded at run time, so minilab starts, and
+//! does everything except scanning, on a machine that has neither.
 //!
 //! Every call here blocks, often for seconds: listing devices probes USB and the network, and a
-//! scan takes as long as the scanner does. Neither SANE nor TWAIN may be called from two threads
+//! scan takes as long as the scanner takes. Neither SANE nor TWAIN can be called from two threads
 //! at once, so one thread owns the library and the scanner and makes all the calls.
 //!
 //!     var library = try scan.Library.load(gpa);
@@ -18,7 +18,8 @@
 //!     var image = try scanner.scan(gpa, .{ .source = .transparency, .dpi = 300 }, &progress);
 //!     defer image.deinit(gpa);
 //!
-//! Besides `std`, this module uses only the core's image and film format constants.
+//! Apart from `std`, this module only uses the image constants from `core/` and the film format
+//! constants from `frames/`.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -26,7 +27,7 @@ const builtin = @import("builtin");
 pub const sane = @import("sane.zig");
 pub const twain = @import("twain.zig");
 
-/// The scanner libraries.
+/// The scanner libraries we support.
 pub const Kind = enum {
     sane,
     twain,
@@ -45,7 +46,7 @@ pub const native: Kind = if (builtin.os.tag == .windows) .twain else .sane;
 pub const Error = error{
     /// The scanner library isn't installed, or this platform doesn't have it.
     Unavailable,
-    /// No such device, or it went away.
+    /// There's no such device, or it went away.
     NotFound,
     Busy,
     AccessDenied,
@@ -55,14 +56,15 @@ pub const Error = error{
     CoverOpen,
     /// The feeder is empty.
     NoDocument,
-    /// The library or the scanner reported an error it doesn't name more closely.
+    /// The library or the scanner reported an error without saying more precisely what went
+    /// wrong.
     Failed,
     OutOfMemory,
 };
 
 /// A scanner the library can open.
 pub const Device = struct {
-    /// What the library knows the device by: SANE's device name, such as
+    /// The name the library knows the device by: SANE's device name, such as
     /// "epkowa:interpreter:000:004", or a TWAIN source's product name.
     id: []const u8,
     vendor: []const u8,
@@ -96,7 +98,7 @@ pub fn freeDevices(gpa: std.mem.Allocator, devices: []Device) void {
     gpa.free(devices);
 }
 
-/// Copies of `devices`, each with strings of its own. Free the list with `freeDevices`.
+/// Copies `devices`, giving each copy its own strings. Free the list with `freeDevices`.
 pub fn cloneDevices(gpa: std.mem.Allocator, devices: []const Device) error{OutOfMemory}![]Device {
     var list: DeviceList = .empty;
     errdefer list.deinit(gpa);
@@ -105,8 +107,8 @@ pub fn cloneDevices(gpa: std.mem.Allocator, devices: []const Device) error{OutOf
     return list.toOwnedSlice(gpa);
 }
 
-/// A list of devices being built, holding a copy of each one's strings: the libraries list their
-/// devices in memory of their own, which they reuse or free.
+/// A list of devices being built, holding its own copy of each device's strings. The libraries
+/// list their devices in their own memory, which they reuse or free.
 pub const DeviceList = struct {
     devices: std.ArrayList(Device),
 
@@ -126,7 +128,7 @@ pub const DeviceList = struct {
         try list.devices.append(gpa, copy);
     }
 
-    /// The devices, for the caller to free with `freeDevices`. The list is left empty.
+    /// Hands over the devices, for the caller to free with `freeDevices`. The list is left empty.
     pub fn toOwnedSlice(list: *DeviceList, gpa: std.mem.Allocator) error{OutOfMemory}![]Device {
         return list.devices.toOwnedSlice(gpa);
     }
@@ -135,8 +137,8 @@ pub const DeviceList = struct {
 /// Standard resolutions, for scanners that give a range instead of a list.
 pub const standard_resolutions = [_]u32{ 75, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 9600 };
 
-/// Appends to `resolutions` the standard resolutions in a scanner's range from `low` to `high`
-/// that fall on its steps of `step` from `low`. A step of 0 allows any value in the range.
+/// Appends the standard resolutions that fall in a scanner's range to `resolutions`. The range
+/// goes from `low` to `high` in steps of `step`, and a step of 0 allows any value in it.
 pub fn appendResolutionsInRange(gpa: std.mem.Allocator, resolutions: *std.ArrayList(u32), low: f64, high: f64, step: f64) error{OutOfMemory}!void {
     for (standard_resolutions) |r| {
         const value: f64 = @floatFromInt(r);
@@ -150,7 +152,7 @@ pub fn appendResolutionsInRange(gpa: std.mem.Allocator, resolutions: *std.ArrayL
 pub const Source = enum {
     /// Reflective: prints and documents on the glass.
     flatbed,
-    /// Light through the film: a transparency unit or film adapter.
+    /// Light shining through the film: a transparency unit or film adapter.
     transparency,
     feeder,
 
@@ -162,8 +164,8 @@ pub const Source = enum {
         };
     }
 
-    /// Which source a library's name for one means, from the words in it. Null for names that
-    /// say nothing we know.
+    /// Works out which source a library's name for it means, from the words in the name. Returns
+    /// null for names with no words we recognise.
     pub fn classify(name: []const u8) ?Source {
         const transparency_words = [_][]const u8{ "transparen", "film", "tpu", "slide", "negative", "positive", "tma", "tpa" };
         for (transparency_words) |word| if (containsIgnoreCase(name, word)) return .transparency;
@@ -174,8 +176,8 @@ pub const Source = enum {
     }
 };
 
-/// The scanner's own film setting. Scanners with one shift their exposure per channel for the
-/// orange mask under `negative`; `positive` leaves the channels alone.
+/// The scanner's own film setting. Scanners that have one adjust their exposure per channel for
+/// the orange mask when it's set to `negative`. `positive` leaves the channels alone.
 pub const Film = enum {
     negative,
     positive,
@@ -196,7 +198,7 @@ pub const Area = struct {
         return area.y + area.height;
     }
 
-    /// `area` cut to `limit`, or null when nothing of it is inside.
+    /// Cuts `area` down to `limit`. Returns null when none of it is inside.
     pub fn clip(area: Area, limit: Area) ?Area {
         const x = @max(area.x, limit.x);
         const y = @max(area.y, limit.y);
@@ -207,21 +209,21 @@ pub const Area = struct {
     }
 };
 
-/// What a source of a scanner offers.
+/// What one of a scanner's sources can do.
 pub const Capabilities = struct {
     /// Every source the scanner has.
     sources: std.EnumSet(Source),
-    /// The source the rest describes.
+    /// The source that the rest of these fields describe.
     source: Source,
-    /// Its resolutions in pixels per inch, ascending.
+    /// Its resolutions in pixels per inch, from low to high.
     resolutions: []u32,
-    /// The largest area the source scans.
+    /// The largest area the source can scan.
     area: Area,
     /// Whether it delivers 16 bits per channel.
     deep: bool,
     /// Whether it has a film setting (`Film`).
     film_setting: bool,
-    /// The settings that make this model's data linear, when we have measured them.
+    /// The settings that make this model's data linear, if we've measured them.
     profile: ?*const Profile,
 
     pub fn deinit(capabilities: *Capabilities, gpa: std.mem.Allocator) void {
@@ -229,25 +231,25 @@ pub const Capabilities = struct {
         capabilities.* = undefined;
     }
 
-    /// The lowest resolution of at least `dpi`, else the highest there is.
+    /// Returns the lowest resolution that's at least `dpi`, or else the highest one there is.
     pub fn resolutionFrom(capabilities: Capabilities, dpi: u32) ?u32 {
         for (capabilities.resolutions) |r| if (r >= dpi) return r;
         return if (capabilities.resolutions.len > 0) capabilities.resolutions[capabilities.resolutions.len - 1] else null;
     }
 };
 
-/// One scan.
+/// What to ask the scanner for in one scan.
 pub const Request = struct {
     source: Source,
     film: Film = .negative,
     dpi: u32,
-    /// 16 bits per channel where the scanner has them; else 8.
+    /// 16 bits per channel if the scanner has them, otherwise 8.
     deep: bool = true,
-    /// What to scan; null for the source's whole area.
+    /// What to scan, or null for the source's whole area.
     area: ?Area = null,
 };
 
-/// A scan as the scanner delivered it: RGB, linear when the scanner's profile says so.
+/// A scan as the scanner delivered it: RGB, and linear if the scanner's profile makes it so.
 pub const Image = struct {
     width: usize,
     height: usize,
@@ -257,7 +259,7 @@ pub const Image = struct {
     depth: u8,
     /// The resolution the scanner used, across and down.
     dpi: [2]f32,
-    /// The area the scanner used, which it may have rounded from the one asked for.
+    /// The area the scanner used. It may have rounded the area we asked for.
     area: Area,
 
     pub fn deinit(image: *Image, gpa: std.mem.Allocator) void {
@@ -270,7 +272,8 @@ pub const Image = struct {
 pub const Progress = struct {
     /// Lines read so far.
     lines: std.atomic.Value(u32) = .init(0),
-    /// Lines the scan will have; 0 until the scanner says, which is after its lamp has warmed up.
+    /// How many lines the scan will have. It's 0 until the scanner tells us, which happens after
+    /// its lamp has warmed up.
     total: std.atomic.Value(u32) = .init(0),
 
     pub fn reset(progress: *Progress) void {
@@ -278,7 +281,7 @@ pub const Progress = struct {
         progress.total.store(0, .release);
     }
 
-    /// Lines read as a share of all of them, 0 before the scan starts.
+    /// The share of lines read so far, or 0 before the scan starts.
     pub fn fraction(progress: *const Progress) f32 {
         const total = progress.total.load(.acquire);
         if (total == 0) return 0;
@@ -286,17 +289,17 @@ pub const Progress = struct {
     }
 };
 
-/// The settings that make one scanner model deliver linear, unprocessed data, from our own
-/// measurements of it. Option names and values are its SANE backend's.
+/// The settings that make one scanner model deliver linear, unprocessed data, based on our own
+/// measurements of it. The option names and values are the ones its SANE backend uses.
 pub const Profile = struct {
     driver: []const u8,
     /// Matched against the start of the device's model name.
     model: []const u8,
-    /// What it sets up, as the interface says it.
+    /// What it sets up, in the words the interface shows.
     summary: []const u8,
-    /// Set for every scan.
+    /// Options set for every scan.
     options: []const Setting,
-    /// The film setting's option, and its value for each `Film`.
+    /// The option for the film setting, and its value for each `Film`.
     film_option: ?[]const u8 = null,
     negative: []const u8 = "",
     positive: []const u8 = "",
@@ -305,9 +308,10 @@ pub const Profile = struct {
     pub const Value = union(enum) { string: []const u8, int: i32 };
 };
 
-/// Every profile. The V200's comes from the epkowa work and our raw scans of a colour strip: its
-/// gamma table at 1.0 gives linear data, and its colour matrix ("cct") as the identity keeps the
-/// channels apart. Its default matrix mixes them for a more saturated picture.
+/// Every profile we have. The V200's comes from the epkowa work and our raw scans of a colour
+/// strip. Setting its gamma table to 1.0 gives linear data, and setting its colour matrix ("cct")
+/// to the identity keeps the channels apart. Its default matrix mixes them to make the picture
+/// more saturated.
 pub const profiles = [_]Profile{
     .{
         .driver = "epkowa",
@@ -340,12 +344,12 @@ pub fn profileOf(driver: []const u8, model: []const u8) ?*const Profile {
     return null;
 }
 
-/// A scanner library, loaded.
+/// A loaded scanner library.
 pub const Library = union(Kind) {
     sane: sane.Library,
     twain: twain.Library,
 
-    /// Loads the platform's library: `Error.Unavailable` when it isn't installed.
+    /// Loads the platform's library. Returns `Error.Unavailable` when it isn't installed.
     pub fn load(gpa: std.mem.Allocator) Error!Library {
         return switch (native) {
             .sane => .{ .sane = try sane.Library.load(gpa) },
@@ -360,7 +364,7 @@ pub const Library = union(Kind) {
         library.* = undefined;
     }
 
-    /// The scanners attached. Free the list with `freeDevices`.
+    /// Lists the scanners that are attached. Free the list with `freeDevices`.
     pub fn devices(library: *Library, gpa: std.mem.Allocator) Error![]Device {
         return switch (library.*) {
             inline else => |*l| l.devices(gpa),
@@ -375,21 +379,21 @@ pub const Library = union(Kind) {
     }
 };
 
-/// A scanner, open.
+/// An open scanner.
 pub const Scanner = union(Kind) {
     sane: sane.Scanner,
     twain: twain.Scanner,
 
-    /// What `source` offers, after switching to it; null keeps the scanner's current source.
-    /// Free with `Capabilities.deinit`.
+    /// Switches to `source` and says what it can do. Null keeps the scanner's current source.
+    /// Free the result with `Capabilities.deinit`.
     pub fn capabilities(scanner: *Scanner, gpa: std.mem.Allocator, source: ?Source) Error!Capabilities {
         return switch (scanner.*) {
             inline else => |*s| s.capabilities(gpa, source),
         };
     }
 
-    /// Scans, and returns once the whole image is read. The scan always runs to its end: on the
-    /// V200 an interrupted scan leaves the scanner stuck until it's switched off.
+    /// Scans, and returns once the whole image has been read. The scan always runs to the end,
+    /// because on the V200 an interrupted scan leaves the scanner stuck until it's switched off.
     pub fn scan(scanner: *Scanner, gpa: std.mem.Allocator, request: Request, progress: *Progress) Error!Image {
         return switch (scanner.*) {
             inline else => |*s| s.scan(gpa, request, progress),

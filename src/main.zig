@@ -1,4 +1,5 @@
-//! minilab: with no arguments, the app; with a command, the command line.
+//! minilab's entry point. With no arguments it opens the app; with a command, it runs that
+//! command on the command line.
 
 const std = @import("std");
 const minilab = @import("minilab");
@@ -51,13 +52,13 @@ const usage =
 /// The exit status for a command line minilab doesn't understand.
 const usage_status = 2;
 
-/// Prints the usage and ends the program, for a command line minilab doesn't understand.
+/// Prints the usage and exits, for a command line minilab doesn't understand.
 fn exitWithUsage() noreturn {
     std.debug.print("{s}", .{usage});
     std.process.exit(usage_status);
 }
 
-/// The films `--film` names.
+/// The film kinds `--film` takes.
 const FilmName = enum {
     colour,
     bw,
@@ -72,17 +73,17 @@ const FilmName = enum {
     }
 };
 
-/// The films `develop` and `develop-roll` take.
+/// The film kinds `develop` and `develop-roll` accept.
 const negative_films: std.EnumSet(FilmName) = .initMany(&.{ .colour, .bw });
 
-/// The film kind `--film <value>` names, when it is one of the films the command `takes`.
+/// Returns the film kind `--film <value>` names, as long as it's one the command `takes`.
 fn parseFilm(value: []const u8, takes: std.EnumSet(FilmName)) error{Usage}!minilab.develop.FilmKind {
     const name = std.meta.stringToEnum(FilmName, value) orelse return error.Usage;
     if (!takes.contains(name)) return error.Usage;
     return name.kind();
 }
 
-/// Exactly `count` finite numbers, comma-separated, such as `--base r,g,b`.
+/// Parses exactly `count` finite numbers, separated by commas, such as `--base r,g,b`.
 fn parseNumbers(comptime count: usize, value: []const u8) error{Usage}![count]f32 {
     var numbers: [count]f32 = undefined;
     var parts = std.mem.splitScalar(u8, value, ',');
@@ -100,11 +101,11 @@ const Depth = enum { eight, sixteen };
 const Options = struct {
     input: []const u8,
     output: []const u8,
-    /// "neutral", "frontier", or a .cube file's path.
+    /// "neutral", "frontier", a film look's id from `minilab looks`, or the path to a .cube file.
     look: []const u8 = "neutral",
     kind: minilab.develop.FilmKind = .colour_negative,
     depth: Depth = .sixteen,
-    /// Develop all of the scan rather than the frame found on it.
+    /// Develop the whole scan instead of the frame found on it.
     whole: bool = false,
     /// The film base's transmission per channel, 0..1, when known from elsewhere on the roll.
     base: ?[3]f32 = null,
@@ -112,8 +113,8 @@ const Options = struct {
     curves: ?minilab.stock_curves.Curves = null,
 };
 
-/// The curves of the stock called `name`, for film `kind`, in Status M: the command line has no
-/// scanner calibration.
+/// Returns the curves of the stock called `name`, for film `kind`, in Status M, since the command
+/// line has no scanner calibration.
 fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) !?minilab.stock_curves.Curves {
     for (minilab.stocks.stocks) |stock| {
         if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
@@ -127,8 +128,8 @@ fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) !?minilab.stock_
     std.process.exit(usage_status);
 }
 
-/// The look a command names: "neutral", "frontier", or a .cube file's path. `catalog` holds
-/// what it reads.
+/// Resolves the look a command names: "neutral", "frontier", a film look's id, or the path to a
+/// .cube file. `catalog` holds what it reads.
 fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog, name: []const u8) !minilab.look.Resolved {
     if (std.mem.eql(u8, name, "neutral")) return .neutral;
     if (std.mem.eql(u8, name, "frontier")) return catalog.resolve(gpa, io, .frontier);
@@ -144,7 +145,7 @@ fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog,
     return .{ .lut = lut };
 }
 
-/// Frees the look `lookNamed` read from a .cube file; the catalog keeps the others.
+/// Frees a look that `lookNamed` read from a .cube file. The catalog keeps the others.
 fn freeLook(gpa: std.mem.Allocator, look: minilab.look.Resolved, name: []const u8) void {
     if (look != .lut or !isCubeFile(name)) return;
     const lut: *minilab.cube_lut.Lut = @constCast(look.lut);
@@ -156,7 +157,7 @@ fn isCubeFile(name: []const u8) bool {
     return std.ascii.endsWithIgnoreCase(name, ".cube");
 }
 
-/// `minilab looks`: the looks `--look` takes by name, with their names for people.
+/// `minilab looks`: lists the looks `--look` takes by name, each with its human-readable name.
 fn listLooks(io: std.Io) !void {
     var buffer: [4096]u8 = undefined;
     var stdout: std.Io.File.Writer = .initStreaming(.stdout(), io, &buffer);
@@ -167,8 +168,8 @@ fn listLooks(io: std.Io) !void {
     try out.flush();
 }
 
-/// `minilab scan`: lists the scanners, or makes one scan into a 16-bit PPM, raw where the
-/// scanner has a profile.
+/// `minilab scan`: lists the scanners, or makes one scan into a 16-bit PPM. The scan is raw when
+/// the scanner has a profile.
 fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !void {
     const scan = minilab.scan;
     var list = false;
@@ -239,12 +240,12 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.width, image.height, image.depth, image.area.width, image.area.height, image.area.x, image.area.y });
 }
 
-/// `minilab scan`'s resolution when none is given: a quick preview.
+/// The resolution `minilab scan` uses when none is given, good for a quick preview.
 const default_scan_dpi = 300;
 
 pub const std_options: std.Options = .{ .log_level = .debug, .logFn = log };
 
-/// Whether debug messages are shown: `--verbose` anywhere on the command line.
+/// Whether to show debug messages. `--verbose` anywhere on the command line turns them on.
 var verbose = false;
 
 fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
@@ -299,7 +300,7 @@ fn printOut(io: std.Io, text: []const u8) !void {
     try stdout.interface.flush();
 }
 
-/// The library's folder when none is given: Pictures/Rolls in the user's home.
+/// The library folder to use when none is given: Pictures/Rolls in the user's home folder.
 fn defaultLibrary(arena: std.mem.Allocator, environ: *const std.process.Environ.Map) ![]const u8 {
     const home = homeFolder(environ) orelse return "Rolls";
     return std.fs.path.join(arena, &.{ home, "Pictures", "Rolls" });
@@ -342,9 +343,9 @@ fn parseOpen(arena: std.mem.Allocator, library: []const u8, home: ?[]const u8, a
     return options;
 }
 
-/// Develops scans of one roll together into `out folder`, as `<scan name>-<look>.tif`: each cut to
-/// the frame found on it, on one film base for the roll (the median of the frames' gaps). A strip
-/// gives each of its frames, as `<scan name>-<n>-<look>.tif`.
+/// Develops scans of one roll together into `out folder`, as `<scan name>-<look>.tif`. Each scan
+/// is cut to the frame found on it, and they all use one film base for the roll (the median of the
+/// frames' gaps). A strip gives one file per frame, as `<scan name>-<n>-<look>.tif`.
 fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !void {
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
@@ -374,7 +375,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     const inputs = paths.items[1..];
     try std.Io.Dir.cwd().createDirPath(io, out_dir);
 
-    // Each frame, cut to its crop, and the base in its gaps.
+    // Each frame, cut to its crop, and the base measured in its gaps.
     var frames: std.ArrayList(RollFrame) = .empty;
     defer {
         for (frames.items) |*f| f.deinit(gpa);
@@ -432,12 +433,14 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     }
 }
 
-/// A frame `develop-roll` develops: its part of the scan, and its file's name before the look's.
+/// A frame that `develop-roll` develops: its part of the scan, and the start of its file name,
+/// before the look's name.
 const RollFrame = struct {
     scan: minilab.image.Scan,
     stem: []const u8,
 
-    /// `area` of `full`, as the frame `stem`, which it takes; it frees `stem` if it fails.
+    /// Cuts `area` out of `full` as the frame `stem`. It takes ownership of `stem`, and frees it if
+    /// it fails.
     fn of(gpa: std.mem.Allocator, full: minilab.image.Scan, area: minilab.image.Area, stem: []const u8) !RollFrame {
         errdefer gpa.free(stem);
         return .{ .scan = try full.crop(gpa, area), .stem = stem };
@@ -460,8 +463,8 @@ fn writeFrame(gpa: std.mem.Allocator, io: std.Io, out_dir: []const u8, stem: []c
     std.log.info("{s}", .{path});
 }
 
-/// Prints each frame frame detection finds on a strip scan: its number, its box in mm from the
-/// scan's top left, and whether it's sure. Scanners take their scan areas in mm.
+/// Prints each frame that frame detection finds on a strip scan: its number, its box in mm from
+/// the scan's top left, and whether detection is sure of it. Scanners take their scan areas in mm.
 fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !void {
     var path: ?[]const u8 = null;
     var dpi: ?f32 = null;
@@ -530,9 +533,10 @@ fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]
     return options;
 }
 
-/// Adds scans to the roll of that name in the library, making it first if there is none: a frame
-/// for each, or for each frame on a strip. With a flat field, the roll keeps it, and every scan
-/// is divided by the roll's flat field, this one or one it had already.
+/// Adds scans to the roll with that name in the library, creating the roll if it doesn't exist.
+/// Each scan becomes a frame, or a strip becomes one frame per frame on it. Given a flat field,
+/// the roll keeps it. Every scan is divided by the roll's flat field, whether that's this one or
+/// one it already had.
 fn importScans(gpa: std.mem.Allocator, io: std.Io, options: ImportOptions) !void {
     const path = try std.fs.path.join(gpa, &.{ options.library, options.roll });
     defer gpa.free(path);
@@ -609,14 +613,14 @@ fn formatOf(path: []const u8) !Format {
     return error.UnknownOutputFormat;
 }
 
-/// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame of
-/// a strip, as `<out>-1.tif`, `<out>-2.tif` and so on.
+/// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame
+/// of a strip as `<out>-1.tif`, `<out>-2.tif` and so on.
 fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     var full = (try minilab.input.read(gpa, io, options.input)).scan;
     defer full.deinit(gpa);
     const format = try formatOf(options.output);
 
-    // The frames on the scan, as the app finds them, unless all of it is asked for.
+    // Find the frames on the scan the way the app does, unless the whole scan was asked for.
     var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
     defer reduced.deinit(gpa);
     const found: []const minilab.framing.Found = if (options.whole) &.{} else minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), options.kind) catch |err| found: {
@@ -664,7 +668,7 @@ fn developArea(gpa: std.mem.Allocator, io: std.Io, options: Options, format: For
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output, .data = file });
 }
 
-/// `path` with `-<number>` before its extension: out.tif becomes out-2.tif.
+/// Returns `path` with `-<number>` before its extension, so out.tif becomes out-2.tif.
 fn numbered(gpa: std.mem.Allocator, path: []const u8, number: usize) ![]u8 {
     const extension = std.fs.path.extension(path);
     return std.fmt.allocPrint(gpa, "{s}-{d}{s}", .{ path[0 .. path.len - extension.len], number, extension });
@@ -677,7 +681,7 @@ fn write(gpa: std.mem.Allocator, format: Format, comptime Sample: type, encoded:
     };
 }
 
-/// `encoded`, which is sRGB, as a TIFF with sRGB's ICC profile.
+/// Encodes `encoded`, which is sRGB, as a TIFF with sRGB's ICC profile.
 fn srgbTiff(gpa: std.mem.Allocator, comptime Sample: type, encoded: minilab.image.Image([3]Sample)) ![]u8 {
     const profile = try minilab.codecs.icc.profileBytes(gpa, .srgb);
     defer gpa.free(profile);

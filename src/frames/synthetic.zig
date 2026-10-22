@@ -1,13 +1,14 @@
-//! Synthetic strip scans with known frames, for the detection tests. A strip lies in a holder
-//! whose opening is a little taller than the image, as in the V200's 35 mm holder, and the whole
-//! scan can be turned and laid along either axis.
+//! Made-up strip scans with frames in known places, for the detection tests. The strip sits in a
+//! holder whose opening is a little taller than the picture, like the V200's 35 mm holder, and the
+//! whole scan can be rotated and laid along either axis.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
 const detect = @import("detect.zig");
 const formats = @import("formats.zig");
 
-/// 135 perforations: pitch, size along and across, and distance from the film's edge.
+/// The 135 perforations: their pitch, their size along and across the film, and how far they are
+/// from the film's edge.
 const perforations = formats.FilmSize.@"135".perforations().?;
 const perforation_pitch_mm = perforations.pitch_mm;
 const perforation_length_mm = perforations.length_mm;
@@ -15,19 +16,19 @@ const perforation_height_mm = perforations.height_mm;
 const perforation_inset_mm = perforations.inset_mm;
 const film_135_mm = formats.FilmSize.@"135".filmWidthMm().?;
 
-/// Periods of the image texture along and across, in mm.
+/// How often the picture's texture repeats along and across the film, in mm.
 const texture_along_mm = 7.3;
 const texture_across_mm = 5.1;
 
-/// 135 frames as a camera lays them: full frames, 36 mm long on the 38 mm pitch, after a short
-/// leader, on film that fills the holder but for 1 mm at each end.
+/// 135 frames the way a camera puts them on the film: full frames, 36 mm long on a 38 mm pitch,
+/// after a short leader. The film fills the holder except for 1 mm at each end.
 const full_frame = formats.Standard.@"135_full_frame".format();
 pub const frame_135_mm = full_frame.width_mm;
 pub const pitch_135_mm = full_frame.pitch_mm.?;
 pub const leader_135_mm = 4;
 const film_margin_mm = 1;
 
-/// Lays `frames` out as 135 frames, and gives the strip that holds just them.
+/// Lays `frames` out as 135 frames, and returns a strip that holds just those frames.
 pub fn strip135(frames: []Frame) Strip {
     for (frames, 0..) |*f, i| f.* = .{ .start_mm = leader_135_mm + pitch_135_mm * @as(f32, @floatFromInt(i)), .length_mm = frame_135_mm };
     const along = 2 * leader_135_mm + pitch_135_mm * @as(f32, @floatFromInt(frames.len));
@@ -37,11 +38,11 @@ pub fn strip135(frames: []Frame) Strip {
 pub const Frame = struct {
     start_mm: f32,
     length_mm: f32,
-    /// Mean density of the image: above the base for negatives, absolute for positives.
+    /// The picture's mean density: above the base for negatives, and absolute for positives.
     density: f32 = 0.7,
-    /// The texture's amplitude in density.
+    /// How strong the texture is, in density.
     texture: f32 = 0.4,
-    /// Mounted slides: this aperture's shift across from the opening's centre line.
+    /// For mounted slides: how far this aperture is shifted across from the opening's centre line.
     offset_mm: f32 = 0,
 };
 
@@ -52,26 +53,27 @@ pub const Strip = struct {
     /// The scan's size across and along the strip.
     across_mm: f32 = 33.02,
     along_mm: f32,
-    /// The holder opening across the strip, centred in the scan.
+    /// The width of the holder's opening across the strip. It's centred in the scan.
     opening_mm: f32 = 25,
-    /// The image's height across the strip.
+    /// The picture's height across the strip.
     image_mm: f32 = 24,
-    /// Film lies between these positions along; the holder beyond.
+    /// The film runs between these positions along the strip, and the holder covers the rest.
     film_start_mm: f32 = 0,
     film_end_mm: ?f32 = null,
     frames: []const Frame,
-    /// Turned about the scan's centre, clockwise as displayed.
+    /// How far the scan is rotated about its centre, clockwise as displayed.
     rotation_degrees: f32 = 0,
-    /// 135 film narrower than the opening, its perforations showing and bare light beside it.
+    /// 135 film that's narrower than the opening, so its perforations show, with bare light
+    /// beside it.
     perforated: bool = false,
-    /// Mounted slides: everything outside the apertures is opaque.
+    /// For mounted slides: everything outside the apertures is opaque.
     mounted: bool = false,
-    /// Transmissions: film base, holder, unexposed positive film, and bare light.
+    /// The transmissions of the film base, the holder, unexposed positive film and bare light.
     base: f32 = 0.6,
     holder: f32 = 0.0012,
     dmax: f32 = 0.002,
     lamp: f32 = 0.9,
-    /// Relative noise on every pixel.
+    /// Relative noise added to every pixel.
     noise: f32 = 0.01,
     seed: u64 = 1,
 
@@ -114,7 +116,8 @@ pub const Strip = struct {
         return .{ @as(f32, @floatFromInt(dims[0])) / ppm / 2, @as(f32, @floatFromInt(dims[1])) / ppm / 2 };
     }
 
-    /// Transmission at a point of the unturned strip, `across` measured from its centre line.
+    /// The transmission at a point on the strip before it's rotated. `across` is measured from
+    /// the strip's centre line.
     fn transmission(strip: Strip, along: f32, across: f32) f32 {
         const distance = @abs(across);
         if (distance > strip.opening_mm / 2) return strip.holder;
@@ -144,7 +147,7 @@ pub const Strip = struct {
         return unexposed;
     }
 
-    /// The image of `frame`: its density with a texture running both ways.
+    /// The picture in `frame`: its density, with a texture running both ways.
     fn picture(strip: Strip, frame: Frame, along: f32, across: f32) f32 {
         const pattern = @sin(along * std.math.tau / texture_along_mm) * @cos(across * std.math.tau / texture_across_mm);
         const density = @max(frame.density + frame.texture * pattern, 0);
@@ -169,7 +172,7 @@ pub const Strip = struct {
             for (scan.row(y), 0..) |*pixel, x| {
                 const dx = (@as(f32, @floatFromInt(x)) + 0.5) / ppm - middle[0];
                 const dy = (@as(f32, @floatFromInt(y)) + 0.5) / ppm - middle[1];
-                // Undo the turn to find the point on the flat strip.
+                // Undo the rotation to find the point on the unrotated strip.
                 const fx = dx * cos + dy * sin;
                 const fy = -dx * sin + dy * cos;
                 const along, const across = switch (strip.axis) {

@@ -1,9 +1,11 @@
-//! Colour profiles through LittleCMS 2: the output spaces minilab offers, built from their
-//! definitions, each one's ICC profile as bytes to embed in a TIFF or a JPEG, and the transform
-//! from minilab's working space, linear Rec. 2020, to any of them.
+//! Colour profiles through LittleCMS 2. This builds the output spaces minilab offers from their
+//! definitions, gives each space's ICC profile as bytes to embed in a TIFF or a JPEG, and makes
+//! the transform from linear Rec. 2020 to any of them. (Export converts the developed pixels to
+//! linear Rec. 2020 before it uses the transform.)
 //!
 //! The profiles are ICC version 2.4 matrix-shaper profiles, which every colour-managed program
-//! reads; LittleCMS stores their curves as tables where version 2 has no parametric form.
+//! can read. Where version 2 can't describe a curve with a formula, LittleCMS stores it as a
+//! table.
 
 const std = @import("std");
 const c = @import("codecs");
@@ -18,8 +20,8 @@ pub const Space = enum {
     rec2020_linear,
 };
 
-/// The rendering intents, as LittleCMS numbers them. Between matrix-shaper profiles, perceptual
-/// and saturation fall back to relative colorimetric.
+/// The rendering intents, numbered the way LittleCMS numbers them. Between two matrix-shaper
+/// profiles, perceptual and saturation fall back to relative colorimetric.
 pub const Intent = enum(u32) {
     perceptual = c.INTENT_PERCEPTUAL,
     relative_colorimetric = c.INTENT_RELATIVE_COLORIMETRIC,
@@ -28,14 +30,16 @@ pub const Intent = enum(u32) {
 };
 
 pub const Error = error{
-    /// LittleCMS failed to build a profile or a transform, which happens when it runs out of memory.
+    /// LittleCMS failed to build a profile or a transform, which happens when it runs out of
+    /// memory.
     ColourManagementFailed,
     OutOfMemory,
 };
 
 /// The ICC version the profiles declare.
 const icc_version = 2.4;
-/// The luminance of a primary or of white in its chromaticity, which LittleCMS takes as 1.
+/// The luminance (Y) we give a primary or the white point in its chromaticity. LittleCMS takes it
+/// as 1.
 const unit_luminance = 1.0;
 
 /// How a space encodes linear light.
@@ -44,21 +48,21 @@ const Transfer = union(enum) {
     /// A pure power: encoded ^ gamma = linear.
     gamma: f64,
     /// LittleCMS's parametric curve 4: linear = (a * encoded + b) ^ g above d, c * encoded below.
-    /// The parameters are in its order: g, a, b, c, d.
+    /// The parameters are in LittleCMS's order: g, a, b, c, d.
     parametric: [5]f64,
 };
 
 /// LittleCMS's number for the parametric curve with a linear toe.
 const parametric_with_toe = 4;
 
-/// IEC 61966-2-1's sRGB curve, which Display P3 shares.
+/// The sRGB curve from IEC 61966-2-1. Display P3 uses it too.
 const srgb_transfer: Transfer = .{ .parametric = .{ 2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045 } };
 
-/// The white points, CIE 1931 xy.
+/// The white points, in CIE 1931 xy.
 const d65: c.cmsCIExyY = .{ .x = 0.3127, .y = 0.3290, .Y = unit_luminance };
 const d50: c.cmsCIExyY = .{ .x = 0.3457, .y = 0.3585, .Y = unit_luminance };
 
-/// A space's description, white, primaries and transfer function.
+/// What defines a space: its description, white point, primaries and transfer function.
 const Definition = struct {
     description: [:0]const u8,
     white: c.cmsCIExyY,
@@ -91,7 +95,7 @@ fn definition(space: Space) Definition {
             .transfer = srgb_transfer,
         },
         // Adobe RGB (1998): its primaries and its gamma of 563/256. The name says "compatible"
-        // because Adobe's own profile carries Adobe's name.
+        // because only Adobe's own profile carries Adobe's name.
         .adobe_rgb => .{
             .description = "Adobe RGB (compatible)",
             .white = d65,
@@ -115,11 +119,11 @@ fn definition(space: Space) Definition {
     };
 }
 
-/// A colour profile, open in LittleCMS.
+/// A colour profile, opened in LittleCMS.
 pub const Profile = struct {
     handle: *anyopaque,
 
-    /// The profile of `space`.
+    /// Builds the profile of `space`.
     pub fn init(space: Space) Error!Profile {
         const space_definition = definition(space);
         const curve = switch (space_definition.transfer) {
@@ -146,7 +150,7 @@ pub const Profile = struct {
         profile.* = undefined;
     }
 
-    /// The profile as an ICC file, to embed. The caller owns the bytes.
+    /// Returns the profile as an ICC file, ready to embed. The caller owns the bytes.
     pub fn bytes(profile: Profile, gpa: std.mem.Allocator) Error![]u8 {
         var size: c.cmsUInt32Number = 0;
         if (c.cmsSaveProfileToMem(profile.handle, null, &size) == 0) return error.ColourManagementFailed;
@@ -157,19 +161,19 @@ pub const Profile = struct {
     }
 };
 
-/// The ICC profile of `space` as bytes, to embed in a file. The caller owns them.
+/// Returns the ICC profile of `space` as bytes, ready to embed in a file. The caller owns them.
 pub fn profileBytes(gpa: std.mem.Allocator, space: Space) Error![]u8 {
     var profile: Profile = try .init(space);
     defer profile.deinit();
     return profile.bytes(gpa);
 }
 
-/// The most pixels LittleCMS converts in one call, as it counts them in 32 bits.
+/// The most pixels LittleCMS can convert in one call, because it counts them in 32 bits.
 const max_pixels_per_call = std.math.maxInt(c.cmsUInt32Number);
 
-/// A transform from linear Rec. 2020, minilab's working space, to a space's encoding, for pixels
-/// of `Sample`s: `f32`, where 0 to 1 is the space's range and values beyond it are kept, or `u16`
-/// or `u8`, which clip. It holds no cache, so threads can share it.
+/// A transform from linear Rec. 2020 to a space's encoding, writing pixels of `Sample`. With
+/// `f32`, 0 to 1 is the space's range and values outside it are kept. `u16` and `u8` clip. It has
+/// no cache, so threads can share it.
 pub fn Transform(comptime Sample: type) type {
     const output_format: c.cmsUInt32Number = switch (Sample) {
         f32 => c.TYPE_RGB_FLT,
@@ -203,8 +207,9 @@ pub fn Transform(comptime Sample: type) type {
             transform.* = undefined;
         }
 
-        /// Converts `input`, linear Rec. 2020, into `output`, which is as long. Should one be
-        /// shorter, only that many pixels are converted: the C library writes without bounds.
+        /// Converts `input` (linear Rec. 2020) into `output`, which should be the same length. If
+        /// one is shorter, only that many pixels are converted, because the C library writes
+        /// without checking bounds.
         pub fn apply(transform: Self, input: []const [image.channel_count]f32, output: [][image.channel_count]Sample) void {
             std.debug.assert(input.len == output.len);
             const total = @min(input.len, output.len);
@@ -218,12 +223,13 @@ pub fn Transform(comptime Sample: type) type {
     };
 }
 
-/// The offsets in an ICC profile's header of its size, its version and its signature.
+/// Where the size, the version and the signature are in an ICC profile's header.
 const header_size_offset = 0;
 const header_version_offset = 8;
 const header_signature_offset = 36;
 const header_signature = "acsp";
-/// Version 2.4 as the header encodes it: major, then minor and bug-fix in a nibble each.
+/// Version 2.4 the way the header encodes it: the major version, then the minor version and the
+/// bug-fix level in a nibble each.
 const encoded_version_2_4 = 0x02400000;
 
 test "every space's profile is a whole ICC file, version 2.4, that LittleCMS reads back" {
@@ -244,7 +250,7 @@ test "linear Rec. 2020 middle grey and white become sRGB's" {
     var transform: Transform(u8) = try .init(.srgb, .relative_colorimetric);
     defer transform.deinit();
     const middle_grey = 0.18;
-    // The sRGB curve gives 0.4614 for 0.18 of linear light: 118 of 255.
+    // The sRGB curve turns 0.18 of linear light into 0.4614, which is 118 out of 255.
     const srgb_middle_grey = 118;
     const input = [_][image.channel_count]f32{ @splat(middle_grey), @splat(1.0), @splat(0.0) };
     var output: [input.len][image.channel_count]u8 = undefined;

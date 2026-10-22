@@ -1,12 +1,12 @@
-//! The user's looks on disk, in the library's Looks folder, one folder each:
+//! The user's looks on disk, in the library's Looks folder, one folder per look:
 //!
-//!     Looks/<name>/draft.json     the pairs and choices it is fitted from (draft.zig)
+//!     Looks/<name>/draft.json     the pairs and options it's fitted from (draft.zig)
 //!     Looks/<name>/look.json      the look: its curves and matrix, and how well it fitted
 //!     Looks/<name>/residual.cube  its 33³ LUT, when the fit kept one
 //!     Looks/<name>/look.cube      the whole look as one 33³ LUT, for other software
 //!
 //! A look takes over from Develop after the film base and density stages (model.zig). To apply
-//! one, render the frame with Develop's Log tone, then `Look.apply` the linear output.
+//! one, render the frame with Develop's Log tone, then call `Look.apply` on the linear output.
 
 const std = @import("std");
 const Io = std.Io;
@@ -24,26 +24,26 @@ const json_options: std.json.Stringify.Options = .{ .whitespace = .indent_2 };
 const max_json_bytes = 4 << 20;
 const max_cube_bytes = 8 << 20;
 
-/// look.json as it is written.
+/// The contents of look.json, as we write it.
 pub const File = struct {
     name: []const u8,
-    /// What the look expects, for whoever reads the file.
+    /// What input the look expects, for anyone reading the file.
     input: []const u8 = "Density 0..1 per channel, as minilab's Log tone stores it, sRGB-encoded",
     output: []const u8 = "sRGB",
-    /// Density in, mixed: each row adds up to 1.
+    /// Mixes the incoming density. Each row adds up to 1.
     matrix: model.Matrix,
-    /// R, G and B: 33 points each over density 0..1, to sRGB-encoded output.
+    /// R, G and B: 33 points each over density 0..1, giving sRGB-encoded output.
     curves: [3]model.Curve,
-    /// The LUT on the curves' output, when there is one: its file in the same folder.
+    /// The file name of the LUT on the curves' output, in the same folder, when there is one.
     lut: ?[]const u8 = null,
-    /// ΔE2000 over the held-out pairs, when there were some.
+    /// The median and 95th percentile of ΔE2000 over the held-out pairs, when there were any.
     median: ?f32 = null,
     p95: ?f32 = null,
     fitted_pairs: usize = 0,
     held_out_pairs: usize = 0,
 };
 
-/// A saved look, read back to apply.
+/// A saved look, read back so it can be applied.
 pub const Look = struct {
     name: []u8,
     model: model.Model,
@@ -77,8 +77,8 @@ pub const Look = struct {
         look.* = undefined;
     }
 
-    /// Applies the look in place to `pixels`: the linear output of `develop.render` with
-    /// `.tone = .log`. They become linear sRGB 0..1, ready for `encode`.
+    /// Applies the look in place to `pixels`, which hold the linear output of `develop.render`
+    /// with `.tone = .log`. Afterwards they're linear sRGB 0..1, ready for `encode`.
     pub fn apply(look: *const Look, pixels: [][3]f32) void {
         var m = look.model;
         m.lut = look.lut;
@@ -86,8 +86,8 @@ pub const Look = struct {
     }
 };
 
-/// Writes `result` as the look `name` into `folder`, made if need be: look.json, the LUT if the
-/// fit kept one, and the whole look baked into one .cube.
+/// Writes `result` as the look `name` into `folder`, creating the folder if needed. It writes
+/// look.json, the LUT if the fit kept one, and the whole look baked into one .cube.
 pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8, result: *const fit.Result) !void {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -129,7 +129,7 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8
 pub const Entry = struct {
     name: []u8,
     path: []u8,
-    /// Whether look.json is there: the look can be applied.
+    /// Whether look.json is there, which means the look can be applied.
     saved: bool,
 
     pub fn deinit(entry: *Entry, gpa: std.mem.Allocator) void {
@@ -138,12 +138,13 @@ pub const Entry = struct {
     }
 };
 
-/// The folder of looks in `library`.
+/// Returns the path of the looks folder in `library`.
 pub fn folderOf(gpa: std.mem.Allocator, library: []const u8) ![]u8 {
     return std.fs.path.join(gpa, &.{ library, looks_folder });
 }
 
-/// The looks in `library`, by name: folders under Looks with a look.json or a draft.json.
+/// Lists the looks in `library` by name: the folders under Looks that have a look.json or a
+/// draft.json.
 pub fn list(gpa: std.mem.Allocator, io: Io, library: []const u8) !std.ArrayList(Entry) {
     var entries: std.ArrayList(Entry) = .empty;
     errdefer {

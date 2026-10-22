@@ -1,13 +1,14 @@
-//! LUTs from .cube files, as Resolve, Adobe and most grading tools write them: a 3D LUT, a 1D
-//! LUT, or a 1D shaper followed by a 3D LUT, of any size and over any input range.
+//! Reads LUTs from .cube files, the format Resolve, Adobe and most grading tools write. A file can
+//! hold a 3D LUT, a 1D LUT, or a 1D shaper followed by a 3D LUT, of any size and over any input
+//! range.
 //!
-//! A look made of one is laid over Neutral's sRGB-encoded output, so it should expect sRGB or
-//! Rec. 709 input with a display gamma, as most film and creative LUTs do. 3D LUTs are read with
-//! tetrahedral interpolation, which keeps greys on the grey axis.
+//! A look made from one goes over Neutral's sRGB-encoded output, so the LUT should expect sRGB or
+//! Rec. 709 input with a display gamma, like most film and creative LUTs do. We look up 3D LUTs
+//! with tetrahedral interpolation, which keeps greys on the grey axis.
 
 const std = @import("std");
 
-/// The largest 3D LUT read: 129 points a side, as the biggest common ones have.
+/// The largest 3D LUT we read: 129 points a side, the size of the biggest common ones.
 pub const max_size_3d = 129;
 pub const max_size_1d = 65536;
 
@@ -15,7 +16,7 @@ pub const ParseError = error{ NotACube, BadSize, Truncated, TooMuchData, Invalid
 
 pub const Lut = struct {
     title: []u8,
-    /// A 1D LUT per channel, applied first; alone, it is the whole LUT.
+    /// A 1D LUT per channel, applied first. On its own, it's the whole LUT.
     one: ?Table = null,
     /// The 3D LUT, red changing fastest, then green, then blue.
     three: ?Table = null,
@@ -35,7 +36,7 @@ pub const Lut = struct {
         var three_range: [2][3]f32 = .{ @splat(0), @splat(1) };
         var data_lines: usize = 0;
 
-        // First the keywords, then the data, which follows them.
+        // The keywords come first, then the data.
         var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
         while (lines.next()) |raw| {
             const line = std.mem.trim(u8, raw, " \t");
@@ -67,7 +68,7 @@ pub const Lut = struct {
                 const range = try pair(&fields);
                 three_range = .{ @splat(range[0]), @splat(range[1]) };
             }
-            // Other keywords, such as LUT_IN_VIDEO_RANGE, change nothing here.
+            // Other keywords, like LUT_IN_VIDEO_RANGE, don't change anything here.
         }
         if (one_size == null and three_size == null) return error.NotACube;
         const one_count = one_size orelse 0;
@@ -102,7 +103,7 @@ pub const Lut = struct {
         lut.* = undefined;
     }
 
-    /// A copy in `gpa`, for another thread.
+    /// Makes a copy in `gpa`, for another thread to use.
     pub fn clone(lut: *const Lut, gpa: std.mem.Allocator) error{OutOfMemory}!Lut {
         var copy: Lut = .{ .title = try gpa.dupe(u8, lut.title) };
         errdefer copy.deinit(gpa);
@@ -111,7 +112,7 @@ pub const Lut = struct {
         return copy;
     }
 
-    /// The LUT's output for `rgb`.
+    /// Returns the LUT's output for `rgb`.
     pub fn lookup(lut: *const Lut, rgb: [3]f32) [3]f32 {
         var v = rgb;
         if (lut.one) |*t| {
@@ -121,7 +122,7 @@ pub const Lut = struct {
         return v;
     }
 
-    /// "3D, 33 points a side" or "1D, 4096 points", for people.
+    /// A short description for people, like "3D, 33 points a side" or "1D, 4096 points".
     pub fn describe(lut: *const Lut, buffer: []u8) []const u8 {
         if (lut.three) |t| return std.fmt.bufPrint(buffer, "3D, {d} points a side", .{t.size}) catch "3D";
         return std.fmt.bufPrint(buffer, "1D, {d} points", .{lut.one.?.size}) catch "1D";
@@ -161,7 +162,8 @@ fn pair(fields: *std.mem.TokenIterator(u8, .any)) ParseError![2]f32 {
     return v;
 }
 
-/// Where `x` falls on a table's grid of `size` points over `min`..`max`: the cell and how far in.
+/// Finds where `x` falls on a grid of `size` points over `min`..`max`: which cell, and how far
+/// into it.
 fn position(x: f32, min: f32, max: f32, size: usize) struct { usize, f32 } {
     const top: f32 = @floatFromInt(size - 1);
     const t = std.math.clamp((x - min) / (max - min), 0, 1) * top;
@@ -174,8 +176,8 @@ fn oneD(t: *const Lut.Table, channel: usize, x: f32) f32 {
     return t.values[i][channel] * (1 - f) + t.values[i + 1][channel] * f;
 }
 
-/// Tetrahedral interpolation: the cell is cut into six tetrahedra along its grey diagonal, and the
-/// four corners of the one `rgb` falls in are weighted.
+/// Tetrahedral interpolation. The cell is cut into six tetrahedra along its grey diagonal, and we
+/// weight the four corners of the one `rgb` falls in.
 fn threeD(t: *const Lut.Table, rgb: [3]f32) [3]f32 {
     var cell: [3]usize = undefined;
     var f: [3]f32 = undefined;
@@ -261,7 +263,7 @@ test "an identity 3D LUT gives back its input" {
 
 test "tetrahedral interpolation keeps greys grey" {
     const gpa = std.testing.allocator;
-    // A LUT that moves every off-grey corner, but leaves the grey ones.
+    // A LUT that moves every corner off the grey axis, but leaves the grey ones alone.
     var lut = try Lut.parse(gpa,
         \\LUT_3D_SIZE 2
         \\0 0 0

@@ -1,8 +1,8 @@
-//! Golden tests on our own V200 scans in `vendor/`, where they are present. Frames of the colour
-//! strip, each developed with automatic settings on the film base in its gaps, keep the mean
-//! colours they had when the test was written, in Neutral and in Frontier emulation. A change to
-//! the pipeline that moves them shows here, and the numbers are updated only on purpose. The
-//! scans are private and large, so the test is skipped without them.
+//! Golden tests on our own V200 scans in `vendor/`, when they're there. We develop frames of the
+//! colour strip with automatic settings, on the film base in their gaps, and check that they keep
+//! the mean colours they had when the test was written, in Neutral and in Frontier emulation. A
+//! change to the pipeline that moves them shows up here, and the numbers only get updated on
+//! purpose. The scans are private and large, so the test is skipped without them.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -17,14 +17,15 @@ const formats = @import("../frames/formats.zig");
 const vendor_dirs = [_][]const u8{ "vendor", "../vendor" };
 const strip_dir = "hw-scans/2026-10-22-colour";
 const max_file_bytes = 256 << 20;
-/// The size frames are developed at: the means don't need more.
+/// The size we develop frames at. The means don't need more.
 const developed_longest = 400;
 /// How far a mean may move, in steps of 255, before the test fails.
 const tolerance = 2;
 
 const Golden = struct {
     file: []const u8,
-    /// The frame's mean sRGB colour over its middle half, Neutral then Frontier emulation.
+    /// The frame's mean sRGB colour over its middle half, in Neutral and then in Frontier
+    /// emulation.
     neutral: [3]u8,
     frontier: [3]u8,
 };

@@ -1,19 +1,20 @@
-//! The .cube LUT format, as Adobe and Resolve read it: a title, the input's range, the grid's
-//! size, then one output per line, red changing fastest.
+//! The .cube LUT format, the way Adobe and Resolve read it: a title, the input range, the grid
+//! size, and then one output colour per line, with red changing fastest.
 
 const std = @import("std");
 const model = @import("model.zig");
 
 const Lut = model.Lut;
 
-/// `lut` as a .cube file, titled `title`, with `comments` (one per line) at the top. The caller
-/// owns the bytes.
+/// Writes `lut` as a .cube file titled `title`, with `comments` at the top, one per line. The
+/// caller owns the returned bytes.
 pub fn write(gpa: std.mem.Allocator, lut: *const Lut, title: []const u8, comments: []const []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
     const w = &out.writer;
     for (comments) |line| try w.print("# {s}\n", .{line});
-    // A quote would end the title early in other software: it becomes an apostrophe.
+    // A double quote would end the title early in other software, so we write an apostrophe
+    // instead.
     try w.writeAll("TITLE \"");
     for (title) |ch| try w.writeByte(if (ch == '"') '\'' else ch);
     try w.writeAll("\"\n");
@@ -24,7 +25,7 @@ pub fn write(gpa: std.mem.Allocator, lut: *const Lut, title: []const u8, comment
 
 pub const ReadError = error{ NotACube, WrongSize, Truncated, InvalidNumber };
 
-/// Reads a .cube file of a 33³ LUT over 0..1 into `lut`.
+/// Reads a .cube file holding a 33³ LUT over 0..1 into `lut`.
 pub fn read(bytes: []const u8, lut: *Lut) ReadError!void {
     var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
     var size: ?usize = null;

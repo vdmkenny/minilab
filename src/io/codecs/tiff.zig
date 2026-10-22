@@ -1,7 +1,8 @@
-//! TIFF input and output through LibTIFF. Reading takes the first image of a file, 8- or 16-bit
-//! RGB or greyscale, in strips or tiles, chunky or planar, in any compression LibTIFF decodes, into
-//! a `Scan`. Writing stores 8- or 16-bit RGB with Deflate and the horizontal predictor, and an ICC
-//! profile when given. Both work on files in memory: the caller reads and writes the file system.
+//! TIFF input and output through LibTIFF. Reading takes the first image in a file and puts it in
+//! a `Scan`: 8-bit or 16-bit RGB or greyscale, in strips or tiles, chunky or planar, in any
+//! compression LibTIFF decodes. Writing stores 8-bit or 16-bit RGB with Deflate and the horizontal
+//! predictor, plus an ICC profile if there is one. Both work on files in memory, so reading and
+//! writing the actual files is up to the caller.
 
 const std = @import("std");
 const native_endian = @import("builtin").cpu.arch.endian();
@@ -14,10 +15,10 @@ pub const Depth = enum(u16) {
     sixteen = 16,
 };
 
-/// A TIFF read into a scan.
+/// A TIFF after reading it into a scan.
 pub const Decoded = struct {
-    /// The pixels. An 8-bit file's samples are widened to 16 bits, 255 to 65535; no transfer
-    /// function is undone, so the scan is linear only if the file was.
+    /// The pixels. An 8-bit file's samples are widened to 16 bits (255 becomes 65535). No transfer
+    /// function is undone, so the scan is only linear if the file was.
     scan: image.Scan,
     /// The file's bits per sample.
     depth: Depth,
@@ -35,7 +36,7 @@ pub const ReadError = error{
     OutOfMemory,
     /// LibTIFF found no TIFF image, or one whose tags contradict each other.
     InvalidTiff,
-    /// The image is not 8- or 16-bit unsigned RGB or greyscale.
+    /// The image isn't 8-bit or 16-bit unsigned RGB or greyscale.
     UnsupportedTiff,
     /// LibTIFF failed to decode a strip or a tile.
     CorruptTiff,
@@ -50,11 +51,11 @@ pub const WriteError = error{
 };
 
 pub const WriteOptions = struct {
-    /// An ICC profile to embed, such as `icc.profileBytes` gives.
+    /// An ICC profile to embed, like the ones `icc.profileBytes` returns.
     icc_profile: ?[]const u8 = null,
 };
 
-/// The photometric interpretations read, as TIFF numbers them.
+/// The photometric interpretations we read, numbered the way TIFF numbers them.
 const Photometric = enum(u16) {
     min_is_black = c.PHOTOMETRIC_MINISBLACK,
     rgb = c.PHOTOMETRIC_RGB,
@@ -79,22 +80,22 @@ const Compression = enum(u16) {
     _,
 };
 
-/// The software tag written.
+/// What we write in the software tag.
 const software = "minilab";
-/// The size the strips written aim for, uncompressed.
+/// The size we aim for when writing strips, before compression.
 const strip_bytes_target = 1 << 20;
-/// Above this many bytes of pixels, the file is written as BigTIFF, as Deflate cannot be relied on
-/// to bring it under classic TIFF's 4 GiB.
+/// Above this many bytes of pixels, the file is written as BigTIFF, because we can't count on
+/// Deflate to get it under classic TIFF's 4 GiB limit.
 const bigtiff_threshold = 1 << 31;
-/// The modes `TIFFClientOpen` takes: reading without mapping the file into memory, and writing a
-/// classic or a big little-endian file.
+/// The modes we pass to `TIFFClientOpen`: reading without mapping the file into memory, and
+/// writing a classic or a BigTIFF file, little-endian.
 const read_mode = "rm";
 const write_mode = "wl";
 const write_mode_big = "w8l";
-/// LibTIFF's answer for a failed seek, `(toff_t)-1`.
+/// The value that tells LibTIFF a seek failed: `(toff_t)-1`.
 const seek_failed = std.math.maxInt(c.toff_t);
 
-/// Reads the first image of the TIFF file `bytes`.
+/// Reads the first image in the TIFF file `bytes`.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
     var source: Source = .{ .bytes = bytes };
     const tif = open(&source, read_mode, Source) orelse return error.InvalidTiff;
@@ -177,12 +178,12 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
     return .{ .scan = scan, .depth = depth, .icc_profile = icc_profile };
 }
 
-/// The colours read.
+/// The colour types we read.
 const Colour = enum {
     rgb,
     grey,
 
-    /// The samples a pixel needs.
+    /// How many samples a pixel needs.
     fn channels(colour: Colour) usize {
         return switch (colour) {
             .rgb => image.channel_count,
@@ -191,20 +192,22 @@ const Colour = enum {
     }
 };
 
-/// How the samples lie in the file's strips or tiles, which `readPixels` calls blocks: a strip is a
-/// block as wide as the image.
+/// How the samples are laid out in the file's strips or tiles. `readPixels` calls both of them
+/// blocks: a strip is just a block as wide as the image.
 const Layout = struct {
     colour: Colour,
     planar: bool,
-    /// The samples each pixel has in a block: all of the file's when chunky, one when planar.
+    /// How many samples each pixel has in a block: all of the file's samples when it's chunky, and
+    /// one when it's planar.
     samples_per_pixel: usize,
     tiled: bool,
     block_width: u32,
     block_height: u32,
 };
 
-/// Decodes every block and copies its pixels into `scan`, as `Sample`s of 8 or 16 bits. Planar
-/// files are read plane by plane; planes past the colour's, such as alpha, are skipped.
+/// Decodes every block and copies its pixels into `scan`, reading `Sample`s of 8 or 16 bits.
+/// Planar files are read plane by plane, and planes beyond the colour ones (such as alpha) are
+/// skipped.
 fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layout: Layout, scan: *image.Scan) ReadError!void {
     const block_bytes = if (layout.tiled) c.TIFFTileSize(tif) else c.TIFFStripSize(tif);
     if (block_bytes <= 0) return error.InvalidTiff;
@@ -250,7 +253,8 @@ fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layou
     }
 }
 
-/// The `index`th sample of `bytes`, as 16 bits. LibTIFF has put the samples in the host's order.
+/// Returns sample number `index` in `bytes`, as 16 bits. LibTIFF has already put the samples in
+/// the host's byte order.
 fn sampleAt(comptime Sample: type, bytes: []const u8, index: usize) u16 {
     return switch (Sample) {
         u8 => @as(u16, bytes[index]) * image.widen_8_to_16,
@@ -259,8 +263,8 @@ fn sampleAt(comptime Sample: type, bytes: []const u8, index: usize) u16 {
     };
 }
 
-/// Writes `encoded`, RGB of 8- or 16-bit `Sample`s, as a TIFF file with Deflate. The caller owns
-/// the bytes.
+/// Writes `encoded` (RGB, with 8-bit or 16-bit `Sample`s) as a TIFF file with Deflate. The caller
+/// owns the bytes.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), options: WriteOptions) WriteError![]u8 {
     const depth: Depth = switch (Sample) {
         u8 => .eight,
@@ -317,7 +321,7 @@ pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image
     return sink.bytes.toOwnedSlice(gpa);
 }
 
-/// Opens a TIFF through `Stream`'s callbacks, with LibTIFF's messages kept quiet: the errors that
+/// Opens a TIFF through `Stream`'s callbacks, keeping LibTIFF's messages quiet. The errors that
 /// matter come back as results.
 fn open(stream: *anyopaque, mode: [:0]const u8, comptime Stream: type) ?*c.TIFF {
     const options = c.TIFFOpenOptionsAlloc() orelse return null;
@@ -339,8 +343,8 @@ fn open(stream: *anyopaque, mode: [:0]const u8, comptime Stream: type) ?*c.TIFF 
     );
 }
 
-/// LibTIFF's message handler, whose last parameter, a `va_list`, has a different type on each
-/// target.
+/// LibTIFF's message handler. Its last parameter is a `va_list`, which has a different type on
+/// each target.
 const MessageHandler = @typeInfo(@typeInfo(c.TIFFErrorHandlerExtR).optional.child).pointer.child;
 const VaList = @typeInfo(MessageHandler).@"fn".param_types[4].?;
 
@@ -352,15 +356,16 @@ fn closeProc(_: c.thandle_t) callconv(.c) c_int {
     return 0;
 }
 
-/// No file is mapped: LibTIFF reads through `readProc`.
+/// We never map a file. LibTIFF reads through `readProc` instead.
 fn mapProc(_: c.thandle_t, _: [*c]?*anyopaque, _: [*c]c.toff_t) callconv(.c) c_int {
     return 0;
 }
 
 fn unmapProc(_: c.thandle_t, _: ?*anyopaque, _: c.toff_t) callconv(.c) void {}
 
-/// The position `offset` from `whence` (`SEEK_SET`, `SEEK_CUR` or `SEEK_END`) in a file of `size`
-/// bytes at `position`, or null if it falls before the start.
+/// Works out where a seek lands: `offset` from `whence` (`SEEK_SET`, `SEEK_CUR` or `SEEK_END`), in
+/// a file of `size` bytes that's currently at `position`. Returns null if it lands before the
+/// start.
 fn seekTarget(position: u64, size: u64, offset: c.toff_t, whence: c_int) ?u64 {
     const base: u64 = switch (whence) {
         c.SEEK_SET => return offset,
@@ -408,8 +413,8 @@ const Source = struct {
     }
 };
 
-/// A TIFF file being written to memory. LibTIFF seeks back to fill in offsets, so writes land at
-/// the position, and a write past the end fills the gap with zeros.
+/// A TIFF file being written to memory. LibTIFF seeks back to fill in offsets, so each write goes
+/// at the current position, and a write past the end fills the gap with zeros.
 const Sink = struct {
     gpa: std.mem.Allocator,
     bytes: std.ArrayList(u8) = .empty,
@@ -420,7 +425,8 @@ const Sink = struct {
         return @ptrCast(@alignCast(handle.?));
     }
 
-    /// The error for a call LibTIFF failed: memory, if a write found none.
+    /// The error to return when a LibTIFF call failed: out of memory if a write ran out of it, and
+    /// otherwise a write failure.
     fn failure(sink: Sink) WriteError {
         return if (sink.out_of_memory) error.OutOfMemory else error.TiffWriteFailed;
     }
@@ -468,7 +474,7 @@ const Sink = struct {
     }
 };
 
-/// A test image of `width` by `height` whose every sample differs from its neighbours'.
+/// A test image of `width` by `height` in which every sample differs from its neighbours.
 fn testImage(gpa: std.mem.Allocator, comptime Sample: type, width: usize, height: usize) !image.Image([image.channel_count]Sample) {
     const result: image.Image([image.channel_count]Sample) = try .init(gpa, width, height);
     const step = std.math.maxInt(Sample) / (width * height * image.channel_count);
@@ -522,8 +528,8 @@ const TestLayout = struct {
     grey: bool = false,
 };
 
-/// Writes 16-bit `encoded` with LibTIFF directly in `layout`, which `write` does not offer, for
-/// `read` to be tested on. Greyscale takes the red channel.
+/// Writes 16-bit `encoded` with LibTIFF directly, in a `layout` that `write` doesn't offer, so
+/// `read` has something to be tested on. Greyscale uses the red channel.
 fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLayout) ![]u8 {
     var sink: Sink = .{ .gpa = gpa };
     defer sink.bytes.deinit(gpa);

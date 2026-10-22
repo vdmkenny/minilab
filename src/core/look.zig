@@ -1,15 +1,15 @@
-//! The looks a frame can be developed with. Each starts from Develop's rendering:
+//! The looks a frame can be developed with. Each one starts from Develop's rendering:
 //!
 //! - Neutral: Develop's rendering as it is.
-//! - A LUT look: a .cube LUT laid over Neutral's sRGB-encoded output (`cube_lut`). minilab comes
-//!   with Frontier emulation (`presets/looks/frontier.cube`) and the film looks of three free
-//!   collections (`presets/looks/bundled.zig`), and takes any .cube the user imports into the
-//!   library's Looks folder.
+//! - A LUT look: a .cube LUT applied over Neutral's sRGB-encoded output (`cube_lut`). minilab
+//!   comes with Frontier emulation (`presets/looks/frontier.cube`) and the film looks from three
+//!   free collections (`presets/looks/bundled.zig`), and takes any .cube the user imports into
+//!   the library's Looks folder.
 //! - A fitted look from the Looks workspace (`looks.saved`). It takes over from Develop after the
 //!   film base and density stages: the frame is rendered with the Log tone, and the look turns
 //!   that into colour.
 //!
-//! A frame names its look by an `Id`. A `Catalog` reads the looks the ids name, once each.
+//! A frame names its look with an `Id`. A `Catalog` reads the looks the ids name, each one once.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -21,7 +21,7 @@ const saved = @import("../looks/saved.zig");
 const stock_curves = @import("stock_curves.zig");
 const bundled = @import("../presets/looks/bundled.zig");
 
-/// The bundled looks' LUTs, baked by the build (`bake_looks.zig`).
+/// The bundled looks' LUTs, baked in by the build (`bake_looks.zig`).
 const baked = @embedFile("bundled_looks");
 comptime {
     if (baked.len != bundled.looks.len * bundled.lut_bytes) @compileError("the baked looks don't match bundled.zig");
@@ -39,7 +39,7 @@ pub const Builtin = enum {
         };
     }
 
-    /// The look's LUT, as a .cube file; null for Neutral.
+    /// The look's LUT as a .cube file, or null for Neutral.
     pub fn cubeFile(builtin: Builtin) ?[]const u8 {
         return switch (builtin) {
             .neutral => null,
@@ -48,9 +48,10 @@ pub const Builtin = enum {
     }
 };
 
-/// What a frame keeps to name its look: a built-in's name, a bundled look's id (`bundled.Look.id`),
-/// `cube:` and an imported LUT's name, or `look:` and a fitted look's folder. Kept in place, so that frame settings copy as values, and
-/// written to JSON as a string.
+/// What a frame keeps to name its look: a built-in look's name, a bundled look's id
+/// (`bundled.Look.id`), `cube:` plus an imported LUT's name, or `look:` plus a fitted look's
+/// folder. It's stored in place, so frame settings copy as plain values, and it's written to JSON
+/// as a string.
 pub const Id = struct {
     bytes: [capacity]u8 = undefined,
     len: u8 = 0,
@@ -64,7 +65,7 @@ pub const Id = struct {
 
     pub const Kind = union(enum) {
         builtin: Builtin,
-        /// A look from a collection, an index in `bundled.looks`.
+        /// A look from a collection, as an index in `bundled.looks`.
         bundled: usize,
         /// An imported LUT, `<Looks>/<name>.cube`.
         cube: []const u8,
@@ -105,7 +106,7 @@ pub const Id = struct {
         return id.bytes[0..id.len];
     }
 
-    /// What the id names. An id that names nothing minilab knows of is Neutral.
+    /// Returns what the id names. An id that names nothing minilab knows about counts as Neutral.
     pub fn kind(id: *const Id) Kind {
         const t = id.text();
         if (std.mem.startsWith(u8, t, cube_prefix) and t.len > cube_prefix.len) return .{ .cube = t[cube_prefix.len..] };
@@ -122,7 +123,7 @@ pub const Id = struct {
         return id.kind() == .builtin and id.kind().builtin == .neutral;
     }
 
-    /// The look's name for people.
+    /// The look's name, for people to read.
     pub fn label(id: *const Id) []const u8 {
         return switch (id.kind()) {
             .builtin => |b| b.label(),
@@ -137,7 +138,7 @@ pub const Id = struct {
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Id {
         const text_value = try std.json.innerParse([]const u8, allocator, source, options);
-        // Rolls from before looks were LUTs name Frontier emulation by its old tag.
+        // Rolls from before looks were LUTs call Frontier emulation by its old tag.
         if (std.mem.eql(u8, text_value, "frontier_emulation")) return .frontier;
         return ofText(text_value) catch .neutral;
     }
@@ -146,20 +147,20 @@ pub const Id = struct {
 /// A look ready to apply.
 pub const Resolved = union(enum) {
     neutral,
-    /// A LUT over Neutral's sRGB-encoded output.
+    /// A LUT applied over Neutral's sRGB-encoded output.
     lut: *const cube_lut.Lut,
     /// A fitted look, applied to a rendering with the Log tone.
     fitted: *const model.Model,
 
-    /// The settings to render with for this look: a fitted look starts from the Log tone.
+    /// Returns the settings to render with for this look. A fitted look starts from the Log tone.
     pub fn settingsFor(look: Resolved, settings: develop.Settings) develop.Settings {
         var out = settings;
         if (look == .fitted) out.tone = .log;
         return out;
     }
 
-    /// Applies the look in place to `pixels`, Develop's linear output with `settingsFor`'s
-    /// settings. They become linear sRGB.
+    /// Applies the look in place to `pixels`, which are Develop's linear output with
+    /// `settingsFor`'s settings. Afterwards they're linear sRGB.
     pub fn apply(look: Resolved, pixels: [][3]f32) void {
         switch (look) {
             .neutral => {},
@@ -173,7 +174,8 @@ pub const Resolved = union(enum) {
         }
     }
 
-    /// A copy of the look in `arena`, for work on another thread while the catalog changes.
+    /// Makes a copy of the look in `arena`, so another thread can work with it while the catalog
+    /// changes.
     pub fn copy(look: Resolved, arena: std.mem.Allocator) error{OutOfMemory}!Resolved {
         return switch (look) {
             .neutral => .neutral,
@@ -196,7 +198,7 @@ pub const Resolved = union(enum) {
     }
 };
 
-/// Renders `scan` with `settings` and `look`: linear sRGB, on every core.
+/// Renders `scan` with `settings` and `look` to linear sRGB, using every core.
 pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.Settings, look: Resolved) !image.Rendered {
     const rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
     renderPixels(.init(look.settingsFor(settings)), look, scan.pixels, rendered.pixels);
@@ -208,8 +210,8 @@ const max_threads = 16;
 /// Below this many pixels, starting threads costs more than it saves.
 const min_parallel_pixels = 64 * 1024;
 
-/// Develops `raw` into `out`, applies `look` and then the saturation, split over the cores. Each pixel stands alone, so
-/// the result is the same however it's split.
+/// Develops `raw` into `out`, then applies `look` and the saturation, split over the cores. Each
+/// pixel stands alone, so the result is the same however the work is split.
 pub fn renderPixels(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, out: [][3]f32) void {
     std.debug.assert(raw.len == out.len);
     const cores = std.Thread.getCpuCount() catch 1;
@@ -220,7 +222,7 @@ pub fn renderPixels(prepared: develop.Prepared, look: Resolved, raw: []const [3]
         const from = i * share;
         const to = @min(raw.len, from + share);
         thread.* = std.Thread.spawn(.{}, renderBand, .{ prepared, look, raw[from..to], out[from..to] }) catch null;
-        // Without a thread, the band is done here.
+        // If we couldn't start a thread, do the band here.
         if (thread.* == null) renderBand(prepared, look, raw[from..to], out[from..to]);
     }
     const last = (count - 1) * share;
@@ -234,15 +236,16 @@ fn renderBand(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, o
     develop.saturate(prepared, out);
 }
 
-/// What a frame brings to `developFrame` besides the scan: its stock's curves, and a camera's colour.
+/// What a frame brings to `developFrame` besides the scan: its stock's curves, and a camera's
+/// colour.
 pub const FrameExtras = struct {
     curves: ?*const stock_curves.Curves = null,
     slide: ?develop.SlideColour = null,
 };
 
-/// Develops `scan` with `look` and automatic settings measured on `area`, on the film base
-/// `film_base` when it's known from elsewhere, such as the gaps between frames, or else the
-/// thinnest film in `area`.
+/// Develops `scan` with `look` and automatic settings measured on `area`. It uses `film_base` as
+/// the film base when that's known from elsewhere, such as the gaps between frames, and otherwise
+/// the thinnest film in `area`.
 pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, kind: develop.FilmKind, look: Resolved, film_base: ?[3]f32, extras: FrameExtras) !image.Rendered {
     const stats = try develop.Statistics.measure(gpa, scan, area.centre(develop.measured_fraction));
     const whole = try develop.Statistics.measure(gpa, scan, area);
@@ -252,18 +255,19 @@ pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, 
     return render(gpa, scan, settings, look);
 }
 
-/// The largest .cube file read, 64 MiB: a 129-point 3D LUT in text is about 60.
+/// The largest .cube file we read: 64 MiB. A 129-point 3D LUT in text is about 60 MiB.
 const max_cube_bytes = 64 << 20;
 
-/// Reads the looks ids name, once each: the built-in ones from minilab itself, imported LUTs and
-/// fitted looks from the library's Looks folder. One thread at a time.
+/// Reads the looks that ids name, each one once: the built-in ones from minilab itself, and
+/// imported LUTs and fitted looks from the library's Looks folder. Only one thread can use it at a
+/// time.
 pub const Catalog = struct {
-    /// `<library>/Looks`; null without a library, when only the built-in looks are there.
+    /// `<library>/Looks`, or null without a library, when only the built-in looks are there.
     folder: ?[]u8 = null,
     builtins: std.EnumArray(Builtin, ?*cube_lut.Lut) = .initFill(null),
     /// The bundled looks decoded so far.
     bundled_luts: [bundled.looks.len]?*cube_lut.Lut = @splat(null),
-    /// The looks read from the folder, by id; null for one that couldn't be read.
+    /// The looks read from the folder, by id. It's null for a look that couldn't be read.
     read: std.StringArrayHashMapUnmanaged(?Loaded) = .empty,
 
     const Loaded = union(enum) {
@@ -284,8 +288,8 @@ pub const Catalog = struct {
         catalog.* = undefined;
     }
 
-    /// The look `id` names, read if it isn't yet. One that can't be read is Neutral, with a
-    /// warning the first time.
+    /// Returns the look `id` names, reading it if it hasn't been read yet. A look that can't be
+    /// read comes back as Neutral, with a warning the first time.
     pub fn resolve(catalog: *Catalog, gpa: std.mem.Allocator, io: std.Io, id: Id) Resolved {
         switch (id.kind()) {
             .builtin => |b| {
@@ -356,7 +360,7 @@ pub const Catalog = struct {
         return lut;
     }
 
-    /// The bundled look `index`'s LUT, from the baked file.
+    /// Decodes the LUT of bundled look `index` from the baked file.
     fn decoded(gpa: std.mem.Allocator, index: usize) !*cube_lut.Lut {
         const lut = try gpa.create(cube_lut.Lut);
         errdefer gpa.destroy(lut);
@@ -372,7 +376,8 @@ pub const Catalog = struct {
         gpa.destroy(lut);
     }
 
-    /// Forgets the look `id`, so that it is read again when next asked for: after it changes.
+    /// Forgets the look `id`, so it's read again the next time it's asked for. Use it after the
+    /// look changes.
     pub fn forget(catalog: *Catalog, gpa: std.mem.Allocator, id: Id) void {
         const index = catalog.read.getIndex(id.text()) orelse return;
         free(gpa, catalog.read.keys()[index], catalog.read.values()[index]);
@@ -405,8 +410,8 @@ pub const Catalog = struct {
         pub const Group = enum { builtin, bundled, imported, fitted };
     };
 
-    /// Every look there is to choose from: the built-in ones, the bundled ones in their list's
-    /// order, then imported LUTs and fitted looks by name. The caller frees the list.
+    /// Lists every look there is to choose from: the built-in ones, the bundled ones in their
+    /// list's order, then imported LUTs and fitted looks by name. The caller frees the list.
     pub fn choices(catalog: *const Catalog, gpa: std.mem.Allocator, io: std.Io) !std.ArrayList(Choice) {
         var list: std.ArrayList(Choice) = .empty;
         errdefer list.deinit(gpa);
@@ -421,7 +426,8 @@ pub const Catalog = struct {
         defer fitted.deinit(gpa);
         var it = dir.iterate();
         while (try it.next(io)) |entry| {
-            // Exactly as `load` and `remove` name the file, so that every LUT listed can be read.
+            // Name the file exactly the way `load` and `remove` do, so every LUT listed can be
+            // read.
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".cube")) {
                 const id = Id.ofCube(entry.name[0 .. entry.name.len - ".cube".len]) catch continue;
                 try cubes.append(gpa, .{ .id = id, .group = .imported });
@@ -445,8 +451,8 @@ pub const Catalog = struct {
         return std.ascii.lessThanIgnoreCase(a.id.label(), b.id.label());
     }
 
-    /// Copies the .cube file at `path` into the Looks folder, checked first, under its own name or,
-    /// when that's taken, its name and a number. Returns the new look's id.
+    /// Checks the .cube file at `path` and copies it into the Looks folder, under its own name or,
+    /// if that's taken, its name plus a number. Returns the new look's id.
     pub fn import(catalog: *Catalog, gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Id {
         const folder = catalog.folder orelse return error.NoLibrary;
         const cwd = std.Io.Dir.cwd();

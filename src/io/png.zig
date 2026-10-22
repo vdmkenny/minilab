@@ -1,5 +1,6 @@
-//! PNG: reads greyscale, RGB and their alpha forms, 8- and 16-bit, not interlaced. HaldCLUT
-//! images, the form some film-look collections come in, are PNGs of this kind.
+//! A PNG reader for greyscale and RGB images, with or without alpha, at 8 or 16 bits and not
+//! interlaced. Some film look collections come as HaldCLUT images, and those are PNGs of this
+//! kind.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
@@ -8,7 +9,7 @@ const signature = "\x89PNG\r\n\x1a\n";
 
 pub const Error = error{ NotAPng, Truncated, BadChecksum, InvalidHeader, UnsupportedFormat, BadFilter, BadData };
 
-/// The colour types read: grey, RGB, and each with alpha.
+/// The colour types we read: grey and RGB, each with or without alpha.
 const ColourType = enum(u8) {
     grey = 0,
     rgb = 2,
@@ -30,8 +31,8 @@ const ColourType = enum(u8) {
 /// How a scanline was filtered before compression.
 const Filter = enum(u8) { none = 0, sub = 1, up = 2, average = 3, paeth = 4, _ };
 
-/// A PNG as a scan. 8-bit samples are scaled to 16 bits, grey goes into all three channels, and
-/// alpha is left out.
+/// Reads a PNG into a scan. 8-bit samples are scaled up to 16 bits, grey is copied into all three
+/// channels, and alpha is dropped.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocator.Error)!image.Scan {
     if (!std.mem.startsWith(u8, bytes, signature)) return error.NotAPng;
     var at: usize = signature.len;
@@ -123,8 +124,8 @@ const Header = struct {
     }
 };
 
-/// Undoes a scanline's filter in place. `previous` is the row above, already unfiltered, or
-/// empty for the first row; `pixel_bytes` is how far back the pixel to the left is.
+/// Undoes the filter on a scanline, in place. `previous` is the row above, already unfiltered,
+/// or empty for the first row. `pixel_bytes` is how many bytes back the pixel to the left is.
 fn unfilter(filter: Filter, row: []u8, previous: []const u8, pixel_bytes: usize) Error!void {
     for (row, 0..) |*byte, i| {
         const left: u8 = if (i >= pixel_bytes) row[i - pixel_bytes] else 0;
@@ -141,7 +142,7 @@ fn unfilter(filter: Filter, row: []u8, previous: []const u8, pixel_bytes: usize)
     }
 }
 
-/// Of left, up and up-left, the one nearest to left + up - up-left.
+/// Returns whichever of left, up and up-left is closest to left + up - up-left.
 fn paeth(left: u8, up: u8, up_left: u8) u8 {
     const estimate = @as(i16, left) + up - up_left;
     const to_left = @abs(estimate - left);
@@ -152,7 +153,8 @@ fn paeth(left: u8, up: u8, up_left: u8) u8 {
     return up_left;
 }
 
-/// A PNG of `rows`, each a filter byte and its filtered samples, stored without compression.
+/// Makes a PNG from `rows`, stored without compression. Each row is a filter byte followed by
+/// its filtered samples.
 fn testPng(gpa: std.mem.Allocator, width: u32, height: u32, depth: u8, colour: ColourType, rows: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(gpa);
@@ -162,7 +164,7 @@ fn testPng(gpa: std.mem.Allocator, width: u32, height: u32, depth: u8, colour: C
     std.mem.writeInt(u32, ihdr[4..8], height, .big);
     ihdr[8..13].* = .{ depth, @backingInt(colour), 0, 0, 0 };
     try appendChunk(gpa, &out, "IHDR", &ihdr);
-    // zlib: its header, one final stored block, and the Adler-32 of the data.
+    // The zlib stream: a header, one final stored block, and the Adler-32 of the data.
     var zlib: std.ArrayList(u8) = .empty;
     defer zlib.deinit(gpa);
     try zlib.appendSlice(gpa, &.{ 0x78, 0x01, 0x01 });
@@ -193,7 +195,8 @@ fn appendChunk(gpa: std.mem.Allocator, out: *std.ArrayList(u8), kind: *const [4]
 
 test "an 8-bit RGB PNG reads with every filter undone" {
     const gpa = std.testing.allocator;
-    // 2×3 pixels. Row 0 plain; row 1 as differences from the left (Sub); row 2 from above (Up).
+    // 2×3 pixels. Row 0 is plain, row 1 is stored as differences from the left (Sub), and row 2
+    // as differences from above (Up).
     const rows = [_]u8{
         0, 10, 20, 30, 40, 50, 60,
         1, 1,  2,  3,  1,  1,  1,
@@ -214,7 +217,8 @@ test "an 8-bit RGB PNG reads with every filter undone" {
 
 test "Average and Paeth filters, 16-bit grey with alpha" {
     const gpa = std.testing.allocator;
-    // 2×2 grey+alpha, 16-bit: 4 bytes a pixel. Row 0 plain; row 1 Average then Paeth's test.
+    // 2×2 pixels of 16-bit grey and alpha, so 4 bytes a pixel. Row 0 is plain and row 1 uses
+    // Average. Paeth gets its own checks below.
     const rows = [_]u8{
         0, 0x12, 0x34, 0xff, 0xff, 0x56, 0x78, 0xff, 0xff,
         3, 0x09, 0x1a, 0x7f, 0x7f, 0x00, 0x00, 0x00, 0x00,
@@ -225,9 +229,9 @@ test "Average and Paeth filters, 16-bit grey with alpha" {
     defer scan.deinit(gpa);
     try std.testing.expectEqual([3]u16{ 0x1234, 0x1234, 0x1234 }, scan.at(0, 0));
     try std.testing.expectEqual([3]u16{ 0x5678, 0x5678, 0x5678 }, scan.at(1, 0));
-    // Average of nothing on the left and the row above: 0x12/2 + 0x09, 0x34/2 + 0x1a.
+    // Average of nothing on the left and the row above, so 0x12/2 + 0x09 and 0x34/2 + 0x1a.
     try std.testing.expectEqual([3]u16{ 0x1234, 0x1234, 0x1234 }, scan.at(0, 1));
-    // Paeth picks whichever of left, up and up-left is nearest left + up - up-left.
+    // Paeth picks whichever of left, up and up-left is closest to left + up - up-left.
     try std.testing.expectEqual(@as(u8, 5), paeth(5, 9, 9));
     try std.testing.expectEqual(@as(u8, 5), paeth(9, 5, 9));
     try std.testing.expectEqual(@as(u8, 15), paeth(10, 20, 15));
@@ -239,7 +243,7 @@ test "what isn't a PNG it reads is refused" {
     const rows = [_]u8{ 0, 1, 2, 3 };
     const file = try testPng(gpa, 1, 1, 8, .rgb, &rows);
     defer gpa.free(file);
-    // A changed byte fails the chunk's checksum.
+    // Changing one byte breaks the chunk's checksum.
     file[signature.len + 8] ^= 1;
     try std.testing.expectError(error.BadChecksum, read(gpa, file));
     file[signature.len + 8] ^= 1;

@@ -1,14 +1,16 @@
-//! SANE, the scanner library of macOS and Linux, loaded at run time from the system's libsane,
-//! so that minilab neither links nor needs it. The system's SANE configuration decides which
-//! backends load: the V200 needs our epkowa build enabled there (docs/install.md).
+//! SANE, the scanner library on macOS and Linux. We load the system's libsane at run time, so
+//! minilab doesn't link it or need it. The system's SANE configuration decides which backends
+//! load, and the V200 needs our epkowa build enabled there (the V200 driver's install notes cover
+//! this).
 //!
-//! The declarations follow `sane.h` (SANE standard 1.0, public domain). Options are found by
-//! name: SANE's standard ones (`source`, `mode`, `depth`, `resolution`, `tl-x`, `tl-y`, `br-x`,
-//! `br-y`) work with every backend, and a model's profile adds its own, such as epkowa's
-//! `film-type` and `gamma-correction`.
+//! The declarations follow `sane.h` (SANE standard 1.0, public domain). We find options by name.
+//! SANE's standard ones (`source`, `mode`, `depth`, `resolution`, `tl-x`, `tl-y`, `br-x`, `br-y`)
+//! work with every backend, and a model's profile adds its own, such as epkowa's `film-type` and
+//! `gamma-correction`.
 //!
-//! A scan is always read to its end. SANE's `sane_cancel` in the middle of a scan leaves the V200
-//! stuck until it's switched off (phase3.md), so this file never calls it before the last line.
+//! A scan is always read to the end. Calling `sane_cancel` in the middle of a scan leaves the V200
+//! stuck until it's switched off (we found this during the V200 driver work), so this file never
+//! calls it before the last line.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -17,13 +19,13 @@ const image = @import("../core/image.zig");
 
 const Error = interface.Error;
 
-/// Whether this platform can load libsane. Windows has SANE only under Cygwin.
+/// Whether this platform can load libsane. Windows only has SANE under Cygwin.
 pub const supported = switch (builtin.os.tag) {
     .macos, .linux, .freebsd, .netbsd, .openbsd, .dragonfly, .illumos => true,
     else => false,
 };
 
-/// Where libsane is looked for, in order. The bare names go through the system's own search.
+/// Where we look for libsane, in order. The bare names go through the system's own search.
 pub const library_paths: []const [:0]const u8 = switch (builtin.os.tag) {
     .macos => &.{
         "/opt/homebrew/lib/libsane.1.dylib",
@@ -61,7 +63,7 @@ const ConstraintType = enum(c_int) { none = 0, range = 1, word_list = 2, string_
 const Action = enum(c_int) { get_value = 0, set_value = 1, set_auto = 2 };
 const FrameFormat = enum(c_int) { gray = 0, rgb = 1, red = 2, green = 3, blue = 4, _ };
 
-/// Option capabilities.
+/// Option capability flags.
 const cap_soft_select = 1 << 0;
 const cap_inactive = 1 << 5;
 
@@ -85,7 +87,7 @@ const OptionDescriptor = extern struct {
     constraint_type: ConstraintType,
     constraint: extern union {
         string_list: [*]const ?[*:0]const u8,
-        /// The first word is how many follow.
+        /// The first word says how many words follow.
         word_list: [*]const Word,
         range: *const Range,
     },
@@ -98,7 +100,7 @@ const OptionDescriptor = extern struct {
         return option.active() and option.cap & cap_soft_select != 0;
     }
 
-    /// The values of a word list, as words.
+    /// Returns the values of a word list, as words.
     fn words(option: *const OptionDescriptor) []const Word {
         if (option.constraint_type != .word_list) return &.{};
         const count: usize = @intCast(@max(option.constraint.word_list[0], 0));
@@ -115,12 +117,12 @@ const OptionDescriptor = extern struct {
         return false;
     }
 
-    /// A word of the option's own type as a number.
+    /// Turns a word of the option's own type into a number.
     fn number(option: *const OptionDescriptor, raw: Word) f64 {
         return if (option.type == .fixed) unfix(raw) else @floatFromInt(raw);
     }
 
-    /// `value` as a word of the option's own type.
+    /// Turns `value` into a word of the option's own type.
     fn word(option: *const OptionDescriptor, value: f64) Word {
         return if (option.type == .fixed) fix(value) else @intFromFloat(@round(value));
     }
@@ -135,7 +137,7 @@ const Parameters = extern struct {
     depth: Int,
 };
 
-/// SANE's fixed-point numbers: 16 bits of fraction.
+/// SANE's fixed-point numbers have 16 bits of fraction.
 const fixed_one = 1 << 16;
 
 fn fix(value: f64) Word {
@@ -194,20 +196,20 @@ pub const Library = struct {
         }
     }
 
-    /// Forgets SANE without ending it: neither `sane_exit` nor closing the library. SANE's backends
-    /// (loaded by its own `dll` backend) and libusb register per-thread clean-up code, which runs
-    /// when the scan thread exits; `sane_exit` unloads the backends and closing the library unloads
-    /// SANE, and either leaves that clean-up jumping into unloaded code. Devices are closed before
-    /// this; the process's end releases the rest.
+    /// Forgets SANE without shutting it down: it doesn't call `sane_exit` or close the library.
+    /// SANE's backends (loaded by its own `dll` backend) and libusb register per-thread clean-up
+    /// code, which runs when the scan thread exits. `sane_exit` unloads the backends and closing
+    /// the library unloads SANE, and either one leaves that clean-up jumping into unloaded code.
+    /// Devices are closed before this, and the rest is released when the process ends.
     pub fn unload(library: *Library) void {
         library.* = undefined;
     }
 
-    /// The devices SANE finds, on this machine and through `net` alike.
+    /// Lists the devices SANE finds, both on this machine and through `net`.
     pub fn devices(library: *Library, gpa: std.mem.Allocator) Error![]interface.Device {
         var list: ?[*:null]const ?*const RawDevice = null;
         try check(library.api.get_devices(&list, 0));
-        // SANE keeps its list only until it is next called.
+        // SANE only keeps its list until the next call.
         var found: interface.DeviceList = .empty;
         errdefer found.deinit(gpa);
         const entries = list orelse return found.toOwnedSlice(gpa);
@@ -233,7 +235,7 @@ pub const Library = struct {
     }
 };
 
-/// A SANE device, open.
+/// An open SANE device.
 pub const Scanner = struct {
     api: *const Api,
     handle: Handle,
@@ -247,7 +249,7 @@ pub const Scanner = struct {
 
     const Found = struct { index: Int, option: *const OptionDescriptor };
 
-    /// The option called `name`, if the backend has it.
+    /// Finds the option called `name`, if the backend has it.
     fn find(scanner: *Scanner, name: []const u8) ?Found {
         var count: Word = 0;
         if (scanner.api.control_option(scanner.handle, 0, .get_value, &count, null) != .good) return null;
@@ -260,8 +262,8 @@ pub const Scanner = struct {
         return null;
     }
 
-    /// Sets the string option `name` to `value`. Options the backend lacks, or that are inactive
-    /// now, are left alone and give false.
+    /// Sets the string option `name` to `value`. Options the backend doesn't have, or that are
+    /// inactive right now, are left alone, and it returns false.
     fn setString(scanner: *Scanner, name: []const u8, value: []const u8) Error!bool {
         const found = scanner.find(name) orelse return false;
         if (!found.option.settable() or found.option.type != .string or !found.option.allows(value)) return false;
@@ -274,7 +276,7 @@ pub const Scanner = struct {
         return true;
     }
 
-    /// The string option `name`'s value, in `buffer`.
+    /// Reads the value of string option `name` into `buffer`.
     fn getString(scanner: *Scanner, name: []const u8, buffer: []u8) ?[]const u8 {
         const found = scanner.find(name) orelse return null;
         if (found.option.type != .string or found.option.size > buffer.len) return null;
@@ -283,7 +285,8 @@ pub const Scanner = struct {
         return std.mem.sliceTo(buffer, 0);
     }
 
-    /// Sets the number option `name`, in its own unit. False when the backend lacks it.
+    /// Sets the number option `name`, in the option's own unit. Returns false when the backend
+    /// doesn't have it.
     fn setNumber(scanner: *Scanner, name: []const u8, value: f64) Error!bool {
         const found = scanner.find(name) orelse return false;
         if (!found.option.settable() or found.option.size != @sizeOf(Word)) return false;
@@ -308,7 +311,7 @@ pub const Scanner = struct {
         return found.option.number(word);
     }
 
-    /// The range of number option `name`, from a range or a list.
+    /// Returns the range of number option `name`, from its range or its list of values.
     fn limits(scanner: *Scanner, name: []const u8) ?[2]f64 {
         const found = scanner.find(name) orelse return null;
         const option = found.option;
@@ -329,8 +332,8 @@ pub const Scanner = struct {
         };
     }
 
-    /// Switches to the first source of kind `source`. False when there's no source option, or
-    /// no source of that kind.
+    /// Switches to the first source of kind `source`. Returns false when there's no source
+    /// option, or no source of that kind.
     fn selectSource(scanner: *Scanner, source: interface.Source) Error!bool {
         const found = scanner.find("source") orelse return false;
         if (found.option.constraint_type != .string_list) return false;
@@ -417,13 +420,14 @@ pub const Scanner = struct {
         };
     }
 
-    /// Sets the scanner up for `request`: the profile's options where there's a profile, else
-    /// colour at the deepest the scanner has.
+    /// Sets the scanner up for `request`: the profile's options if there's a profile, and
+    /// otherwise colour at the deepest bit depth the scanner has.
     fn prepare(scanner: *Scanner, request: interface.Request) Error!void {
         if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
         if (scanner.profile) |profile| {
-            // The film type first: a backend may reset its colour settings for a film type, as
-            // scanimage's order (film type, then the rest) avoids too.
+            // Set the film type first, because a backend may reset its colour settings when the
+            // film type changes. scanimage uses the same order (film type, then the rest) for the
+            // same reason.
             if (profile.film_option) |name| _ = try scanner.setString(name, switch (request.film) {
                 .negative => profile.negative,
                 .positive => profile.positive,
@@ -433,7 +437,8 @@ pub const Scanner = struct {
                     .string => |v| try scanner.setString(setting.name, v),
                     .int => |n| try scanner.setNumber(setting.name, @floatFromInt(n)),
                 };
-                // The scan goes on, but it may not be raw: worth knowing when its colours look off.
+                // The scan goes ahead, but it may not be raw. That's worth knowing if its colours
+                // look off.
                 if (!set) std.log.warn("the scanner didn't take {s} from its profile", .{setting.name});
             }
         } else {
@@ -442,7 +447,8 @@ pub const Scanner = struct {
         _ = try scanner.setNumber("depth", if (request.deep) 16 else 8);
         if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
 
-        // The area: the far corner out of the way first, so the near one can move anywhere.
+        // Now the area. Move the far corner out of the way first, so the near corner can go
+        // anywhere.
         const full = scanner.fullArea();
         const area = if (request.area) |a| a.clip(full) orelse return error.Unsupported else full;
         _ = try scanner.setNumber("br-x", full.right());
@@ -476,7 +482,7 @@ pub const Scanner = struct {
         var width: usize = 0;
         var depth: u8 = 8;
         var rows: usize = 0;
-        // Three-pass scanners send red, green and blue as frames of their own.
+        // Three-pass scanners send red, green and blue as separate frames.
         var frame: usize = 0;
         while (true) : (frame += 1) {
             try check(scanner.api.start(scanner.handle));
@@ -503,7 +509,7 @@ pub const Scanner = struct {
             if (frame == 0) rows = read;
             if (parameters.last_frame != 0 or frame == 2) break;
         }
-        // After the last frame, the backend goes back to idle.
+        // After the last frame, `sane_cancel` puts the backend back to idle.
         scanner.api.cancel(scanner.handle);
 
         if (rows == 0 or width == 0) return error.Failed;
@@ -518,7 +524,7 @@ pub const Scanner = struct {
         };
     }
 
-    /// Reads one frame to its end into `pixels`, and returns its number of lines.
+    /// Reads one frame to the end into `pixels`, and returns how many lines it had.
     fn readFrame(scanner: *Scanner, gpa: std.mem.Allocator, parameters: Parameters, layout: Layout, pixels: *std.ArrayList([3]u16), progress: *interface.Progress) Error!usize {
         const line_bytes: usize = @intCast(parameters.bytes_per_line);
         const line = try gpa.alloc(u8, line_bytes);
@@ -526,7 +532,7 @@ pub const Scanner = struct {
         var buffer: [read_size]u8 = undefined;
         var filled: usize = 0;
         var row: usize = 0;
-        // After an error the rest of the scan is still read, so the scanner ends idle.
+        // After an error we still read the rest of the scan, so the scanner ends up idle.
         var failure: ?Error = null;
         while (true) {
             var length: Int = 0;
@@ -539,7 +545,7 @@ pub const Scanner = struct {
                     return failure orelse errorOf(status);
                 },
             }
-            // A backend that claims more than it was given room for is cut to the buffer.
+            // If a backend claims it sent more than the buffer holds, cut it down to the buffer.
             var chunk = buffer[0..@min(@as(usize, @intCast(@max(length, 0))), buffer.len)];
             while (chunk.len > 0) {
                 const take = @min(chunk.len, line_bytes - filled);
@@ -562,7 +568,7 @@ pub const Scanner = struct {
         return row;
     }
 
-    /// Ends a scan that failed before its data: the backend goes back to idle.
+    /// Ends a scan that failed before sending its data, which puts the backend back to idle.
     fn finish(scanner: *Scanner) void {
         scanner.api.cancel(scanner.handle);
     }
@@ -575,19 +581,19 @@ pub const Scanner = struct {
     }
 };
 
-/// The longest string option value handled.
+/// The longest string option value we handle.
 const max_string = 1024;
 
-/// Bytes asked of `sane_read` at a time.
+/// How many bytes we ask `sane_read` for at a time.
 const read_size = 64 * 1024;
 
-/// How a frame's lines hold their samples.
+/// How the samples are laid out in a frame's lines.
 const Layout = struct {
     width: usize,
     depth: u8,
     /// Gray data fills all three channels.
     gray: bool,
-    /// For three-pass frames, the one channel the frame holds.
+    /// For three-pass frames, the one channel this frame holds.
     channel: ?usize,
 
     fn of(parameters: Parameters) Error!Layout {
@@ -613,14 +619,15 @@ const Layout = struct {
         };
     }
 
-    /// The sample at `index` of a line, scaled to 16 bits. SANE sends 16-bit samples in the
-    /// machine's own byte order.
+    /// Returns the sample at `index` in a line, scaled to 16 bits. SANE sends 16-bit samples in
+    /// the machine's own byte order.
     fn sample(layout: Layout, line: []const u8, index: usize) u16 {
         if (layout.depth == 8) return @as(u16, line[index]) * image.widen_8_to_16;
         return std.mem.readInt(u16, line[index * 2 ..][0..2], builtin.cpu.arch.endian());
     }
 
-    /// Decodes line `row` into `pixels`: appended for the first pass, filled in for the others.
+    /// Decodes line `row` into `pixels`. The first pass appends the pixels, and the other passes
+    /// fill in their own channel.
     fn decode(layout: Layout, gpa: std.mem.Allocator, line: []const u8, row: usize, pixels: *std.ArrayList([3]u16)) !void {
         if (layout.channel) |channel| {
             if (channel == 0 or pixels.items.len < (row + 1) * layout.width) {

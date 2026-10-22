@@ -1,7 +1,7 @@
-//! JPEG output through libjpeg-turbo: 8-bit RGB at a chosen quality, with an ICC profile when
-//! given, and JPEG input, which checks what was written. Both work on files in memory. libjpeg
-//! runs inside minilab's C shim (`deps/codecs/jpeg_shim.c`), which turns its fatal errors into
-//! results.
+//! JPEG through libjpeg-turbo. We write 8-bit RGB at a chosen quality, with an ICC profile if
+//! there is one, and read JPEGs back, which is how we check what was written. Both work on files
+//! in memory. libjpeg runs inside minilab's C shim (`deps/codecs/jpeg_shim.c`), which turns its
+//! fatal errors into results.
 
 const std = @import("std");
 const c = @import("codecs");
@@ -14,30 +14,30 @@ pub const min_quality = 1;
 pub const max_quality = 100;
 pub const Quality = std.math.IntFittingRange(min_quality, max_quality);
 
-/// How finely the colour is stored against the luminance.
+/// How finely the colour is stored compared with the luminance.
 pub const Subsampling = enum {
-    /// Colour at half the resolution both ways: smaller files, the usual choice.
+    /// Colour at half the resolution both ways. It makes smaller files, and it's the usual choice.
     @"4:2:0",
-    /// Colour at full resolution: for fine coloured detail.
+    /// Colour at full resolution, for fine coloured detail.
     @"4:4:4",
 };
 
 pub const WriteOptions = struct {
     quality: Quality = 90,
     subsampling: Subsampling = .@"4:2:0",
-    /// An ICC profile to embed, such as `icc.profileBytes` gives.
+    /// An ICC profile to embed, like the ones `icc.profileBytes` returns.
     icc_profile: ?[]const u8 = null,
 };
 
 pub const WriteError = error{
     OutOfMemory,
-    /// libjpeg refused the image; the debug log says why.
+    /// libjpeg refused the image. The debug log says why.
     JpegWriteFailed,
     /// The image is wider or taller than a JPEG can hold.
     ImageTooLarge,
 };
 
-/// Writes `encoded`, 8-bit RGB, as a JPEG file. The caller owns the bytes.
+/// Writes `encoded` (8-bit RGB) as a JPEG file. The caller owns the bytes.
 pub fn write(gpa: std.mem.Allocator, encoded: image.Encoded8, options: WriteOptions) WriteError![]u8 {
     std.debug.assert(min_quality <= options.quality and options.quality <= max_quality);
     const icc_profile_size: c_uint = if (options.icc_profile) |profile|
@@ -62,7 +62,7 @@ pub fn write(gpa: std.mem.Allocator, encoded: image.Encoded8, options: WriteOpti
     return gpa.dupe(u8, file[0..file_size]);
 }
 
-/// A JPEG read back as 8-bit RGB.
+/// A JPEG after reading it back as 8-bit RGB.
 pub const Decoded = struct {
     image: image.Encoded8,
     /// The file's embedded ICC profile, if it has one.
@@ -77,7 +77,7 @@ pub const Decoded = struct {
 
 pub const ReadError = error{
     OutOfMemory,
-    /// libjpeg could not decode the file; the debug log says why.
+    /// libjpeg couldn't decode the file. The debug log says why.
     InvalidJpeg,
 };
 
@@ -101,14 +101,15 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
     return .{ .image = decoded, .icc_profile = icc_profile };
 }
 
-/// The shim's results, by name.
+/// The shim's result codes, with names.
 const Result = enum(c.minilab_jpeg_result) {
     ok = c.MINILAB_JPEG_OK,
     failed = c.MINILAB_JPEG_FAILED,
     out_of_memory = c.MINILAB_JPEG_OUT_OF_MEMORY,
 };
 
-/// Turns the shim's `result` into `failure` or out of memory, logging libjpeg's `message`.
+/// Turns the shim's `result` into `failure` or an out-of-memory error, and logs libjpeg's
+/// `message`.
 fn check(result: c.minilab_jpeg_result, message: *const [c.MINILAB_JPEG_MESSAGE_LENGTH]u8, comptime failure: anytype) !void {
     switch (std.enums.fromInt(Result, result) orelse .failed) {
         .ok => {},
@@ -120,7 +121,7 @@ fn check(result: c.minilab_jpeg_result, message: *const [c.MINILAB_JPEG_MESSAGE_
     }
 }
 
-/// A smooth test image, which JPEG keeps close.
+/// A smooth test image, which JPEG keeps close to the original.
 fn testImage(gpa: std.mem.Allocator, width: usize, height: usize) !image.Encoded8 {
     const result: image.Encoded8 = try .init(gpa, width, height);
     for (0..height) |y| {

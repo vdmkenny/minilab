@@ -1,5 +1,5 @@
-//! What every workspace's view is handed each frame, and what they share: the workspaces, and the
-//! header's notice.
+//! What each workspace's view gets every frame, and the things the views share: the list of
+//! workspaces and the notice in the header.
 
 const std = @import("std");
 const c = @import("c");
@@ -62,7 +62,7 @@ pub const Context = struct {
     io: std.Io,
     gpu: *c.SDL_GPUDevice,
     library: *Library,
-    /// Develop's state: which roll is open, and its selected frame.
+    /// Develop's state: which roll is open and which frame is selected.
     develop: *develop_view.State,
     /// The shortcuts pressed this frame.
     keys: std.EnumSet(shortcuts.Command),

@@ -1,43 +1,46 @@
 //! Frame detection on a strip preview (design section 6).
 //!
-//! The scan is reduced to one value per pixel, the geometric mean of its channels, and read in
-//! strip coordinates: `u` counts lines along the strip and `v` samples across it, whichever image
-//! axis the strip runs along. Positions are continuous: sample `i` covers `[i, i + 1)`. For
-//! negatives:
+//! The scan is reduced to one value per pixel (the geometric mean of its channels) and read in
+//! strip coordinates: `u` counts lines along the strip and `v` counts samples across it, whichever
+//! image axis the strip runs along. Positions are continuous, so sample `i` covers `[i, i + 1)`.
+//! For negatives:
 //!
-//! 1. Classify. The holder transmits almost nothing, the film base between frames is the most
-//!    transparent film, and the image sits in between. A level between the darkest and the
-//!    lightest parts of the scan splits holder from film; the film base is measured in step 3.
-//! 2. Opening. Lines fitted to the two long edges of the light band give the strip's angle and
+//! 1. Classify. The holder lets almost no light through, the film base between frames is the
+//!    clearest part of the film, and the pictures sit somewhere in between. A level between the
+//!    darkest and lightest parts of the scan separates the holder from the film. The film base
+//!    itself is measured in step 3.
+//! 2. Opening. Fit lines to the two long edges of the light band. They give the strip's angle and
 //!    the frame height. Where 135's perforations show, their bands are left out.
-//! 3. Gaps. Along the strip, each line across the band is sampled at right angles to the strip.
-//!    A line is gap when its median is at base density and it is flat; a thin image still shows
-//!    texture. Each run of content between gaps has two ends: sharp where the density steps up
-//!    within half a millimetre, soft where it doesn't, or cut by the end of the film or scan.
-//! 4. Snap. Each frame gets the opening's height less the inset, and its length from the
-//!    format's ratio, centred between its gaps. A frame whose measured length is far off keeps
-//!    its measured box and is marked for checking. One sharp end anchors a frame whose other
-//!    end doesn't show.
-//! 5. Weak frames. Frames whose edges don't show at all, as dark scenes close to base density,
-//!    are filled in from the pitch: measured between sharp edges where they repeat, else the
-//!    format's fixed pitch. They are marked for checking.
+//! 3. Gaps. Walk along the strip and sample each line across the band, at right angles to the
+//!    strip. A line counts as gap when its median is at base density and it's flat (even a thin
+//!    picture still shows some texture). Each run of content between gaps has two ends. An end is
+//!    sharp when the density steps up within half a millimetre, soft when it doesn't, or cut off
+//!    by the end of the film or the scan.
+//! 4. Snap. Each frame gets the opening's height minus the inset, and its length from the format's
+//!    ratio, centred between its gaps. If the measured length is far off, the frame keeps its
+//!    measured box and is marked for checking. One sharp end is enough to place a frame whose
+//!    other end doesn't show.
+//! 5. Weak frames. Frames whose edges don't show at all (dark scenes close to base density, say)
+//!    are filled in from the pitch: measured between sharp edges where they repeat, or else the
+//!    format's fixed pitch. They're marked for checking.
 //!
-//! Positives take the same steps with the gap test inverted: unexposed film between frames is
-//! opaque. Mounted slides are found by their apertures instead, each measured on its own.
+//! Positives take the same steps with the gap test turned around, because the unexposed film
+//! between frames is opaque. Mounted slides are found by their apertures instead, each one
+//! measured on its own.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
 const formats = @import("formats.zig");
 
-/// Which way the gap test goes.
+/// Which way round the gap test works.
 pub const Kind = enum {
-    /// Gaps between frames are clear film base, the most transparent film.
+    /// The gaps between frames are clear film base, the most transparent part of the film.
     negative,
-    /// Gaps between frames are unexposed and so opaque.
+    /// The gaps between frames are unexposed, so they're opaque.
     positive,
 
-    /// How far in density a line may be from the gap level and still count as gap. Positives
-    /// get more room, because their gap level sits in the scanner's noise.
+    /// How far a line's density can be from the gap level and still count as gap. Positives get
+    /// more room, because their gap level is down in the scanner's noise.
     pub fn defaultGapTolerance(kind: Kind) f32 {
         return switch (kind) {
             .negative => 0.08,
@@ -46,8 +49,8 @@ pub const Kind = enum {
     }
 
     /// Whether a line whose quartiles are `spread` apart in density is flat enough to be a gap.
-    /// A negative's clear base is flat where a thin image still shows texture. A positive's gap
-    /// sits in the scanner's noise, where the spread says nothing.
+    /// On a negative the clear base is flat, while even a thin picture shows some texture. On a
+    /// positive the gap is down in the scanner's noise, where the spread tells us nothing.
     fn isFlat(kind: Kind, spread: f32) bool {
         return switch (kind) {
             .negative => spread < flat_spread,
@@ -57,9 +60,9 @@ pub const Kind = enum {
 };
 
 pub const Holder = enum {
-    /// A strip of film in a holder: the holder's long edges bound the opening.
+    /// A strip of film in a holder. The holder's long edges are the edges of the opening.
     strip,
-    /// Mounted slides: each mount is opaque and its aperture is the frame.
+    /// Mounted slides. Each mount is opaque, and its aperture is the frame.
     mounted,
 };
 
@@ -68,35 +71,36 @@ pub const Axis = enum { x, y };
 
 pub const Confidence = enum {
     confident,
-    /// Filled in from the pitch, measured far from the format, or cut off: the user should look.
+    /// The frame was filled in from the pitch, measured far from the format's size, or cut off,
+    /// so the user should take a look.
     check,
 };
 
 pub const Frame = struct {
-    /// Order along the strip, from 0 at the start of the axis.
+    /// The frame's place along the strip, counting from 0 at the start of the axis.
     index: usize,
-    /// The frame before rotation: centred on the frame, with the frame's size, clipped to the
-    /// scan.
+    /// The frame's box before rotation: centred on the frame, the size of the frame, and clipped
+    /// to the scan.
     area: image.Area,
-    /// The frame is `area` turned by this many degrees about its centre. Positive turns
-    /// clockwise as displayed, with y pointing down.
+    /// The frame is `area` rotated by this many degrees about its centre. Positive is clockwise
+    /// as displayed, with y pointing down.
     rotation_degrees: f32,
     confidence: Confidence,
 };
 
 pub const Options = struct {
-    /// The image axis the strip runs along; null detects it.
+    /// The image axis the strip runs along, or null to detect it.
     axis: ?Axis = null,
     holder: Holder = .strip,
-    /// Taken off each long side of the opening, in mm. For an opening wider than the image, such
-    /// as a mask for narrower film.
+    /// How much to take off each long side of the opening, in mm. It's for an opening that's
+    /// wider than the picture, like a mask for narrower film.
     inset_mm: f32 = 0,
-    /// A frame whose measured length is further than this fraction from the format's is marked
-    /// for checking.
+    /// A frame whose measured length is off from the format's by more than this fraction is
+    /// marked for checking.
     length_tolerance: f32 = 0.12,
-    /// In density; null uses the kind's default.
+    /// In density. Null uses the kind's default.
     gap_tolerance: ?f32 = null,
-    /// The largest skew of the strip searched for.
+    /// The largest skew of the strip we search for.
     max_skew_degrees: f32 = 3,
 };
 
@@ -116,63 +120,66 @@ pub const Detection = struct {
 
 pub const Error = error{ NoOpening, BadResolution } || std.mem.Allocator.Error;
 
-/// Smaller scans hold nothing to detect.
+/// Scans smaller than this have nothing to detect.
 const min_scan_px = 16;
 
-/// Levels are histogrammed on their top bits.
+/// Levels go into the histogram by their top bits.
 const level_bits = 12;
 const level_shift = @bitSizeOf(u16) - level_bits;
 const level_bins = 1 << level_bits;
-/// The holder's level: this fraction of the scan is darker.
+/// The holder's level is the one that this fraction of the scan is darker than.
 const dark_quantile = 0.01;
-/// The lightest level, film base or bare light: this fraction of the scan is darker.
+/// The lightest level (film base or bare light) is the one that this fraction of the scan is
+/// darker than.
 const bright_quantile = 0.99;
-/// Where the holder threshold sits between the dark and bright levels, on a log scale, and where
-/// the threshold for the holder's edges does.
+/// Where the holder threshold sits between the dark and bright levels, on a log scale, and the
+/// same for the threshold we use to find the holder's edges.
 const holder_split = 0.3;
 const edge_split = 0.5;
-/// Below this ratio of bright to dark the scan shows no holder.
+/// If bright over dark is below this ratio, the scan doesn't show the holder.
 const min_holder_contrast = 4;
-/// Levels are at least this, so their logarithms stay finite.
+/// Levels are kept at least this high, so their logarithms stay finite.
 const level_floor = 8;
-/// A scan whose lightest level is below this shows no film: 1% of full scale.
+/// If a scan's lightest level is below this (1% of full scale), it shows no film.
 const min_light = image.full_scale / 100;
 
-/// Two axes whose plateaus differ by less than this are told apart by the band's width.
+/// When the two axes' plateaus differ by less than this, the band's width decides between them.
 const axis_tie = 0.1;
-/// The plateau of a light-fraction profile: this fraction of positions are below it.
+/// The plateau of a light-fraction profile is the value that this fraction of positions are below.
 const plateau_quantile = 0.9;
-/// A position across is in the band when it is light at least this fraction as often as the
-/// lightest position.
+/// A position across the strip is in the band when it's light at least this fraction as often as
+/// the lightest position.
 const band_fraction = 0.5;
 /// Dips in the band narrower than this are bridged.
 const band_bridge_mm = 1.0;
 
 /// This many light samples in a row make an edge.
 const edge_run = 3;
-/// The blur either side of an edge, and how far past the holder threshold the edge is looked for.
+/// How much to blur either side of an edge, and how far past the holder threshold to look for the
+/// edge.
 const edge_blur_mm = 0.1;
 const edge_search_mm = 1.0;
-/// Room beyond the coarse edge in which an edge is searched for.
+/// How far beyond the coarse edge we search for the edge.
 const edge_guard_mm = 1.0;
-/// Robust line fitting: rounds, the outlier limit in standard deviations, the median absolute
-/// deviation's scale to one, and the smallest limit in pixels.
+/// Robust line fitting: the number of rounds, the outlier limit in standard deviations, the factor
+/// that turns a median absolute deviation into a standard deviation, and the smallest limit in
+/// pixels.
 const fit_rounds = 4;
 const fit_sigma = 3.0;
 const mad_to_sigma = 1.4826;
 const min_fit_residual = 0.5;
 const min_edge_points = 8;
-/// Edges whose slopes differ by less than this are parallel and averaged.
+/// Edges whose slopes differ by less than this count as parallel and get averaged.
 const parallel_slope = 0.01;
-/// A fitted slope beyond this multiple of the largest searched is a failed fit.
+/// A fitted slope bigger than this multiple of the largest one searched for means the fit failed.
 const skew_slack = 1.5;
 
-/// Perforations are searched for when the band is this much taller than the format.
+/// We look for perforations when the band is this much taller than the format.
 const perforation_band_ratio = 1.25;
-/// The fraction of the band at each side searched for perforations.
+/// The fraction of the band at each side that's searched for perforations.
 const perforation_reach = 0.35;
-/// The periodicity score a perforated column reaches: autocorrelation at the pitch less that at
-/// half the pitch.
+/// The periodicity score a column with perforations reaches: the autocorrelation at the pitch
+/// minus the autocorrelation at half the pitch.
 const perforation_score = 0.8;
 const min_perforation_columns = 2;
 
@@ -181,33 +188,34 @@ const band_margin = 0.05;
 const max_line_samples = 256;
 /// A line is flat when its quartiles are closer than this in density.
 const flat_spread = 0.05;
-/// The lightest (negatives) or darkest (positives) median lines give the gap level.
+/// The gap level comes from the lightest line medians (negatives) or the darkest (positives), at
+/// this quantile.
 const gap_quantile = 0.98;
-/// The least length of flat lines, in mm, that gives a gap level of its own.
+/// The shortest stretch of flat lines, in mm, that's enough to give a gap level of its own.
 const min_flat_mm = 0.5;
 
-/// Runs shorter than this are noise and merge into their neighbours.
+/// Runs shorter than this are noise, and merge into their neighbours.
 const min_run_mm = 0.3;
-/// Content between gaps shorter than this fraction of a frame is noise in a gap.
+/// Content between gaps that's shorter than this fraction of a frame is just noise in a gap.
 const short_content = 0.3;
-/// A frame cut off at an end of the strip must show this fraction of its length.
+/// A frame cut off at an end of the strip has to show at least this fraction of its length.
 const min_partial = 0.5;
-/// A gap wider than both of these is not a gap between neighbouring frames: a multiple of the
-/// format's gap, and a fraction of the frame length.
+/// A gap wider than both of these isn't a gap between neighbouring frames. The first is a
+/// multiple of the format's gap, the second a fraction of the frame length.
 const wide_gap_factor = 3;
 const wide_gap_fraction = 0.15;
-/// How far into content its edge is judged, and the density step, as a multiple of the gap
-/// tolerance, that makes it sharp.
+/// How far into the content we judge its edge, and how big a density step (as a multiple of the
+/// gap tolerance) makes that edge sharp.
 const edge_depth_mm = 0.5;
 const sharp_factor = 3;
-/// A frame placed from the pitch past the outermost frames needs this fraction of its length to
-/// be content.
+/// A frame placed from the pitch beyond the outermost frames needs at least this fraction of its
+/// length to be content.
 const slot_content = 0.25;
-/// Sharp edges further apart than this many pitches don't measure it.
+/// Sharp edges more than this many pitches apart aren't used to measure the pitch.
 const max_pitch_span = 3;
 
-/// Mounted slides: dark runs shorter than this fraction of a frame are inside an aperture, and
-/// apertures shorter than this fraction are not slides.
+/// For mounted slides: dark runs shorter than this fraction of a frame are inside an aperture, and
+/// apertures shorter than this fraction aren't slides.
 const mount_bridge = 0.2;
 const min_aperture = 0.4;
 /// A line is inside an aperture when at least this fraction of it is light.
@@ -222,7 +230,8 @@ pub fn detect(
     kind: Kind,
     options: Options,
 ) Error!Detection {
-    // A resolution from a roll's file or the command line: none at all would make every length 0.
+    // The resolution comes from a roll's file or the command line, and a missing one would make
+    // every length 0.
     if (!(dpi > 0) or !std.math.isFinite(dpi)) return error.BadResolution;
     if (scan.width < min_scan_px or scan.height < min_scan_px) return error.NoOpening;
     const px_per_mm = dpi / formats.mm_per_inch;
@@ -292,8 +301,9 @@ pub fn detect(
     };
 }
 
-/// One value per pixel: the geometric mean of its channels, so that each channel's density
-/// counts the same however dense the film base is in it, as in a colour negative's mask.
+/// Reduces each pixel to one value, the geometric mean of its channels. That way each channel's
+/// density counts the same, however dense the film base is in that channel (as with a colour
+/// negative's orange mask).
 fn luminance(gpa: std.mem.Allocator, scan: image.Scan) ![]u16 {
     const logs = try gpa.alloc(f32, image.full_scale + 1);
     defer gpa.free(logs);
@@ -308,14 +318,15 @@ fn luminance(gpa: std.mem.Allocator, scan: image.Scan) ![]u16 {
 }
 
 const Levels = struct {
-    /// Film is above this level and the holder at or below it.
+    /// Film is above this level, and the holder is at or below it.
     threshold: u16,
-    /// Halfway between holder and film on a log scale: above the flare around the holder's
-    /// edges, for finding them.
+    /// Halfway between the holder and the film on a log scale. It's above the flare around the
+    /// holder's edges, so we use it to find them.
     edge: u16,
 };
 
-/// Step 1: the level that splits holder from film. Null when nothing in the scan is light.
+/// Step 1: finds the level that separates the holder from the film. Returns null when nothing in
+/// the scan is light.
 fn classify(gpa: std.mem.Allocator, plane: []const u16) !?Levels {
     const histogram = try gpa.alloc(u32, level_bins);
     defer gpa.free(histogram);
@@ -331,7 +342,8 @@ fn classify(gpa: std.mem.Allocator, plane: []const u16) !?Levels {
     };
 }
 
-/// The level below which `fraction` of the `count` values fall, at the middle of its bin.
+/// Returns the level that `fraction` of the `count` values fall below, taken at the middle of its
+/// bin.
 fn histogramQuantile(histogram: []const u32, count: usize, fraction: f32) f32 {
     const rank: usize = @intFromFloat(fraction * @as(f32, @floatFromInt(count - 1)));
     var seen: usize = 0;
@@ -342,9 +354,9 @@ fn histogramQuantile(histogram: []const u32, count: usize, fraction: f32) f32 {
     return std.math.maxInt(u16);
 }
 
-/// Which axis the strip runs along. Seen along the strip, the positions across the opening are
-/// light on nearly every line; seen the other way, no line is light much more than the opening's
-/// share of the scan's width.
+/// Works out which axis the strip runs along. Looking along the strip, the positions across the
+/// opening are light on nearly every line. Looking the other way, no line is light for much more
+/// than the opening's share of the scan's width.
 fn detectAxis(gpa: std.mem.Allocator, plane: []const u16, width: usize, height: usize, levels: Levels, nominal_height: f32) !Axis {
     const longer: Axis = if (height >= width) .y else .x;
     if (levels.threshold == 0) return longer;
@@ -373,7 +385,7 @@ fn detectAxis(gpa: std.mem.Allocator, plane: []const u16, width: usize, height: 
     return longer;
 }
 
-/// The high end of the fractions `counts[i] / lines`.
+/// Returns the high end of the fractions `counts[i] / lines`.
 fn plateau(gpa: std.mem.Allocator, counts: []const u32, lines: usize) !f32 {
     const sorted = try gpa.dupe(u32, counts);
     defer gpa.free(sorted);
@@ -381,7 +393,7 @@ fn plateau(gpa: std.mem.Allocator, counts: []const u32, lines: usize) !f32 {
     return @as(f32, @floatFromInt(quantile(u32, sorted, plateau_quantile))) / @as(f32, @floatFromInt(lines));
 }
 
-/// How many positions are light on at least half the lines, at least 1.
+/// Counts the positions that are light on at least half the lines. Returns at least 1.
 fn bandWidth(counts: []const u32, lines: usize) f32 {
     var n: usize = 0;
     for (counts) |c| {
@@ -395,10 +407,10 @@ fn quantile(comptime T: type, sorted: []const T, fraction: f32) T {
     return sorted[@intFromFloat(@round(fraction * last))];
 }
 
-/// The luminance plane read in strip coordinates.
+/// The luminance plane, read in strip coordinates.
 const View = struct {
     values: []const u16,
-    /// Lines along the strip, and samples per line.
+    /// The number of lines along the strip, and of samples per line.
     along: usize,
     across: usize,
     along_stride: usize,
@@ -415,7 +427,7 @@ const View = struct {
         return view.values[u * view.along_stride + v * view.across_stride];
     }
 
-    /// The sample nearest the continuous position, or null outside the view.
+    /// Returns the sample nearest to a continuous position, or null outside the view.
     fn sample(view: View, u: f32, v: f32) ?u16 {
         if (u < 0 or v < 0) return null;
         const ui: usize = @intFromFloat(u);
@@ -434,8 +446,8 @@ const Range = struct {
     }
 };
 
-/// The light band across, from the light fraction of each position: `near` is its first
-/// position and `far` one past its last.
+/// The light band across the strip, found from how often each position is light. `near` is its
+/// first position and `far` is one past its last.
 const Band = struct { near: usize, far: usize };
 
 fn coarseBand(gpa: std.mem.Allocator, view: View, threshold: u16, lines: Range, px_per_mm: f32) !?Band {
@@ -498,7 +510,7 @@ const Opening = struct {
         return (opening.far.at(u) - opening.near.at(u)) / @sqrt(1 + s * s);
     }
 
-    /// Pixels along the strip per line.
+    /// The distance along the strip, in pixels, that one line covers.
     fn alongScale(opening: Opening) f32 {
         const s = opening.slope();
         return @sqrt(1 + s * s);
@@ -507,7 +519,7 @@ const Opening = struct {
 
 const Point = struct { u: f32, v: f32 };
 
-/// Step 2: lines fitted to the long edges of the band, over `lines`.
+/// Step 2: fits lines to the long edges of the band, over `lines`.
 fn fitOpening(gpa: std.mem.Allocator, view: View, edge_threshold: u16, lines: Range, band: Band, px_per_mm: f32, max_skew_degrees: f32) !Opening {
     const max_slope = @tan(std.math.degreesToRadians(max_skew_degrees));
     const span: f32 = @floatFromInt(lines.len());
@@ -572,11 +584,11 @@ fn fitOpening(gpa: std.mem.Allocator, view: View, edge_threshold: u16, lines: Ra
     };
 }
 
-/// The edge in `samples`, which run from outside the band inwards, in samples from the outer
-/// end. The first run of film above the holder threshold finds it roughly, but flare outside the
-/// holder can lift the level over the threshold early, so the edge is the steepest rise in log
-/// level from there on, placed where the level crosses halfway between the two sides. Null when
-/// the outer end isn't holder or no film follows.
+/// Finds the edge in `samples`, which run from outside the band inwards, and returns it in samples
+/// from the outer end. The first run of film above the holder threshold gives a rough position.
+/// But flare outside the holder can lift the level over the threshold too early, so the edge is
+/// the steepest rise in log level from there on, placed where the level crosses halfway between
+/// the two sides. Returns null when the outer end isn't holder, or no film follows.
 fn edgeFromOutside(samples: []const u16, threshold: u16, blur: usize, search: usize) ?f32 {
     if (samples.len < edge_run + 2 * blur + 1 or samples[0] > threshold) return null;
     var run: usize = 0;
@@ -622,8 +634,9 @@ fn meanLevel(samples: []const u16) f32 {
 
 const Fit = struct { line: Line, inliers: usize };
 
-/// A least-squares line through `points` that drops outliers round by round. The inliers end up
-/// at the front of `points`. Null with too few points or a slope steeper than `max_slope`.
+/// Fits a least-squares line through `points`, dropping outliers round by round. The inliers end
+/// up at the front of `points`. Returns null if there are too few points, or the slope is steeper
+/// than `max_slope`.
 fn robustFit(points: []Point, scratch: []f32, max_slope: f32) ?Fit {
     var active = points.len;
     var line = leastSquares(points[0..active]) orelse return null;
@@ -670,7 +683,7 @@ fn leastSquares(points: []const Point) ?Line {
     return .{ .offset = mean_v - slope * mean_u, .slope = slope };
 }
 
-/// The median offset of `points` for lines of `slope`.
+/// Returns the median offset of `points` for lines with slope `slope`.
 fn offsetWithSlope(points: []const Point, slope: f32, scratch: []f32) f32 {
     const offsets = scratch[0..points.len];
     for (points, offsets) |p, *o| o.* = p.v - slope * p.u;
@@ -678,8 +691,8 @@ fn offsetWithSlope(points: []const Point, slope: f32, scratch: []f32) f32 {
     return offsets[offsets.len / 2];
 }
 
-/// Where the film's edges show, 135's perforations repeat along the strip at their pitch. The
-/// columns that do are left out of the opening, together with everything outside them.
+/// Where the film's edges show, 135's perforations repeat along the strip at their pitch. Columns
+/// that repeat like that are left out of the opening, along with everything outside them.
 fn leaveOutPerforations(gpa: std.mem.Allocator, view: View, opening: *Opening, lines: Range, pitch_px: f32) !void {
     const lag: usize = @intFromFloat(@round(pitch_px / opening.alongScale()));
     const half_lag = lag / 2;
@@ -716,8 +729,8 @@ fn leaveOutPerforations(gpa: std.mem.Allocator, view: View, opening: *Opening, l
     if (near_hits >= min_perforation_columns) opening.near.offset += @floatFromInt(near_cut);
 }
 
-/// Autocorrelation at `lag` less autocorrelation at `half_lag`: near 2 for a square wave of
-/// period `lag`, near 0 for smooth image content.
+/// The autocorrelation at `lag` minus the autocorrelation at `half_lag`. It's near 2 for a square
+/// wave with period `lag`, and near 0 for smooth picture content.
 fn periodicity(samples: []const f32, lag: usize, half_lag: usize) f32 {
     var mean: f32 = 0;
     for (samples) |s| mean += s;
@@ -735,7 +748,7 @@ fn autocorrelation(samples: []const f32, mean: f32, variance: f32, lag: usize) f
     return sum / (@as(f32, @floatFromInt(samples.len - lag)) * variance);
 }
 
-/// Each line across the opening, sampled at right angles to the strip.
+/// Measurements of each line across the opening, sampled at right angles to the strip.
 const Profile = struct {
     /// The median level of each line.
     median: []f32,
@@ -793,7 +806,7 @@ const Profile = struct {
     }
 };
 
-/// What a frame placement needs to know, in pixels.
+/// What placing frames needs to know, in pixels.
 const Context = struct {
     view: View,
     opening: Opening,
@@ -803,8 +816,8 @@ const Context = struct {
     gap_tolerance: f32,
     length_tolerance: f32,
     ratio_lock: formats.RatioLock,
-    /// The frame's size: the height from the opening less the inset, the length from the
-    /// format's ratio, or its nominal length when the ratio is free.
+    /// The frame's size. The height is the opening's height minus the inset. The length comes
+    /// from the format's ratio, or is the nominal length when the ratio is free.
     frame_height: f32,
     frame_length: f32,
     /// The format's size.
@@ -819,7 +832,7 @@ const Context = struct {
 
 /// A frame in strip coordinates.
 const Placed = struct {
-    /// The centre along, in lines, and across, in samples.
+    /// The frame's centre: along the strip in lines, and across it in samples.
     along: f32,
     across: f32,
     /// The size along and across the strip, in pixels.
@@ -856,8 +869,9 @@ fn clippedSpan(centre: f32, size: f32, limit: usize) Range {
     return .{ .start = @intFromFloat(start), .end = @intFromFloat(end) };
 }
 
-/// The strip's skew as an image rotation. Along y a positive slope leans the strip's axis
-/// anticlockwise from straight down; along x it leans it clockwise from straight right.
+/// Turns the strip's skew into an image rotation. For a strip along y, a positive slope leans the
+/// strip's axis anticlockwise from straight down. For a strip along x, it leans it clockwise from
+/// straight right.
 fn rotationDegrees(axis: Axis, slope: f32) f32 {
     const angle = std.math.radiansToDegrees(std.math.atan(slope));
     return switch (axis) {
@@ -881,12 +895,13 @@ const Run = struct {
     }
 };
 
-/// How a run of content meets what lies beyond one of its ends.
+/// What one end of a run of content looks like.
 const Side = enum {
-    /// The density steps up from the gap level within a short distance: the frame's edge shows.
+    /// The density steps up from the gap level within a short distance, so the frame's edge
+    /// shows.
     sharp,
-    /// The image stays close to the gap level near the end, as a dark scene does: the frame's
-    /// edge doesn't show and may lie further out.
+    /// The picture stays close to the gap level near the end, the way a dark scene does. The
+    /// frame's edge doesn't show, and it may be further out.
     soft,
     /// The film or the scan ends inside the content.
     cut,
@@ -894,7 +909,7 @@ const Side = enum {
 
 const End = enum { start, end };
 
-/// A run of content and how each of its ends looks.
+/// A run of content, and what each of its ends looks like.
 const Content = struct {
     run: Run,
     before: Side,
@@ -905,7 +920,7 @@ const Content = struct {
     }
 };
 
-/// Steps 3 to 5 for a strip.
+/// Runs steps 3 to 5 for a strip.
 fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Profile, c: Context) !void {
     const extent = filmExtent(profile.median, c.threshold) orelse return;
     const level = try gapLevel(gpa, profile, extent, c);
@@ -953,7 +968,8 @@ fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Prof
     strip.dropDuplicates(&frames);
     try strip.fillByPitch(gpa, &frames, gaps, extent);
 
-    // Content that no edge anchors and the pitch doesn't reach keeps its measured box.
+    // Content that has no sharp edge to anchor it, and that the pitch doesn't reach either, keeps
+    // its measured box.
     for (contents.items) |content| {
         if (content.sharpEnds() > 0) continue;
         const covered = for (frames.items) |f| {
@@ -964,7 +980,8 @@ fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Prof
     try out.appendSlice(gpa, frames.items);
 }
 
-/// Whether the content's `end` shows a frame edge: the most density within `depth` lines of it.
+/// Works out whether the content's `end` shows a frame edge, from the highest density within
+/// `depth` lines of it.
 fn sideAt(density: []const f32, run: Run, end: End, extent: Range, depth: usize, sharp_step: f32) Side {
     const window = switch (end) {
         .start => blk: {
@@ -979,7 +996,7 @@ fn sideAt(density: []const f32, run: Run, end: End, extent: Range, depth: usize,
     return if (std.mem.max(f32, window) >= sharp_step) .sharp else .soft;
 }
 
-/// The lines between the first and last that show film rather than holder.
+/// The lines from the first to the last one that shows film rather than holder.
 fn filmExtent(median: []const f32, threshold: u16) ?Range {
     const limit: f32 = @floatFromInt(threshold);
     var start: usize = 0;
@@ -990,9 +1007,10 @@ fn filmExtent(median: []const f32, threshold: u16) ?Range {
     return .{ .start = start, .end = end };
 }
 
-/// The level of the gaps between frames. For negatives, the film base: the lightest median
-/// lines. Bare light past the end of a short strip is lighter still, so where light runs reach
-/// the ends, the base comes from the flat lines between them. For positives, the darkest lines.
+/// Finds the level of the gaps between frames. For negatives that's the film base, from the
+/// lightest line medians. Bare light past the end of a short strip is lighter still, so when light
+/// runs reach the ends, the base comes from the flat lines between them. For positives it's the
+/// darkest lines.
 fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !f32 {
     const medians = profile.median[extent.start..extent.end];
     const sorted = try gpa.alloc(f32, medians.len);
@@ -1024,8 +1042,8 @@ fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context)
     }
 }
 
-/// How far a level is from the gap level in density, towards the image: denser for negatives,
-/// lighter for positives. Zero or less is at the gap level.
+/// How far a level is from the gap level, in density, towards the picture: denser for negatives
+/// and lighter for positives. Zero or less means it's at the gap level.
 fn densityFromGap(kind: Kind, gap_level: f32, value: f32) f32 {
     const v = @max(value, level_floor);
     return switch (kind) {
@@ -1034,10 +1052,9 @@ fn densityFromGap(kind: Kind, gap_level: f32, value: f32) f32 {
     };
 }
 
-/// Merges noise into its surroundings: runs too short to mean anything, content too short to be
-/// a frame between gaps, and pairs of short content runs between gaps, split by a gap where the
-/// two together make one frame. Content at an end showing too little of a frame becomes part of
-/// the gap.
+/// Merges noise into what's around it: runs too short to mean anything, content between gaps
+/// that's too short to be a frame, and gaps that split one frame into two short runs of content.
+/// Content at an end that shows too little of a frame becomes part of the gap.
 fn cleanRuns(runs: *std.ArrayList(Run), min_run: f32, length: f32, tolerance: f32) void {
     while (runs.items.len > 1) {
         var shortest: ?usize = null;
@@ -1069,7 +1086,7 @@ fn cleanRuns(runs: *std.ArrayList(Run), min_run: f32, length: f32, tolerance: f3
     }
 }
 
-/// Turns gap into content or content into gap, and merges it with its neighbours.
+/// Turns a gap into content, or content into a gap, and merges it with its neighbours.
 fn flip(runs: *std.ArrayList(Run), index: usize) void {
     runs.items[index].gap = !runs.items[index].gap;
     var kept: usize = 0;
@@ -1084,19 +1101,19 @@ fn flip(runs: *std.ArrayList(Run), index: usize) void {
     runs.shrinkRetainingCapacity(kept);
 }
 
-/// Frame placement along a strip, in lines.
+/// Places frames along a strip, working in lines.
 const Strip = struct {
     context: Context,
-    /// Pixels along the strip per line.
+    /// The distance along the strip, in pixels, that one line covers.
     scale: f32,
-    /// The snapped box's length, the frame's length on the film, the gap and the pitch.
+    /// The length of the snapped box, the frame's length on the film, the gap and the pitch.
     length: f32,
     film_length: f32,
     gap: f32,
     pitch: f32,
 
-    /// The frame length, gap and pitch, measured where the edges show and taken from the
-    /// format where they don't.
+    /// Works out the frame length, gap and pitch. They're measured where the edges show, and
+    /// taken from the format where they don't.
     fn measure(gpa: std.mem.Allocator, contents: []const Content, c: Context, scale: f32) !Strip {
         const length = c.frame_length / scale;
         const nominal_gap = c.nominal_gap / scale;
@@ -1117,7 +1134,8 @@ const Strip = struct {
         }
         const gap = medianOf(values.items) orelse nominal_gap;
 
-        // Sharp edges of the same kind lie whole pitches apart.
+        // Sharp edges of the same kind (both starts or both ends) are a whole number of pitches
+        // apart.
         values.clearRetainingCapacity();
         const guess = if (c.nominal_pitch) |p| p / scale else film_length + gap;
         var last_start: ?f32 = null;
@@ -1144,8 +1162,8 @@ const Strip = struct {
         };
     }
 
-    /// Steps 4 and 5 for a run of content with at least one sharp end; content without one is
-    /// left to the pitch.
+    /// Runs steps 4 and 5 for a run of content with at least one sharp end. Content without a
+    /// sharp end is left to the pitch.
     fn place(strip: Strip, gpa: std.mem.Allocator, frames: *std.ArrayList(Placed), content: Content) !void {
         if (content.sharpEnds() == 0) return;
         const run = content.run;
@@ -1158,7 +1176,7 @@ const Strip = struct {
             return frames.append(gpa, strip.frame(run.middle(), along, .confident));
         }
         if (measured < strip.length) {
-            // One edge doesn't show: the frame runs on from the edge that does.
+            // One edge doesn't show, so the frame runs on from the edge that does.
             const start: f32 = @floatFromInt(run.start);
             const end: f32 = @floatFromInt(run.end);
             if (content.before == .sharp and content.after == .soft) return frames.append(gpa, strip.frame(start + strip.film_length / 2, strip.length, .check));
@@ -1167,8 +1185,9 @@ const Strip = struct {
         return frames.append(gpa, strip.frame(run.middle(), measured, .check));
     }
 
-    /// Several frames in one run of content, the boundaries between them not showing: spread
-    /// evenly between two sharp ends, or placed at the pitch out from one.
+    /// Places several frames in one run of content, where the boundaries between them don't
+    /// show. They're spread evenly between two sharp ends, or placed at the pitch out from a
+    /// single one.
     fn fillRun(strip: Strip, gpa: std.mem.Allocator, frames: *std.ArrayList(Placed), content: Content, count: usize) !void {
         const start: f32 = @floatFromInt(content.run.start);
         const end: f32 = @floatFromInt(content.run.end);
@@ -1186,7 +1205,8 @@ const Strip = struct {
         }
     }
 
-    /// Of two frames less than half a pitch apart, keeps the confident one, or else the first.
+    /// When two frames are less than half a pitch apart, keeps the confident one, or else the
+    /// first.
     fn dropDuplicates(strip: Strip, frames: *std.ArrayList(Placed)) void {
         var kept: usize = 0;
         for (frames.items) |f| {
@@ -1200,8 +1220,9 @@ const Strip = struct {
         frames.shrinkRetainingCapacity(kept);
     }
 
-    /// Step 5: frames between two placed frames more than a pitch apart, spread evenly, and
-    /// frames past the outermost ones while the film shows content at the pitch.
+    /// Step 5: fills in frames, spread evenly, between two placed frames that are more than a
+    /// pitch apart. Then adds frames beyond the outermost ones for as long as the film shows
+    /// content at the pitch.
     fn fillByPitch(strip: Strip, gpa: std.mem.Allocator, frames: *std.ArrayList(Placed), gaps: []const bool, extent: Range) !void {
         if (frames.items.len == 0) return;
         var i: usize = 0;
@@ -1225,7 +1246,7 @@ const Strip = struct {
         }
     }
 
-    /// Whether a frame centred at `along` lies mostly on the film and holds some content.
+    /// Whether a frame centred at `along` is mostly on the film and has some content in it.
     fn slotShowsFilm(strip: Strip, along: f32, gaps: []const bool, extent: Range) bool {
         const first = @max(along - strip.film_length / 2, @as(f32, @floatFromInt(extent.start)));
         const last = @min(along + strip.film_length / 2, @as(f32, @floatFromInt(extent.end)));
@@ -1237,7 +1258,7 @@ const Strip = struct {
         return content >= slot_content * strip.film_length;
     }
 
-    /// A frame centred at `along` on the opening's centre line, `length` lines long.
+    /// Makes a frame centred at `along` on the opening's centre line, `length` lines long.
     fn frame(strip: Strip, along: f32, length: f32, confidence: Confidence) Placed {
         const c = strip.context;
         return .{
@@ -1251,7 +1272,7 @@ const Strip = struct {
     }
 };
 
-/// Adds `distance` to the pitch samples if it is close to a whole number of pitches.
+/// Adds `distance` to the pitch samples if it's close to a whole number of pitches.
 fn addPitch(gpa: std.mem.Allocator, pitches: *std.ArrayList(f32), distance: f32, guess: f32, tolerance: f32) !void {
     const count = @round(distance / guess);
     if (count < 1 or count > max_pitch_span) return;
@@ -1259,15 +1280,15 @@ fn addPitch(gpa: std.mem.Allocator, pitches: *std.ArrayList(f32), distance: f32,
     if (@abs(pitch - guess) <= tolerance * guess) try pitches.append(gpa, pitch);
 }
 
-/// The median of `values`, sorting them; null when there are none.
+/// Returns the median of `values`, sorting them on the way, or null when there are none.
 fn medianOf(values: []f32) ?f32 {
     if (values.len == 0) return null;
     std.mem.sortUnstable(f32, values, {}, std.sort.asc(f32));
     return quantile(f32, values, 0.5);
 }
 
-/// Mounted slides: each aperture is a run of mostly light lines between opaque mounts, measured
-/// with its own edges and angle.
+/// Places mounted slides. Each aperture is a run of mostly light lines between opaque mounts, and
+/// it's measured with its own edges and angle.
 fn placeMounted(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Profile, band: Band, c: Context, max_skew_degrees: f32) !void {
     var runs: std.ArrayList(Run) = .empty;
     defer runs.deinit(gpa);
@@ -1310,7 +1331,7 @@ fn placeMounted(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Pr
 const synthetic = @import("synthetic.zig");
 
 const testing_gpa = std.testing.allocator;
-/// The frames on a 135 test strip.
+/// The number of frames on a 135 test strip.
 const strip_135_frames = 6;
 
 fn detectSynthetic(strip: synthetic.Strip, format: formats.Format, options: Options) !Detection {
@@ -1326,8 +1347,8 @@ fn areaCentre(area: image.Area) [2]f32 {
     };
 }
 
-/// `detection` holds the frames of `strip` in order, each centred within `tolerance_mm` and with
-/// the given confidence.
+/// Checks that `detection` holds the frames of `strip` in order, each one centred within
+/// `tolerance_mm` and with the given confidence.
 fn expectFrames(detection: Detection, strip: synthetic.Strip, confidences: []const Confidence, tolerance_mm: f32) !void {
     try std.testing.expectEqual(strip.frames.len, detection.frames.len);
     const tolerance = tolerance_mm * strip.dpi / formats.mm_per_inch;
@@ -1352,7 +1373,7 @@ test "a 135 strip of six frames with clear gaps" {
     try std.testing.expectApproxEqAbs(strip.opening_mm, detection.opening_mm, 0.2);
     try std.testing.expectApproxEqAbs(0, detection.rotation_degrees, 0.05);
     try expectFrames(detection, strip, &all_confident, 0.3);
-    // Full opening height across; the length from the 3:2 ratio.
+    // The full opening height across, and the length from the 3:2 ratio.
     const px_per_mm = strip.dpi / formats.mm_per_inch;
     for (detection.frames) |f| {
         try std.testing.expectApproxEqAbs(strip.opening_mm * px_per_mm, @as(f32, @floatFromInt(f.area.width)), 1.5);
@@ -1384,7 +1405,7 @@ test "a slightly rotated strip" {
 }
 
 test "a 120 6×6 strip with irregular gaps" {
-    // Gaps of 3, 7 and 4.5 mm, as a camera without a fixed pitch leaves them.
+    // Gaps of 3, 7 and 4.5 mm, the kind a camera without a fixed pitch leaves.
     const frames = [_]synthetic.Frame{
         .{ .start_mm = 5, .length_mm = 56 },
         .{ .start_mm = 64, .length_mm = 56, .density = 0.5 },
@@ -1440,7 +1461,7 @@ test "the strip running horizontally and vertically" {
 }
 
 test "mounted slides: each aperture is a frame" {
-    // 50 mm mounts with 35 × 23 mm apertures, not quite in line.
+    // 50 mm mounts with 35 × 23 mm apertures, not quite lined up.
     const frames = [_]synthetic.Frame{
         .{ .start_mm = 7.5, .length_mm = 35, .offset_mm = -0.5 },
         .{ .start_mm = 57.5, .length_mm = 35, .offset_mm = 0.4 },
@@ -1465,7 +1486,8 @@ test "perforations outside the holder's cover are left out of the opening" {
     strip.opening_mm = 37;
     var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
     defer detection.deinit(testing_gpa);
-    // Between the perforations: 35 mm film less two rows 2.0 mm in and 2.8 mm wide.
+    // The space between the perforations: 35 mm film minus two rows that start 2.0 mm in and are
+    // 2.8 mm wide.
     try std.testing.expectApproxEqAbs(25.4, detection.opening_mm, 0.5);
     try expectFrames(detection, strip, &all_confident, 0.3);
 }
@@ -1483,7 +1505,7 @@ test "a frame far from the format's length keeps its measured box" {
 }
 
 test "a frame cut off by the end of the scan is marked for checking" {
-    // The scan stops 20 mm into the third frame, as a frame scan with a margin does.
+    // The scan stops 20 mm into the third frame, the way a frame scan with a margin does.
     const frames = [_]synthetic.Frame{
         .{ .start_mm = synthetic.leader_135_mm, .length_mm = synthetic.frame_135_mm },
         .{ .start_mm = synthetic.leader_135_mm + synthetic.pitch_135_mm, .length_mm = synthetic.frame_135_mm },

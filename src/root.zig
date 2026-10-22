@@ -1,11 +1,11 @@
-//! minilab's core: everything that works without a window. The app and the CLI use it.
+//! minilab's core: everything that works without a window. The app and the CLI both use it.
 
 const std = @import("std");
 
 pub const image = @import("core/image.zig");
 pub const develop = @import("core/develop.zig");
 pub const encode = @import("core/encode.zig");
-/// Showing film on the screen as it looks on a light table.
+/// Showing film on screen the way it looks on a light table.
 pub const light_table = @import("core/light_table.zig");
 pub const look = @import("core/look.zig");
 /// Calibrating scanners against the film makers' datasheets.
@@ -14,7 +14,7 @@ pub const calibration = @import("core/calibration.zig");
 pub const stock_curves = @import("core/stock_curves.zig");
 /// .cube LUTs, for looks.
 pub const cube_lut = @import("core/cube_lut.zig");
-/// The film looks minilab carries from free collections.
+/// The film looks minilab ships from free collections.
 pub const bundled_looks = @import("presets/looks/bundled.zig");
 /// Fitting looks to pairs of scans, and the user's saved looks.
 pub const looks = @import("looks/root.zig");

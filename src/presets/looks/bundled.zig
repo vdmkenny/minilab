@@ -1,14 +1,15 @@
-//! The looks minilab carries from free collections of film looks. The build fetches each
-//! collection (`build.zig.zon`), and `bake_looks.zig` turns these looks into one file of tables
-//! that the app embeds. This list gives each look its place in that file, its id and its name.
+//! The looks minilab ships from free collections of film looks. The build fetches each collection
+//! (see `build.zig.zon`), and `bake_looks.zig` turns these looks into one file of tables that the
+//! app embeds. This list gives each look its place in that file, its id and its name.
 
 const std = @import("std");
 
-/// Points a side of every baked LUT.
+/// The number of points along each side of every baked LUT.
 pub const size = 33;
-/// Values in one baked LUT: an RGB triple for each of `size`³ points, red changing fastest.
+/// The number of values in one baked LUT: an RGB triple for each of the `size`³ points, with red
+/// changing fastest.
 pub const lut_values = size * size * size * 3;
-/// Bytes of one baked LUT, each value a little-endian u16 over 0..1.
+/// The size of one baked LUT in bytes. Each value is a little-endian u16 over 0..1.
 pub const lut_bytes = lut_values * @sizeOf(u16);
 
 /// A collection, with what its licence asks of us.
@@ -64,7 +65,7 @@ pub const Info = struct {
     url: []const u8,
 };
 
-/// The film a look emulates, which groups looks in the menus.
+/// The kind of film a look emulates. The menus group looks by it.
 pub const Film = enum {
     colour_negative,
     slide,
@@ -82,10 +83,11 @@ pub const Film = enum {
 pub const Look = struct {
     pack: Pack,
     film: Film,
-    /// The id frames keep, `<pack>:<slug>`. It never changes once released.
+    /// The id frames store, `<pack>:<slug>`. It never changes once it's released.
     id: []const u8,
     name: []const u8,
-    /// The name and the collection, for places that show it alone: "Kodak Portra 400 · GlassMeter".
+    /// The name plus the collection, for places that show the look on its own:
+    /// "Kodak Portra 400 · GlassMeter".
     label: []const u8,
     /// The file in the collection's folder.
     file: []const u8,
@@ -105,7 +107,7 @@ pub const Look = struct {
         return .of(.glassmeter, film, slug, name, "luts/cube-srgb-33/" ++ slug ++ ".cube");
     }
 
-    /// `file_name` is the image's name in the collection, where it isn't `name`.
+    /// `file_name` is the image's name in the collection, when it differs from `name`.
     fn t3mujinpack(comptime film: Film, comptime slug: []const u8, comptime name: []const u8, comptime file_name: ?[]const u8) Look {
         const category = switch (film) {
             .colour_negative => "Color Negative",
@@ -120,7 +122,7 @@ pub const Look = struct {
     }
 };
 
-/// Every look, by collection and then by film, in the order of the baked file.
+/// Every look, sorted by collection and then by film, in the same order as the baked file.
 pub const looks = [_]Look{
     .glassmeter(.colour_negative, "cinestill-50d", "CineStill 50D"),
     .glassmeter(.colour_negative, "cinestill-400d", "CineStill 400D"),
@@ -209,10 +211,10 @@ pub const looks = [_]Look{
     .streetMonochrome("eerie", "Eerie"),
 };
 
-/// Full scale of a baked value.
+/// The full-scale value of a baked u16.
 const full_scale = std.math.maxInt(u16);
 
-/// Writes one LUT's values, `lut_values / 3` triples over 0..1, as the baked file holds them.
+/// Writes one LUT's values (`lut_values / 3` triples over 0..1) the way the baked file stores them.
 pub fn encode(values: []const [3]f32, out: *[lut_bytes]u8) void {
     std.debug.assert(values.len * 3 == lut_values);
     for (values, 0..) |triple, i| for (triple, 0..) |v, c| {
@@ -230,7 +232,7 @@ pub fn decode(bytes: *const [lut_bytes]u8, values: [][3]f32) void {
     };
 }
 
-/// The look with the id `id`, as an index in `looks`.
+/// Finds the look with the id `id`, and returns its index in `looks`.
 pub fn find(id: []const u8) ?usize {
     return by_id.get(id);
 }
@@ -242,7 +244,7 @@ const by_id: std.StaticStringMap(usize) = .initComptime(pairs: {
 });
 
 comptime {
-    // Ids and labels name one look each.
+    // Each id and each label names exactly one look.
     @setEvalBranchQuota(100_000);
     for (looks, 0..) |a, i| for (looks[i + 1 ..]) |b| {
         if (std.mem.eql(u8, a.id, b.id)) @compileError("two looks have the id " ++ a.id);
@@ -270,7 +272,7 @@ test "a baked LUT reads back within half a 16-bit step" {
         const x: f32 = @floatFromInt(i % 1000);
         v.* = .{ x / 999, 1 - x / 999, 0.5 };
     }
-    // Out of range values are clamped.
+    // Out-of-range values are clamped.
     values[0] = .{ -0.1, 1.2, 0.5 };
     const bytes = try gpa.create([lut_bytes]u8);
     defer gpa.destroy(bytes);

@@ -1,20 +1,21 @@
-//! The neutral look: from a scan's transmission to a positive, in density.
+//! The neutral look: turns a scan's transmission into a positive, working in density.
 //!
-//! 1. Density above the film base, per channel: d = log10(T / T_base), 0 at the base and negative
-//!    for denser film.
-//! 2. A 3×3 matrix in density, for channel crosstalk, then, with a stock's datasheet curves, each
-//!    layer's density straightened (`stock_curves`).
-//! 3. The inversion curve: density scaled by the density range and balanced per channel, then
-//!    y = max(exposure · (1 + black − 10^c), 0)^contrast, with a soft roll-off of the highlights.
+//! 1. Work out the density above the film base, per channel: d = log10(T / T_base). It's 0 at the
+//!    base and negative for denser film.
+//! 2. Apply a 3×3 matrix in density, for crosstalk between the channels. If the stock has
+//!    datasheet curves, straighten each layer's density with them (`stock_curves`).
+//! 3. The inversion curve: scale the density by the density range and balance each channel, then
+//!    y = max(exposure · (1 + black − 10^c), 0)^contrast, with a soft roll-off in the highlights.
 //! 4. The tone: the curve as it is, softer or harder, or a flat linear or log image for grading.
 //!
 //! The model and its default values are darktable's negative inversion, written here from its
-//! published equations; no darktable code is used. Output is linear, 0..1.
+//! published equations. No darktable code is used. The output is linear, 0..1.
 //!
-//! The balance has two layers: the automatic per-channel balance of highlights and shadows, which
-//! the white balance mode sets, and on top the colour of the light, as a temperature in K and a
-//! tint per tonal range. Light of another colour shifts each layer's exposure by a fixed amount,
-//! which the inversion undoes as a fixed shift per channel, the way a colour printing filter does.
+//! The balance comes in two layers. First there's the automatic per-channel balance of the
+//! highlights and shadows, which the white balance mode sets. On top of that there's the colour of
+//! the light, as a temperature in K and a tint for each tonal range. Light of a different colour
+//! shifts each layer's exposure by a fixed amount, and the inversion undoes that with a fixed shift
+//! per channel, the way a colour printing filter does.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -42,7 +43,7 @@ pub const FilmKind = enum {
     }
 };
 
-/// Transmission below this counts as this, about −32 EV.
+/// Any transmission below this is treated as this value, about −32 EV.
 const smallest_transmission = 2.3283064365386963e-10;
 
 pub const Matrix = [3][3]f32;
@@ -55,7 +56,8 @@ pub const Tone = enum {
     hard,
     /// No contrast curve and no roll-off: linear in the film's exposure, for grading elsewhere.
     linear,
-    /// Density above the curve's start, 0..1, stored as is in the file: for grading elsewhere.
+    /// The density above the curve's start, 0..1, stored in the file as it is. For grading
+    /// elsewhere.
     log,
 
     pub fn label(tone: Tone) []const u8 {
@@ -69,23 +71,23 @@ pub const Tone = enum {
     }
 };
 
-/// Contrast of the soft and hard tones relative to the standard one.
+/// The contrast of the soft and hard tones, relative to the standard one.
 const soft_contrast = 0.8;
 const hard_contrast = 1.25;
 
 /// Where the automatic balance comes from.
 pub const WhiteBalance = enum {
-    /// Highlights and shadows neutral.
+    /// Makes the highlights and shadows neutral.
     auto_neutral,
-    /// Neutral, then a little warmer.
+    /// Like auto neutral, then a little warmer.
     auto_warm,
-    /// Neutral, then a little cooler.
+    /// Like auto neutral, then a little cooler.
     auto_cool,
-    /// The frame's average neutral.
+    /// Makes the frame's average neutral.
     average,
-    /// The stock preset's balance.
+    /// Uses the stock preset's balance.
     stock,
-    /// A point the user picked made neutral.
+    /// Makes a point the user picked neutral.
     picked,
 
     pub fn label(balance: WhiteBalance) []const u8 {
@@ -100,19 +102,19 @@ pub const WhiteBalance = enum {
     }
 };
 
-/// How much warmer or cooler the warm and cool balances are: a twelfth of a stop on red and blue.
+/// How much warmer or cooler the warm and cool balances are: an eighth of a stop on red and blue.
 const warmth = 25;
 
-/// The light the balance as set counts as, K: daylight, which daylight film is balanced for.
+/// The light the balance assumes, in K: daylight, which is what daylight film is balanced for.
 pub const reference_kelvin = 5500;
-/// The temperatures the light can be set to, K: from candlelight to open shade.
+/// The range of temperatures the light can be set to, in K: from candlelight to open shade.
 pub const min_kelvin = 2000;
 pub const max_kelvin = 12000;
-/// A colour negative's contrast, density per log exposure, for how far a change in the light
-/// moves the inversion: the presets' straight parts are 0.5 to 0.7.
+/// A colour negative's contrast (density per log exposure), used to work out how far a change in
+/// the light moves the inversion. The presets' straight parts run from 0.5 to 0.7.
 const light_gamma = 0.6;
 
-/// The tonal ranges temperature and tint apply to.
+/// The tonal ranges that temperature and tint apply to.
 pub const Range = enum {
     highlights,
     midtones,
@@ -127,18 +129,18 @@ pub const Range = enum {
     }
 };
 
-/// A camera raw file's colour, kept with the frame at import, as the roll's scan of it is in the
-/// camera's own colour: the white balance for the light behind the film, and the camera's matrix
-/// from its colour, so balanced, to linear sRGB. Colour slides take it; a negative's base cancels
-/// the light's colour on its own.
+/// The colour information from a camera RAW file, kept with the frame at import, because the
+/// roll's scan of it is in the camera's own colour. It's the white balance for the light behind
+/// the film, plus the camera's matrix from its (balanced) colour to linear sRGB. Colour slides use
+/// it. On a negative, the base cancels the light's colour by itself.
 pub const SlideColour = struct {
-    /// Per channel, with green 1: the camera's white balance as shot, or for daylight where the
-    /// file has none; 1 where the roll's flat field has made the light white already.
+    /// Per channel, with green at 1: the camera's white balance as shot, or its daylight balance
+    /// if the file has none. It's 1 when the roll's flat field has already made the light white.
     balance: [3]f32,
     /// Each row gives an sRGB channel from the camera's red, green and blue.
     to_srgb: [3][3]f32,
 
-    /// `t`, the camera's linear values, as linear sRGB, with nothing below 0.
+    /// Converts `t`, the camera's linear values, to linear sRGB, with nothing below 0.
     pub fn apply(slide: SlideColour, t: [3]f32) [3]f32 {
         var white: [3]f32 = undefined;
         for (&white, t, slide.balance) |*w, v, m| w.* = v * m;
@@ -160,10 +162,10 @@ pub const BaseSource = enum {
 
 pub const Settings = struct {
     kind: FilmKind = .colour_negative,
-    /// Film-base transmission per channel, as a fraction of full scale.
+    /// The film base's transmission per channel, as a fraction of full scale.
     base: [3]f32 = @splat(1),
     base_source: BaseSource = .measured,
-    /// For B&W, the channel whose density is used.
+    /// For B&W, the channel whose density we use.
     monochrome_channel: image.Channel = .g,
     matrix: Matrix = identity,
     /// The density range the curve spans, in D.
@@ -175,41 +177,43 @@ pub const Settings = struct {
     /// Above this the highlights roll off instead of clipping, 0..1.
     roll_off: f32 = 0.75,
     exposure: f32 = 0.9245,
-    /// Per-channel balance of the highlights (slope) and the shadows (offset), set by the white
-    /// balance mode.
+    /// The balance of the highlights (slope) and the shadows (offset) per channel, set by the
+    /// white balance mode.
     highlight_balance: [3]f32 = @splat(1),
     shadow_balance: [3]f32 = @splat(1),
     white_balance: WhiteBalance = .auto_neutral,
-    /// The colour of the light per range, on top of the balance: its temperature in K, where
-    /// `reference_kelvin` leaves the balance and lower is warmer light, which the picture is made
-    /// cooler for; and its tint, −100..100, positive more magenta.
+    /// The colour of the light in each range, on top of the balance. The temperature is in K:
+    /// `reference_kelvin` leaves the balance alone, and lower means warmer light, so the picture
+    /// is made cooler to make up for it. The tint runs from −100 to 100, and positive makes the
+    /// picture more magenta.
     temperature: [3]f32 = @splat(reference_kelvin),
     tint: [3]f32 = @splat(0),
     tone: Tone = .standard,
-    /// Colour after the look, 0..2: 0 grey, 1 as it is. Applied by `saturate`.
+    /// Saturation after the look, 0..2: 0 is grey and 1 leaves it as it is. `saturate` applies
+    /// it.
     saturation: f32 = 1,
-    /// The roll's stock's curves, straightening each layer's density; null for no stock, or one
-    /// without curves.
+    /// The curves of the roll's stock, which straighten each layer's density. Null when there's
+    /// no stock, or the stock has no curves.
     stock_curves: ?stock_curves.Curves = null,
-    /// For a slide shot with a camera, how to bring the camera's colour to sRGB; null for a scan.
+    /// For a slide shot with a camera, how to bring the camera's colour to sRGB. Null for a scan.
     slide_colour: ?SlideColour = null,
 
-    /// The curves, for `automatic`.
+    /// Returns the curves, in the form `automatic` takes them.
     pub fn curves(settings: *const Settings) ?*const stock_curves.Curves {
         return if (settings.stock_curves) |*c| c else null;
     }
 };
 
-/// Per-channel slope gains for the warm and cool balances: `shift` of ±100 is half a stop on red
-/// and blue.
+/// The per-channel slope gains for the warm and cool balances. A `shift` of ±100 is half a stop on
+/// red and blue.
 fn warmthGains(shift: f32) [3]f32 {
     const t = shift / 200;
     return .{ std.math.exp2(t), 1, std.math.exp2(-t) };
 }
 
-/// The exposure each layer needs, against green, to make a grey lit by light of `kelvin` and `tint`
-/// come out as one lit at `reference_kelvin`: the black body's colour at the reference over its
-/// colour at `kelvin`, and ±100 tint half a stop on green.
+/// Returns the exposure each layer needs, relative to green, so that a grey lit by light of
+/// `kelvin` and `tint` comes out like one lit at `reference_kelvin`. That's the black body's colour
+/// at the reference over its colour at `kelvin`, and a tint of ±100 is half a stop on green.
 pub fn lightGains(kelvin: f32, tint: f32) [3]f32 {
     const reference = blackBody(reference_kelvin);
     const light = blackBody(std.math.clamp(kelvin, min_kelvin, max_kelvin));
@@ -217,8 +221,9 @@ pub fn lightGains(kelvin: f32, tint: f32) [3]f32 {
     return .{ reference[0] / light[0] * std.math.exp2(m / 2), std.math.exp2(-m), reference[2] / light[2] * std.math.exp2(m / 2) };
 }
 
-/// A black body's colour at `kelvin` (1667 to 25000), in linear sRGB with green 1: its
-/// chromaticity by Kim et al.'s cubic fit to the Planckian locus, then sRGB's primaries.
+/// Returns a black body's colour at `kelvin` (1667 to 25000), in linear sRGB with green at 1. The
+/// chromaticity comes from Kim et al.'s cubic fit to the Planckian locus, then goes through sRGB's
+/// primaries.
 fn blackBody(kelvin: f32) [3]f32 {
     const t: f64 = kelvin;
     const x = if (t <= 4000)
@@ -239,12 +244,13 @@ fn blackBody(kelvin: f32) [3]f32 {
     };
     var rgb: [3]f64 = undefined;
     for (&rgb, to_srgb) |*v, row| v.* = row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2];
-    // A very warm light's blue is all but nothing: kept above it, so that it divides.
+    // A very warm light has almost no blue. Keep it above zero so we can divide by it.
     return .{ @floatCast(@max(rgb[0], 1e-4) / rgb[1]), 1, @floatCast(@max(rgb[2], 1e-4) / rgb[1]) };
 }
 
-/// A temperature on the scale before kelvin, −100..100, as K: ±100 moved red and blue half a
-/// stop each, about 73 mired, the same as from 5500 K to 9200 K.
+/// Converts a temperature on the old scale (−100..100, from before we used kelvin) to K. On that
+/// scale ±100 moved red and blue half a stop each, about 73 mired, the same as going from 5500 K
+/// to 9200 K.
 pub fn kelvinFromShift(shift: f32) f32 {
     const mired_per_step = 0.726;
     const mired = 1e6 / @as(f32, reference_kelvin) - shift * mired_per_step;
@@ -261,7 +267,7 @@ pub const Prepared = struct {
     lift: f32,
     /// 1 for B&W, which has no colour to change.
     saturation: f32,
-    /// Per range, per channel, the shift that undoes the light's colour; 0 for B&W.
+    /// The shift that undoes the light's colour, per range and per channel. It's 0 for B&W.
     light: [3][3]f32,
 
     pub fn init(settings: Settings) Prepared {
@@ -286,8 +292,8 @@ pub const Prepared = struct {
             prepared.shift[i] = high * settings.offset * settings.shadow_balance[i];
         }
         if (!settings.kind.isMonochrome()) {
-            // More exposure in a layer is more density, which comes out brighter: log10 of the gain
-            // in exposure, times the film's contrast, over the density range.
+            // More exposure in a layer means more density, which comes out brighter. The shift is
+            // log10 of the gain in exposure, times the film's contrast, over the density range.
             for (&prepared.light, settings.temperature, settings.tint) |*range, kelvin, tint| {
                 for (range, lightGains(kelvin, tint)) |*l, gain| l.* = -light_gamma * std.math.log10(gain) / settings.density_range;
             }
@@ -304,21 +310,21 @@ fn density(prepared: Prepared, transmission: [3]f32) [3]f32 {
     var mixed: [3]f32 = undefined;
     for (&mixed, s.matrix) |*out, row| out.* = row[0] * d[0] + row[1] * d[1] + row[2] * d[2];
     const curves = s.curves() orelse return mixed;
-    // The curves take density above the base, which is `d` turned round.
+    // The curves take density above the base, which is `d` with its sign flipped.
     for (&mixed, 0..) |*v, c| v.* = -curves.layer(c, -v.*);
     return mixed;
 }
 
-/// Density above `base` of film that transmits `t`, for channel `c`: straightened by `curves` where
-/// there are some.
+/// Returns the density above `base` of film that transmits `t`, in channel `c`, straightened by
+/// `curves` if there are any.
 fn densityAbove(curves: ?*const stock_curves.Curves, c: usize, base: f32, t: f32) f32 {
     const d = std.math.log10(base / t);
     return if (curves) |cv| cv.layer(c, d) else d;
 }
 
-/// How much each range's light counts at the tone `c`, green's place on the curve: 0 at the base,
-/// in the deepest shadows, to −1 at the density range, in the highlights. They sum to 1, so the
-/// same light in every range is the same shift at every tone.
+/// How much each range's light counts at tone `c`, which is green's place on the curve: from 0 at
+/// the base (the deepest shadows) to −1 at the density range (the highlights). The weights add up
+/// to 1, so the same light in every range gives the same shift at every tone.
 fn rangeWeights(c: f32) [3]f32 {
     const t = std.math.clamp(-c, 0, 1);
     var w: [3]f32 = undefined;
@@ -341,7 +347,7 @@ fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
     var y: [3]f32 = undefined;
     for (&y, curve) |*out, c| {
         if (s.tone == .log) {
-            // The file holds the density itself; undo the encoding's curve in advance.
+            // The file holds the density itself, so undo the encoding's curve in advance.
             out.* = encode.linearFromSrgb(std.math.clamp(-c, 0, 1));
             continue;
         }
@@ -358,9 +364,9 @@ fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
 /// Rec. 709's luminance weights, for linear sRGB.
 const luminance_weights = [3]f32{ 0.2126, 0.7152, 0.0722 };
 
-/// Changes the saturation of linear `pixels` in place: each is mixed with its own luminance in
-/// linear light, which keeps its hue and its luminance. Colours pushed past what sRGB holds are
-/// cut at 0.
+/// Changes the saturation of linear `pixels` in place. Each pixel is mixed with its own luminance
+/// in linear light, which keeps its hue and its luminance. Colours pushed outside sRGB are cut off
+/// at 0.
 pub fn saturate(prepared: Prepared, pixels: [][3]f32) void {
     const s = prepared.saturation;
     if (s == 1) return;
@@ -370,7 +376,7 @@ pub fn saturate(prepared: Prepared, pixels: [][3]f32) void {
     }
 }
 
-/// One pixel: 16-bit linear transmission to linear output, 0..1.
+/// Develops one pixel: 16-bit linear transmission in, linear output from 0 to 1 out.
 pub fn pixel(prepared: Prepared, raw: [3]u16) [3]f32 {
     var t: [3]f32 = undefined;
     for (&t, raw) |*out, v| out.* = @as(f32, @floatFromInt(v)) / image.full_scale;
@@ -386,7 +392,7 @@ pub fn pixel(prepared: Prepared, raw: [3]u16) [3]f32 {
     return invert(prepared, density(prepared, t));
 }
 
-/// The whole scan.
+/// Develops the whole scan.
 pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings) !image.Rendered {
     const rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
     const prepared: Prepared = .init(settings);
@@ -394,20 +400,21 @@ pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings) !ima
     return rendered;
 }
 
-/// The smallest density range, in D, the automatic settings work from.
+/// The smallest density range, in D, that the automatic settings will work from.
 const min_range = 0.02;
-/// The smallest shadow level, as a share of the density range, the automatic balance works with.
+/// The smallest shadow level the automatic balance works with, as a share of the density range.
 const min_shadow = 1e-3;
-/// The smallest span, as a share of the density range, a channel's highlights are balanced over.
+/// The smallest span a channel's highlights are balanced over, as a share of the density range.
 const min_span = 1e-3;
-/// The least density above the base a reference point counts with, in D, so that one at the base
-/// itself doesn't divide by zero.
+/// The least density above the base, in D, that a reference point counts as having, so that a
+/// point right at the base doesn't divide by zero.
 const min_reference_density = 1e-3;
 
 /// The part of a frame the automatic settings are measured on: the middle, away from the holder.
 pub const measured_fraction = 0.5;
 
-/// A frame's statistics: of its middle, which the automatic settings use, and of all of it.
+/// A frame's statistics, for its middle (which the automatic settings use) and for the whole
+/// frame.
 pub const FrameStatistics = struct {
     centre: Statistics,
     whole: Statistics,
@@ -421,25 +428,27 @@ pub const FrameStatistics = struct {
     }
 };
 
-/// Percentiles the automatic settings measure, in parts per thousand of the pixels.
+/// The percentiles the automatic settings measure, in parts per thousand of the pixels.
 pub const base_per_mille = 998;
 pub const densest_per_mille = 2;
 pub const thinnest_per_mille = 995;
 
 /// Transmission statistics of a frame, per channel.
 pub const Statistics = struct {
-    /// The thinnest film: the base, when the area includes rebate, or else close to it.
+    /// The thinnest film. That's the base when the area includes some rebate, or close to it when
+    /// it doesn't.
     thinnest: [3]f32,
     /// The densest part of the image: the brightest highlights.
     densest: [3]f32,
     /// The thinnest part of the image: the deepest shadows.
     shadows: [3]f32,
-    /// The mean of log10 of the transmission: the frame's average density, negated.
+    /// The mean of log10 of the transmission, which is the frame's average density with its sign
+    /// flipped.
     mean_log: [3]f32,
 
     /// Measures `area` of `scan`.
     pub fn measure(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area) !Statistics {
-        // An empty area, as of a crop collapsed to nothing, is blank film: the automatic
+        // An empty area, like a crop collapsed to nothing, counts as blank film, so the automatic
         // settings keep their defaults for it.
         if (area.width == 0 or area.height == 0) return .{ .thinnest = @splat(1), .densest = @splat(1), .shadows = @splat(1), .mean_log = @splat(0) };
         const histogram = try gpa.alloc([image.channel_count]u32, histogram_bins);
@@ -481,11 +490,11 @@ fn percentile(histogram: []const [image.channel_count]u32, channel: usize, count
     return 1;
 }
 
-/// Automatic settings for a negative: the base from `base`, the density range from the densest
-/// highlights, the offset from the shadows, and each channel balanced so the highlights and the
-/// shadows come out neutral.
+/// Works out automatic settings for a negative: the base from `measured_base`, the density range
+/// from the densest highlights, the offset from the shadows, and a balance per channel so the
+/// highlights and the shadows come out neutral.
 pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics, curves: ?*const stock_curves.Curves) Settings {
-    // A base picked where a channel reads nothing would put infinities everywhere below.
+    // A base picked where a channel reads nothing would put infinities into everything below.
     var base = measured_base;
     for (&base) |*b| b.* = @max(b.*, smallest_transmission);
     var settings: Settings = .{ .kind = kind, .base = base };
@@ -498,8 +507,8 @@ pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics, curve
     var shadow: [3]f32 = undefined;
     var lowest: f32 = std.math.inf(f32);
     for (&shadow, base, stats.shadows, 0..) |*s, b, t, c| {
-        // A channel whose shadows read as the base itself, as when a channel is at full scale in
-        // both, would divide by zero below; it counts as barely above the base instead.
+        // A channel whose shadows read the same as the base (say, a channel at full scale in both)
+        // would divide by zero below, so it counts as just above the base instead.
         s.* = @max(densityAbove(curves, c, b, t) / range, min_shadow);
         lowest = @min(lowest, s.*);
     }
@@ -517,29 +526,30 @@ pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics, curve
         h.* = if (@abs(span) > min_span) @abs(-1 / span) else 1;
         smallest_highlight = @min(smallest_highlight, h.*);
     }
-    // A balance that can't be a number leaves the default one.
+    // If the balance doesn't come out as a number, keep the default.
     if (!(smallest_highlight > 0) or !std.math.isFinite(smallest_highlight)) return settings;
     for (&settings.highlight_balance, highlight) |*balance, h| balance.* = h / smallest_highlight;
     return settings;
 }
 
-/// The slopes, relative to green, that bring a frame's neutrals out neutral: its automatic
-/// highlight balance. Null when the frame has too little in it to tell, or for B&W and slides.
+/// Returns the slopes, relative to green, that make a frame's neutrals come out neutral: its
+/// automatic highlight balance. Returns null when the frame has too little in it to tell, and for
+/// B&W and slides.
 pub fn neutralSlopes(kind: FilmKind, base: [3]f32, stats: Statistics) ?[3]f32 {
     if (kind != .colour_negative) return null;
-    // The scanner's own slopes, in its own density: without a stock's curves.
+    // The scanner's own slopes, in its own density, so without a stock's curves.
     const auto = automatic(kind, base, stats, null);
     const h = auto.highlight_balance;
     if (!(h[1] > 0) or !std.math.isFinite(h[0]) or !std.math.isFinite(h[1]) or !std.math.isFinite(h[2])) return null;
-    // Without density to measure, `automatic` keeps the default balance, which says nothing.
+    // With no density to measure, `automatic` keeps the default balance, which tells us nothing.
     if (std.meta.eql(h, (Settings{}).highlight_balance)) return null;
     return .{ h[0] / h[1], 1, h[2] / h[1] };
 }
 
-/// `settings` with the roll's stock `curves`, and what `automatic` measures (the density range,
-/// offset and balance) measured again on `stats` with them; the user's other choices stay. On a
-/// scanner with `stock_slopes` an Auto neutral balance becomes the stock's, and without them a
-/// stock balance becomes Auto neutral.
+/// Returns `settings` with the roll's stock `curves`, and with what `automatic` measures (the
+/// density range, offset and balance) measured again on `stats` using those curves. The user's
+/// other choices stay. On a scanner with `stock_slopes`, an Auto neutral balance becomes the
+/// stock's balance, and without them a stock balance goes back to Auto neutral.
 pub fn restocked(settings: Settings, stats: Statistics, curves: ?stock_curves.Curves, stock_slopes: ?[3]f32) Settings {
     var s = settings;
     s.stock_curves = curves;
@@ -551,7 +561,7 @@ pub fn restocked(settings: Settings, stats: Statistics, curves: ?stock_curves.Cu
         .auto_neutral, .stock => if (stock_slopes != null) .stock else .auto_neutral,
         .auto_warm, .auto_cool, .average, .picked => s.white_balance,
     };
-    // A picked balance can't be picked again without its point: its highlight slopes stay.
+    // We can't redo a picked balance without its point, so its highlight slopes stay.
     if (mode == .picked) {
         s.shadow_balance = auto.shadow_balance;
         return s;
@@ -559,10 +569,10 @@ pub fn restocked(settings: Settings, stats: Statistics, curves: ?stock_curves.Cu
     return balanced(s, mode, stats, null, stock_slopes);
 }
 
-/// `settings` with its balance set by `mode`: from `stats` of the frame; for `.picked`, making the
-/// transmission `picked` neutral; for `.stock`, with `stock_slopes`, the stock's layer slopes on
-/// this scanner relative to green (`calibration.stockSlopes`). Without them `.stock` keeps the
-/// balance.
+/// Returns `settings` with its balance set by `mode`, from the frame's `stats`. For `.picked` it
+/// makes the transmission `picked` neutral. For `.stock` it uses `stock_slopes`, the stock's layer
+/// slopes on this scanner relative to green (`calibration.stockSlopes`). Without them, `.stock`
+/// keeps the balance as it is.
 pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picked: ?[3]f32, stock_slopes: ?[3]f32) Settings {
     var s = settings;
     s.white_balance = mode;
@@ -587,8 +597,8 @@ pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picke
             }
         },
         .average, .picked => {
-            // Equal density above the base in every channel at the reference point, relative to
-            // green, keeping the automatic shadows.
+            // Make the density above the base equal in every channel at the reference point,
+            // relative to green, and keep the automatic shadows.
             var d: [3]f32 = undefined;
             for (&d, s.base, 0..) |*out, b, i| {
                 const log_t = if (picked) |p| std.math.log10(@max(p[i], smallest_transmission)) else stats.mean_log[i];
@@ -682,7 +692,8 @@ test "saturation keeps luminance and hue, and 0 is grey" {
     grey.saturation = 1.5;
     var more = [_][3]f32{.{ 0.6, 0.3, 0.1 }};
     saturate(.init(grey), &more);
-    // Further from grey along the same line: the channels' ratios of differences stay.
+    // Further from grey along the same line, so the ratios between the channels' differences
+    // stay the same.
     const y = 0.2126 * 0.6 + 0.7152 * 0.3 + 0.0722 * 0.1;
     try std.testing.expectApproxEqAbs((0.6 - y) * 1.5 + y, more[0][0], 1e-6);
     try std.testing.expectApproxEqAbs((0.3 - y) * 1.5 + y, more[0][1], 1e-6);
@@ -703,7 +714,7 @@ test "warm light makes the picture cooler, and the reference changes nothing" {
     const shade = pixel(.init(settings), raw);
     try std.testing.expect(shade[0] > before[0] and shade[2] < before[2]);
     for (lightGains(reference_kelvin, 0)) |g| try std.testing.expectApproxEqAbs(@as(f32, 1), g, 1e-5);
-    // A black body near 6500 K is near sRGB's white.
+    // A black body at around 6500 K is close to sRGB's white.
     for (blackBody(6500)) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 0.1);
 }
 
@@ -730,7 +741,7 @@ test "the stock balance takes the stock's slopes, and the frame's own shadows" {
     const out = balanced(settings, .stock, stats, null, .{ 1.3, 1, 0.88 });
     try std.testing.expectEqual([3]f32{ 1.3, 1, 0.88 }, out.highlight_balance);
     try std.testing.expectEqual(automatic(.colour_negative, settings.base, stats, null).shadow_balance, out.shadow_balance);
-    // Without slopes, the balance stays.
+    // Without slopes, the balance stays as it is.
     try std.testing.expectEqual(settings.highlight_balance, balanced(settings, .stock, stats, null, null).highlight_balance);
 }
 
@@ -786,7 +797,8 @@ test "a stock's curves open up the shadows its toe crushed" {
     var plain = automatic(.colour_negative, base, stats, null);
     var corrected = automatic(.colour_negative, base, stats, &curves);
     corrected.stock_curves = curves;
-    // Two deep shadows, 0.12 and 0.2 D above the base, in green: further apart once straightened.
+    // Two deep shadows in green, 0.12 and 0.2 D above the base, end up further apart once
+    // straightened.
     var spread: [2]f32 = undefined;
     for ([_]*Settings{ &plain, &corrected }, &spread) |s, *out| {
         const prepared: Prepared = .init(s.*);
@@ -797,9 +809,10 @@ test "a stock's curves open up the shadows its toe crushed" {
         out.* = pixel(prepared, raw[1])[1] - pixel(prepared, raw[0])[1];
     }
     try std.testing.expect(spread[1] > spread[0]);
-    // The highlights stay where they were, a little higher up the straightened range.
+    // The highlights stay where they were, just a little higher up the straightened range.
     try std.testing.expect(corrected.density_range >= plain.density_range);
-    // Nothing is clipped that wasn't: the shadows are measured where the curves put them.
+    // Nothing gets clipped that wasn't before, because the shadows are measured where the curves
+    // put them.
     try std.testing.expect(corrected.offset > 0);
 }
 
@@ -831,7 +844,7 @@ test "a new stock measures the frame again and keeps the user's choices" {
     try std.testing.expectEqual(@as(f32, 5), restocked_settings.contrast);
     try std.testing.expectEqual(@as(f32, 1.3), restocked_settings.saturation);
     try std.testing.expectEqual(@as(f32, 6000), restocked_settings.temperature[1]);
-    // No stock: no curves, and a stock balance goes back to Auto neutral.
+    // With no stock there are no curves, and a stock balance goes back to Auto neutral.
     const none = restocked(restocked_settings, stats, null, null);
     try std.testing.expectEqual(null, none.stock_curves);
     try std.testing.expectEqual(WhiteBalance.auto_neutral, none.white_balance);
@@ -846,8 +859,8 @@ test "a slide shot with a camera comes out in sRGB, its light white" {
     };
     const light = slide.apply(.{ 0.5, 1, 0.8 });
     for (light) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 1e-5);
-    // Through the develop path: white light comes out white, and a scan without the camera's colour
-    // as it is.
+    // Through the develop path, white light comes out white, and a scan without the camera's
+    // colour comes out as it is.
     const settings: Settings = .{ .kind = .colour_positive, .exposure = 1, .slide_colour = slide };
     const raw: [3]u16 = .{ 32768, 65535, 52428 };
     for (pixel(.init(settings), raw)) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 1e-3);

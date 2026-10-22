@@ -1,15 +1,15 @@
 //! What a fitted look does to a frame. It takes over from Develop after the film base and density
-//! stages, where the Neutral look would invert:
+//! stages, at the point where the Neutral look would invert:
 //!
 //! 1. The input is density per channel, 0..1: density above the film base, scaled by the density
 //!    range and balanced by Develop, before any inversion curve. Develop gives exactly this with
 //!    the Log tone, which stores it sRGB-encoded in its linear output.
-//! 2. A 3 × 3 matrix in density, for crosstalk between the channels. Its rows add up to 1, so a
-//!    grey stays grey; the curves do the tone.
-//! 3. A monotone curve per channel, from density to sRGB-encoded output.
-//! 4. Optionally a 33³ LUT on the curves' output, for what the matrix and curves can't do.
+//! 2. A 3 × 3 matrix in density handles crosstalk between the channels. Its rows add up to 1, so
+//!    a grey stays grey; the curves take care of the tone.
+//! 3. A monotone curve per channel takes density to sRGB-encoded output.
+//! 4. Optionally, a 33³ LUT on the curves' output does what the matrix and curves can't.
 //!
-//! The output is linear sRGB 0..1, as Develop's other looks give.
+//! The output is linear sRGB 0..1, the same as Develop's other looks give.
 
 const std = @import("std");
 const curve = @import("curve.zig");
@@ -20,21 +20,21 @@ pub const Curve = curve.Curve;
 pub const Matrix = [3][3]f32;
 pub const identity_matrix: Matrix = .{ .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } };
 
-/// Grid points along each side of the LUT.
+/// The number of grid points along each side of the LUT.
 pub const lut_size = 33;
 pub const lut_entries = lut_size * lut_size * lut_size;
 
 /// A 3D LUT over encoded RGB 0..1, looked up with trilinear interpolation.
 pub const Lut = struct {
-    /// The output at each grid point, red changing fastest, then green, then blue, as a .cube
-    /// file lists them.
+    /// The output at each grid point, with red changing fastest, then green, then blue: the same
+    /// order a .cube file uses.
     values: [lut_entries][3]f32,
 
     pub fn index(r: usize, g: usize, b: usize) usize {
         return (b * lut_size + g) * lut_size + r;
     }
 
-    /// The grid point's input.
+    /// Returns the input colour at grid point `i`.
     pub fn input(i: usize) [3]f32 {
         const step = 1.0 / @as(f32, lut_size - 1);
         return .{
@@ -44,7 +44,7 @@ pub const Lut = struct {
         };
     }
 
-    /// Every grid point to itself.
+    /// Sets every grid point to its own input, so the LUT changes nothing.
     pub fn setIdentity(lut: *Lut) void {
         for (&lut.values, 0..) |*v, i| v.* = input(i);
     }
@@ -76,17 +76,17 @@ pub const Lut = struct {
 pub const Model = struct {
     matrix: Matrix = identity_matrix,
     curves: [3]Curve = .{ curve.identity, curve.identity, curve.identity },
-    /// Applied to the curves' output when there is one. Whoever made the model owns it.
+    /// Applied to the curves' output, if there is one. Whoever made the model owns it.
     lut: ?*const Lut = null,
 
-    /// Density after the matrix, plus a frame's balance offsets.
+    /// Returns the density after the matrix, plus the frame's balance offsets.
     pub fn mixed(model: *const Model, density: [3]f32, balance: [3]f32) [3]f32 {
         var out: [3]f32 = undefined;
         for (&out, model.matrix, balance) |*o, row, b| o.* = row[0] * density[0] + row[1] * density[1] + row[2] * density[2] + b;
         return out;
     }
 
-    /// The curves' output, encoded, before the LUT.
+    /// Returns the curves' output, encoded, before the LUT.
     pub fn curved(model: *const Model, density: [3]f32, balance: [3]f32) [3]f32 {
         const m = model.mixed(density, balance);
         var out: [3]f32 = undefined;
@@ -94,8 +94,8 @@ pub const Model = struct {
         return out;
     }
 
-    /// The look's output for `density`, sRGB-encoded 0..1, with a frame's `balance` offsets in
-    /// density, which are 0 outside a fit.
+    /// Returns the look's output for `density`, sRGB-encoded 0..1. `balance` holds the frame's
+    /// offsets in density, which are 0 outside a fit.
     pub fn encoded(model: *const Model, density: [3]f32, balance: [3]f32) [3]f32 {
         const out = model.curved(density, balance);
         const lut = model.lut orelse return out;
@@ -104,8 +104,8 @@ pub const Model = struct {
         return looked;
     }
 
-    /// Applies the look in place to `pixels`, the linear output of Develop rendered with the Log
-    /// tone (density, sRGB-encoded). They become linear sRGB 0..1.
+    /// Applies the look in place to `pixels`, which hold Develop's linear output with the Log tone
+    /// (density, sRGB-encoded). Afterwards they're linear sRGB 0..1.
     pub fn apply(model: *const Model, pixels: [][3]f32) void {
         for (pixels) |*p| {
             const out = model.encoded(densityOf(p.*), @splat(0));
@@ -114,7 +114,8 @@ pub const Model = struct {
     }
 };
 
-/// The density Develop's Log tone stores in a linear pixel: its sRGB encoding.
+/// Returns the density that Develop's Log tone stores in a linear pixel, which is the pixel's
+/// sRGB encoding.
 pub fn densityOf(log_linear: [3]f32) [3]f32 {
     var d: [3]f32 = undefined;
     for (&d, log_linear) |*out, v| out.* = colour.encode(v);

@@ -1,19 +1,19 @@
-//! Film formats as data: the nominal image size of every format a roll can have (design section
-//! 6). A roll has one format; frames of different formats never share a roll. Real frame sizes
-//! vary by camera, which is why detection measures them and uses these only as a guide.
+//! The film formats a roll can have, with the nominal picture size of each one (design section
+//! 6). A roll has one format, and frames of different formats never share a roll. Real frame sizes
+//! vary from camera to camera, so detection measures them and only uses these sizes as a guide.
 //!
-//! Sizes are in millimetres. `width_mm` is the frame's length along the film and `height_mm` its
-//! extent across the film, so a 135 full frame is 36 × 24 and a 120 6×4.5 is 41.5 × 56. Sheet
-//! film has no direction; its width is the longer side.
+//! Sizes are in millimetres. `width_mm` is the frame's length along the film and `height_mm` is
+//! its size across the film, so a 135 full frame is 36 × 24 and a 120 6×4.5 is 41.5 × 56. Sheet
+//! film has no direction, so its width is the longer side.
 
 const std = @import("std");
 
-/// Millimetres in an inch: scanners give resolutions per inch, and film is measured in mm.
+/// Millimetres per inch. Scanners give their resolution per inch, but we measure film in mm.
 pub const mm_per_inch = 25.4;
 
 pub const FilmSize = enum {
     @"135",
-    /// 120 and 220: the same film width and frame sizes.
+    /// 120 and 220, which have the same film width and frame sizes.
     @"120",
     @"127",
     @"110",
@@ -37,7 +37,7 @@ pub const FilmSize = enum {
         };
     }
 
-    /// The film's width in mm, or null where there is no single width.
+    /// The film's width in mm, or null when there's no single width.
     pub fn filmWidthMm(size: FilmSize) ?f32 {
         return switch (size) {
             .@"135", .@"126" => 35,
@@ -50,27 +50,28 @@ pub const FilmSize = enum {
         };
     }
 
-    /// The pitch of the perforations along both edges of the film, where it has such a row:
-    /// 135's KS perforations. Detection uses it to leave the perforation bands out of the opening
-    /// when the holder doesn't cover them.
+    /// The pitch of the perforations along both edges of the film, for film that has them (only
+    /// 135, with its KS perforations). Detection uses it to leave the perforation bands out of the
+    /// opening when the holder doesn't cover them.
     pub fn perforationPitchMm(size: FilmSize) ?f32 {
         return if (size.perforations()) |p| p.pitch_mm else null;
     }
 
-    /// How the film is holed: rows along both edges, a few holes per frame along one edge, or
-    /// none, as paper-backed roll film and sheet film have.
+    /// Returns the holes the film has: rows along both edges, a few holes per frame along one
+    /// edge, or none at all (paper-backed roll film and sheet film have none).
     pub fn holes(size: FilmSize) Holes {
         return switch (size) {
             .@"135" => .{ .rows = size.perforations().? },
-            // 126 has one registration hole per frame, 110 one between frames, and APS (IX240)
-            // two close together, all along one edge.
+            // 126 has one registration hole per frame, 110 has one between frames, and APS
+            // (IX240) has two close together. They're all along one edge.
             .@"126", .@"110" => .{ .per_frame = 1 },
             .aps => .{ .per_frame = 2 },
             .@"120", .@"127", .minox, .sheet, .custom => .none,
         };
     }
 
-    /// The rows of holes along both edges of the film, where it has them: 135's KS perforations.
+    /// The rows of holes along both edges of the film, for film that has them (135, with its KS
+    /// perforations).
     pub fn perforations(size: FilmSize) ?Perforations {
         return switch (size) {
             .@"135" => .{ .pitch_mm = 4.75, .length_mm = 1.98, .height_mm = 2.8, .inset_mm = 2.0 },
@@ -78,8 +79,8 @@ pub const FilmSize = enum {
         };
     }
 
-    /// A typical gap between frames in mm, used only when a scan shows no gap to measure and the
-    /// format has no fixed pitch. Cameras differ; this is a rough figure.
+    /// A typical gap between frames, in mm. It's only used when a scan shows no gap to measure and
+    /// the format has no fixed pitch. Cameras differ, so this is a rough figure.
     pub fn typicalGapMm(size: FilmSize) f32 {
         return switch (size) {
             .@"135", .aps, .custom => 2,
@@ -91,17 +92,17 @@ pub const FilmSize = enum {
     }
 };
 
-/// How a film is holed, from `FilmSize.holes`.
+/// The holes a film has, as `FilmSize.holes` returns them.
 pub const Holes = union(enum) {
     none,
-    /// A row along both edges at a fixed pitch.
+    /// A row of holes along both edges, at a fixed pitch.
     rows: Perforations,
     /// This many holes for each frame, along one edge.
     per_frame: u8,
 };
 
-/// A row of perforations: the pitch, each hole's size along and across the film, and how far in
-/// from the film's edge the holes start, mm.
+/// A row of perforations: the pitch, the size of each hole along and across the film, and how far
+/// in from the edge of the film the holes start, all in mm.
 pub const Perforations = struct {
     pitch_mm: f32,
     length_mm: f32,
@@ -109,7 +110,7 @@ pub const Perforations = struct {
     inset_mm: f32,
 };
 
-/// Whether a format fixes a frame's length from its height.
+/// Whether a frame's length follows from its height.
 pub const RatioLock = enum {
     /// The length follows from the height and the format's ratio.
     locked,
@@ -120,38 +121,39 @@ pub const RatioLock = enum {
 pub const Format = struct {
     size: FilmSize,
     name: []const u8,
-    /// Along the film, mm.
+    /// The size along the film, in mm.
     width_mm: f32,
-    /// Across the film, mm.
+    /// The size across the film, in mm.
     height_mm: f32,
-    /// The advance from one frame to the next in mm, where the camera fixes it by counting
-    /// perforations. Null where it varies by camera.
+    /// How far the film advances from one frame to the next, in mm, when the camera sets this by
+    /// counting perforations. Null when it varies from camera to camera.
     pitch_mm: ?f32 = null,
     ratio_lock: RatioLock = .locked,
 
-    /// Length over height.
+    /// The frame's length divided by its height.
     pub fn ratio(format: Format) f32 {
         return format.width_mm / format.height_mm;
     }
 
-    /// The gap between frames in mm: from the pitch where it is fixed, else the film's typical gap.
+    /// The gap between frames, in mm. It comes from the pitch when that's fixed, and otherwise
+    /// it's the film's typical gap.
     pub fn gapMm(format: Format) f32 {
         if (format.pitch_mm) |pitch| return pitch - format.width_mm;
         return format.size.typicalGapMm();
     }
 };
 
-/// A format the user defines: any size, with the ratio locked or free.
+/// Makes a format of the user's own: any size, with the ratio locked or free.
 pub fn custom(width_mm: f32, height_mm: f32, ratio_lock: RatioLock) Format {
     return .{ .size = .custom, .name = "custom", .width_mm = width_mm, .height_mm = height_mm, .ratio_lock = ratio_lock };
 }
 
-/// 135's frame advance: 8 perforations.
+/// A 135 camera advances the film 8 perforations per frame.
 const full_frame_pitch_mm = 8 * FilmSize.@"135".perforationPitchMm().?;
 /// A half-frame camera advances 4 perforations.
 const half_frame_pitch_mm = 4 * FilmSize.@"135".perforationPitchMm().?;
 
-/// Every standard format in design section 6.
+/// Every standard format, as listed in design section 6.
 pub const Standard = enum {
     @"135_full_frame",
     @"135_half_frame",

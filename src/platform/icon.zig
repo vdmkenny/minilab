@@ -1,24 +1,25 @@
-//! minilab's icon: the logo's film strip, amber on a dark tile, for the window and the Windows
-//! program. It's drawn here rather than kept as pictures, so that every size is sharp and the
-//! repository holds no images; `docs/icon.svg` is the same drawing.
+//! minilab's icon: the film strip from the logo, amber on a dark tile. The window uses it, and so
+//! does the Windows program. We draw it in code instead of keeping image files, so every size
+//! comes out sharp and the repository holds no images. `docs/icon.svg` is the same drawing.
 
 const std = @import("std");
 
-/// The logo's amber and the tile's dark, sRGB.
+/// The amber of the logo and the dark grey of the tile, in sRGB.
 const amber = [3]u8{ 0xE8, 0xA3, 0x3D };
 const ground = [3]u8{ 0x1D, 0x1D, 0x1F };
 
-/// The tile's margin and its corners' radius, as shares of the icon's side and the tile's, as
-/// macOS draws app icons.
+/// The tile's margin, as a share of the icon's size, and its corner radius, as a share of the
+/// tile's size. macOS draws app icons with these proportions.
 const margin = 0.09;
 const corner = 0.225;
-/// The share of the tile the logo's 20-unit box takes.
+/// How much of the tile the logo's 20-unit box takes up.
 const logo_share = 0.8;
-/// The logo's box, its strokes, and its film strip: an outline, two rails along it, and the edges
-/// of the frames between rail and outline, as the header's logo has them.
+/// The logo's drawing, in its own 20-unit box: the stroke width and the film strip. The strip is
+/// an outline, two rails along it, and the frame edges between each rail and the outline, the same
+/// as the logo in the app's header.
 const logo_box = 20.0;
 const stroke = 1.5;
-/// The narrowest a stroke is drawn, in pixels, so that the small sizes keep their lines.
+/// The thinnest we draw a stroke, in pixels, so the lines don't vanish at small sizes.
 const min_stroke_px = 1.2;
 const outline = struct {
     const centre = [2]f32{ 10, 10 };
@@ -36,8 +37,8 @@ const segments = [_][2][2]f32{
     .{ .{ 13, 13 }, .{ 13, 16 } },
 };
 
-/// Draws the icon `side` pixels square into `pixels`, RGBA, row by row from the top. Outside the
-/// tile it's clear.
+/// Draws the icon into `pixels`, `side` pixels square, as RGBA rows from the top down. Everything
+/// outside the tile is transparent.
 pub fn render(side: usize, pixels: [][4]u8) void {
     std.debug.assert(pixels.len == side * side);
     const size: f32 = @floatFromInt(side);
@@ -47,10 +48,11 @@ pub fn render(side: usize, pixels: [][4]u8) void {
     const half_stroke = @max(stroke * unit, min_stroke_px) / 2;
     for (pixels, 0..) |*pixel, i| {
         const p = [2]f32{ @as(f32, @floatFromInt(i % side)) + 0.5, @as(f32, @floatFromInt(i / side)) + 0.5 };
-        // The tile, its edge smoothed over a pixel.
+        // How much of this pixel the tile covers, with its edge smoothed over one pixel.
         const to_tile = roundedBox(.{ p[0] - middle, p[1] - middle }, .{ tile / 2, tile / 2 }, tile * corner);
         const cover = std.math.clamp(0.5 - to_tile, 0, 1);
-        // The strip, in the logo's units with its box's middle on the tile's.
+        // The pixel's position in the logo's units, with the middle of the logo's box on the
+        // middle of the tile.
         const u = [2]f32{ (p[0] - middle) / unit + logo_box / 2, (p[1] - middle) / unit + logo_box / 2 };
         var nearest = @abs(roundedBox(.{ u[0] - outline.centre[0], u[1] - outline.centre[1] }, outline.half, outline.radius));
         for (segments) |s| nearest = @min(nearest, toSegment(u, s[0], s[1]));
@@ -62,15 +64,15 @@ pub fn render(side: usize, pixels: [][4]u8) void {
     }
 }
 
-/// The distance from `p` to a box of half-size `half` with corners of `radius`, centred on 0:
-/// negative inside.
+/// Returns the distance from `p` to a box centred on 0, with half-size `half` and corners of
+/// `radius`. It's negative inside the box.
 fn roundedBox(p: [2]f32, half: [2]f32, radius: f32) f32 {
     const q = [2]f32{ @abs(p[0]) - half[0] + radius, @abs(p[1]) - half[1] + radius };
     const outside = std.math.hypot(@max(q[0], 0), @max(q[1], 0));
     return outside + @min(@max(q[0], q[1]), 0) - radius;
 }
 
-/// The distance from `p` to the segment from `a` to `b`.
+/// Returns the distance from `p` to the segment from `a` to `b`.
 fn toSegment(p: [2]f32, a: [2]f32, b: [2]f32) f32 {
     const ab = [2]f32{ b[0] - a[0], b[1] - a[1] };
     const ap = [2]f32{ p[0] - a[0], p[1] - a[1] };
@@ -78,11 +80,12 @@ fn toSegment(p: [2]f32, a: [2]f32, b: [2]f32) f32 {
     return std.math.hypot(ap[0] - t * ab[0], ap[1] - t * ab[1]);
 }
 
-/// The sizes a Windows icon file holds.
+/// The sizes we put in the Windows icon file.
 pub const windows_sizes = [_]u16{ 16, 24, 32, 48, 64, 128, 256 };
 
-/// The icon as a Windows .ico file, at `windows_sizes`: each an uncompressed 32-bit bitmap, which
-/// every Windows reads. The caller frees it.
+/// Returns the icon as a Windows .ico file, with one image for each size in `windows_sizes`. Each
+/// one is an uncompressed 32-bit bitmap, which every version of Windows can read. The caller frees
+/// the result.
 pub fn windowsIcon(gpa: std.mem.Allocator) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     errdefer out.deinit();
@@ -110,7 +113,8 @@ pub fn windowsIcon(gpa: std.mem.Allocator) ![]u8 {
         const pixels = try gpa.alloc([4]u8, @as(usize, side) * side);
         defer gpa.free(pixels);
         render(side, pixels);
-        // The bitmap's header: twice the height, for the colours and the mask under them.
+        // The bitmap header. The height is doubled, because the colour image is followed by a
+        // mask.
         try w.writeInt(u32, header_bytes, .little);
         try w.writeInt(i32, side, .little);
         try w.writeInt(i32, @as(i32, side) * 2, .little);
@@ -119,13 +123,13 @@ pub fn windowsIcon(gpa: std.mem.Allocator) ![]u8 {
         try w.writeInt(u32, 0, .little); // Uncompressed.
         try w.writeInt(u32, imageBytes(side), .little);
         try w.splatByteAll(0, 16);
-        // The colours as BGRA, from the bottom row up.
+        // The colours, as BGRA, starting from the bottom row.
         var row: usize = side;
         while (row > 0) {
             row -= 1;
             for (pixels[row * side ..][0..side]) |p| try w.writeAll(&.{ p[2], p[1], p[0], p[3] });
         }
-        // The mask, all 0: the alpha says what's clear.
+        // The mask, all zeros: the alpha channel already says what's transparent.
         try w.splatByteAll(0, maskBytes(side));
     }
     return out.toOwnedSlice();
@@ -135,7 +139,7 @@ fn imageBytes(side: u16) u32 {
     return @as(u32, side) * side * 4 + maskBytes(side);
 }
 
-/// A 1-bit mask's bytes, each row padded to 32 bits.
+/// Returns the size of a 1-bit mask in bytes, with each row padded to 32 bits.
 fn maskBytes(side: u16) u32 {
     return (@as(u32, side) + 31) / 32 * 4 * side;
 }
@@ -148,11 +152,11 @@ test "the strip is amber on the dark tile, and the corners clear" {
     render(side, pixels);
     // A corner is outside the tile.
     try std.testing.expectEqual(@as(u8, 0), pixels[0][3]);
-    // The middle is between the rails: dark, and opaque.
+    // The middle is between the rails, so it's dark and opaque.
     const middle = pixels[side / 2 * side + side / 2];
     try std.testing.expectEqual(@as(u8, 255), middle[3]);
     try std.testing.expectEqualSlices(u8, &ground, middle[0..3]);
-    // On the upper rail, at the logo's y 7 and the middle across: amber.
+    // On the upper rail (y 7 in the logo's units), halfway across, it's amber.
     const unit = side * (1 - 2 * margin) * logo_share / logo_box;
     const rail_y: usize = @intFromFloat(@as(f32, side) / 2 + (7 - logo_box / 2) * unit);
     try std.testing.expectEqualSlices(u8, &amber, pixels[rail_y * side + side / 2][0..3]);
