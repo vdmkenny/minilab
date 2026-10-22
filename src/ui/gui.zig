@@ -1,0 +1,514 @@
+//! Small helpers over Dear ImGui's C API: text from slices, strings made for the frame, sizes in
+//! the design's pixels, and the design's controls built from ImGui's.
+
+const std = @import("std");
+const c = @import("c");
+const theme = @import("theme.zig");
+const fonts = @import("fonts.zig");
+
+pub const Vec2 = c.ImVec2;
+
+/// The display's scale, which turns the design's pixels into ImGui's.
+pub var scale: f32 = 1;
+
+var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
+
+/// Frees the last frame's strings.
+pub fn newFrame() void {
+    _ = frame_arena.reset(.retain_capacity);
+}
+
+pub fn px(value: f32) f32 {
+    return value * scale;
+}
+
+pub fn vec2(x: f32, y: f32) Vec2 {
+    return .{ .x = x, .y = y };
+}
+
+/// A line of text kept between frames, cut short when it doesn't fit.
+pub fn Line(comptime capacity: usize) type {
+    return struct {
+        buffer: [capacity]u8 = undefined,
+        len: usize = 0,
+
+        pub fn set(l: *@This(), comptime format: []const u8, args: anytype) void {
+            l.len = (std.fmt.bufPrint(&l.buffer, format, args) catch @as([]u8, &l.buffer)).len;
+        }
+
+        pub fn text(l: *const @This()) []const u8 {
+            return l.buffer[0..l.len];
+        }
+    };
+}
+
+/// A string for this frame, formatted, ending in a NUL for ImGui.
+pub fn print(comptime format: []const u8, args: anytype) [:0]const u8 {
+    return std.fmt.allocPrintSentinel(frame_arena.allocator(), format, args, 0) catch "";
+}
+
+/// `value`, shortened from the start with an ellipsis until it fits in `width`: for paths, whose
+/// end says the most.
+pub fn elideStart(value: []const u8, width: f32) [:0]const u8 {
+    var start: usize = 0;
+    var shown = print("{s}", .{value});
+    while (start < value.len and c.ImGui_CalcTextSize(shown).x > width) {
+        start += 1;
+        // Don't cut a UTF-8 sequence.
+        while (start < value.len and value[start] & 0xc0 == 0x80) start += 1;
+        shown = print("…{s}", .{value[start..]});
+    }
+    return shown;
+}
+
+/// `value`, shortened at the end with an ellipsis until it fits in `width`.
+pub fn elideEnd(value: []const u8, width: f32) [:0]const u8 {
+    var end = value.len;
+    var shown = print("{s}", .{value});
+    while (end > 0 and c.ImGui_CalcTextSize(shown).x > width) {
+        end -= 1;
+        while (end > 0 and value[end] & 0xc0 == 0x80) end -= 1;
+        shown = print("{s}…", .{value[0..end]});
+    }
+    return shown;
+}
+
+pub fn text(value: []const u8) void {
+    c.ImGui_TextUnformattedEx(value.ptr, value.ptr + value.len);
+}
+
+pub fn textColored(color: theme.Color, value: []const u8) void {
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Text, color);
+    text(value);
+    c.ImGui_PopStyleColor();
+}
+
+/// Text that wraps at the edge of the panel.
+pub fn paragraph(color: theme.Color, value: []const u8) void {
+    c.ImGui_PushTextWrapPos(0);
+    textColored(color, value);
+    c.ImGui_PopTextWrapPos();
+}
+
+/// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
+/// writes them in capitals; so do the callers.
+pub fn heading(value: []const u8) void {
+    fonts.pushSized(.semibold, 12);
+    textColored(theme.text_secondary, value);
+    fonts.pop();
+}
+
+/// A page or panel title: `size` pixels, semibold.
+pub fn title(value: []const u8, size: f32) void {
+    fonts.pushSized(.semibold, size);
+    text(value);
+    fonts.pop();
+}
+
+/// How a button looks.
+pub const Kind = enum {
+    /// Grey, with a border: most buttons.
+    normal,
+    /// Amber: the one action a page is for.
+    primary,
+    /// A border only.
+    outline,
+    /// Chosen among choices: amber border on a dark amber fill.
+    selected,
+    /// Not chosen among choices: grey, with secondary text.
+    unselected,
+    /// No fill or border until hovered: icons and grouped choices.
+    quiet,
+};
+
+/// A button of `kind`, `size` in the design's pixels, where 0 means fit the label (and the
+/// height of a control).
+pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
+    const colours: struct { fill: theme.Color, hover: theme.Color, line: theme.Color, ink: theme.Color } = switch (kind) {
+        .normal => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
+        .primary => .{ .fill = theme.accent, .hover = theme.accent, .line = theme.withAlpha(theme.accent, 0), .ink = theme.on_accent },
+        .outline => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
+        .selected => .{ .fill = theme.accent_fill, .hover = theme.accent_fill, .line = theme.accent, .ink = theme.text },
+        .unselected => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
+        .quiet => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.withAlpha(theme.page, 0), .ink = theme.text_secondary },
+    };
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, colours.fill);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, colours.hover);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, colours.hover);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Border, colours.line);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Text, colours.ink);
+    defer c.ImGui_PopStyleColorEx(5);
+    if (kind == .primary) fonts.push(.semibold);
+    defer if (kind == .primary) fonts.pop();
+    return c.ImGui_ButtonEx(label.ptr, vec2(px(size.x), px(size.y)));
+}
+
+pub fn button(label: [:0]const u8) bool {
+    return buttonOf(.normal, label, vec2(0, 0));
+}
+
+/// A button that shows whether it is chosen, for a row of choices.
+pub fn choice(label: [:0]const u8, selected: bool) bool {
+    return buttonOf(if (selected) .selected else .unselected, label, vec2(0, 0));
+}
+
+/// Choices in one grey box, the chosen one marked, as the viewer's Split / Negative / Positive.
+/// Returns the one clicked.
+pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) ?usize {
+    c.ImGui_PushID(id.ptr);
+    defer c.ImGui_PopID();
+    const padding = px(2);
+    const pill_height = px(26);
+    var width: f32 = 2 * padding;
+    for (labels) |label| width += c.ImGui_CalcTextSize(label.ptr).x + px(20);
+    const origin = c.ImGui_GetCursorScreenPos();
+    const list = c.ImGui_GetWindowDrawList();
+    const box_height = pill_height + 2 * padding + 2;
+    c.ImDrawList_AddRectFilledEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.control), px(5), 0);
+    c.ImDrawList_AddRectEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.border), px(5), 1, 0);
+    var clicked: ?usize = null;
+    var x = origin.x + padding + 1;
+    for (labels, 0..) |label, i| {
+        const w = c.ImGui_CalcTextSize(label.ptr).x + px(20);
+        c.ImGui_SetCursorScreenPos(vec2(x, origin.y + padding + 1));
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, vec2(px(10), (pill_height - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_PushStyleVar(c.ImGuiStyleVar_FrameRounding, px(4));
+        if (buttonOf(if (i == chosen) .selected else .quiet, label, vec2(w / scale, 26))) clicked = i;
+        c.ImGui_PopStyleVarEx(2);
+        x += w;
+    }
+    c.ImGui_SetCursorScreenPos(origin);
+    c.ImGui_Dummy(vec2(width, box_height));
+    return clicked;
+}
+
+/// Where the controls of a labelled row start: after a 96-pixel label column and a 10-pixel gap.
+pub const label_column = 96;
+pub const label_gap = 10;
+/// Width of the value column after a slider.
+pub const value_column = 52;
+
+/// Starts a row of a settings grid: `label` in the label column, then the cursor where the
+/// control goes.
+pub fn rowLabel(label: []const u8) void {
+    const x = c.ImGui_GetCursorPosX();
+    c.ImGui_AlignTextToFramePadding();
+    textColored(theme.text_secondary, label);
+    c.ImGui_SameLineEx(x + px(label_column + label_gap), 0);
+}
+
+/// A drop-down of `items`, `width` in the design's pixels (0 fills the row). Returns the index
+/// chosen, when it changed.
+pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32) ?usize {
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
+    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton);
+    // A small chevron, as a native drop-down has, instead of ImGui's arrow button.
+    chevron();
+    if (!open) return null;
+    defer c.ImGui_EndCombo();
+    var picked: ?usize = null;
+    for (items, 0..) |item, i| {
+        c.ImGui_PushIDInt(@intCast(i));
+        if (c.ImGui_SelectableEx(print("{s}", .{item}).ptr, i == chosen, 0, vec2(0, 0))) picked = i;
+        c.ImGui_PopID();
+    }
+    return picked;
+}
+
+/// What's typed in the open searchable drop-down; only one is open at a time.
+var search_buffer: [64:0]u8 = @splat(0);
+
+/// A drop-down of `items` with a search field at its top, for long lists such as film stocks.
+/// Every word typed must appear in an item, in any case. Enter picks the first match. Returns
+/// the index chosen, when it changed.
+pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32, hint: [:0]const u8) ?usize {
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
+    c.ImGui_SetNextWindowSizeConstraints(vec2(0, 0), vec2(std.math.floatMax(f32), px(360)), null, null);
+    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton | c.ImGuiComboFlags_HeightLargest);
+    chevron();
+    if (!open) return null;
+    defer c.ImGui_EndCombo();
+    if (c.ImGui_IsWindowAppearing()) {
+        search_buffer = @splat(0);
+        c.ImGui_SetKeyboardFocusHere();
+    }
+    c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
+    const entered = c.ImGui_InputTextWithHint("##search", hint.ptr, &search_buffer, search_buffer.len + 1, c.ImGuiInputTextFlags_EnterReturnsTrue);
+    const query = std.mem.sliceTo(&search_buffer, 0);
+    var picked: ?usize = null;
+    var first: ?usize = null;
+    for (items, 0..) |item, i| {
+        if (!matchesWords(item, query)) continue;
+        if (first == null) first = i;
+        c.ImGui_PushIDInt(@intCast(i));
+        if (c.ImGui_SelectableEx(print("{s}", .{item}).ptr, i == chosen, 0, vec2(0, 0))) picked = i;
+        c.ImGui_PopID();
+    }
+    if (first == null) textColored(theme.text_tertiary, "Nothing matches.");
+    if (entered and picked == null) {
+        if (first) |i| {
+            picked = i;
+            c.ImGui_CloseCurrentPopup();
+        }
+    }
+    return picked;
+}
+
+/// Whether every space-separated word of `query` appears in `item`, ignoring case.
+fn matchesWords(item: []const u8, query: []const u8) bool {
+    var words = std.mem.tokenizeScalar(u8, query, ' ');
+    while (words.next()) |word| {
+        if (!containsIgnoreCase(item, word)) return false;
+    }
+    return true;
+}
+
+pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len > haystack.len) return false;
+    for (0..haystack.len - needle.len + 1) |i| {
+        if (std.ascii.eqlIgnoreCase(haystack[i..][0..needle.len], needle)) return true;
+    }
+    return false;
+}
+
+/// The small chevron of a drop-down, at the right of the item just drawn.
+pub fn chevron() void {
+    const max = c.ImGui_GetItemRectMax();
+    const middle = (c.ImGui_GetItemRectMin().y + max.y) / 2;
+    const tip = vec2(max.x - px(14), middle + px(2.5));
+    const ink = theme.imU32(theme.text_secondary);
+    const list = c.ImGui_GetWindowDrawList();
+    c.ImDrawList_AddLineEx(list, vec2(tip.x - px(4), tip.y - px(4)), tip, ink, px(1.5));
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + px(4), tip.y - px(4)), ink, px(1.5));
+}
+
+/// A ticked check box `size` pixels square at `min`: amber, with the design's tick.
+pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
+    // The design draws its 12-pixel tick in a 16-pixel box: M2.5 6.5 l2.5 2.5 4.5 −5.5.
+    const design_box = 16;
+    const max = vec2(min.x + size, min.y + size);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.accent), px(3), 0);
+    const unit = size / design_box;
+    const o = vec2(min.x + 2 * unit, min.y + 2 * unit);
+    const points = [_]Vec2{
+        vec2(o.x + 2.5 * unit, o.y + 6.5 * unit),
+        vec2(o.x + 5 * unit, o.y + 9 * unit),
+        vec2(o.x + 9.5 * unit, o.y + 3.5 * unit),
+    };
+    c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.on_accent), 1.8 * unit, 0);
+}
+
+/// A small check box with its label, as the design draws one. True when it was clicked.
+pub fn checkbox(label: [:0]const u8, checked: *bool) bool {
+    const box = px(14);
+    const label_size = c.ImGui_CalcTextSize(label.ptr);
+    const height = c.ImGui_GetFrameHeight();
+    const origin = c.ImGui_GetCursorScreenPos();
+    const clicked = c.ImGui_InvisibleButton(label.ptr, vec2(box + px(6) + label_size.x, height), 0);
+    if (clicked) checked.* = !checked.*;
+    const hovered = c.ImGui_IsItemHovered(0);
+    const list = c.ImGui_GetWindowDrawList();
+    const min = vec2(origin.x, origin.y + (height - box) / 2);
+    const max = vec2(min.x + box, min.y + box);
+    if (checked.*) {
+        tickedBox(list, min, box);
+    } else {
+        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
+        c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
+    }
+    c.ImDrawList_AddText(list, vec2(max.x + px(6), origin.y + (height - label_size.y) / 2), theme.imU32(theme.text_secondary), label.ptr);
+    return clicked;
+}
+
+/// How many bytes a one-line text field holds.
+pub const text_capacity = 128;
+
+/// A text field's buffer, holding `value` to start with.
+pub fn initText(comptime capacity: usize, comptime value: []const u8) [capacity:0]u8 {
+    var buffer: [capacity:0]u8 = @splat(0);
+    @memcpy(buffer[0..value.len], value);
+    return buffer;
+}
+
+/// Puts `value` in a text field's buffer. A value that doesn't fit leaves the buffer as it was,
+/// since a path or name cut short would be wrong.
+pub fn setText(buffer: [:0]u8, value: []const u8) error{TooLong}!void {
+    if (value.len > buffer.len) return error.TooLong;
+    @memcpy(buffer[0..value.len], value);
+    buffer[value.len] = 0;
+}
+
+/// A text field filling the row, with `hint` shown while it's empty.
+pub fn textField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f32) bool {
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    return c.ImGui_InputTextWithHint(print("##{s}", .{id}).ptr, hint.ptr, buffer, buffer.len + 1, 0);
+}
+
+/// A range slider as the design draws one: a thin track, amber up to the value, and a round
+/// thumb. `width` in the design's pixels, 0 to fill up to the value column. True when it moved.
+pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) bool {
+    const room = c.ImGui_GetContentRegionAvail().x;
+    const w = if (width == 0) room - px(value_column + label_gap) else px(width);
+    const height = c.ImGui_GetFrameHeight();
+    const origin = c.ImGui_GetCursorScreenPos();
+    const thumb = px(7);
+    _ = c.ImGui_InvisibleButton(print("##{s}", .{id}).ptr, vec2(w, height), 0);
+    const active = c.ImGui_IsItemActive();
+    const hovered = c.ImGui_IsItemHovered(0);
+    var changed = false;
+    const left = origin.x + thumb;
+    const span = w - 2 * thumb;
+    if (active and span > 0) {
+        const at = std.math.clamp((c.ImGui_GetMousePos().x - left) / span, 0, 1);
+        const next = min + at * (max - min);
+        if (next != value.*) {
+            value.* = next;
+            changed = true;
+        }
+    }
+    const share = std.math.clamp((value.* - min) / (max - min), 0, 1);
+    const list = c.ImGui_GetWindowDrawList();
+    const middle = origin.y + height / 2;
+    const disabled = c.ImGui_GetStyle().*.Alpha < 1 or (c.ImGui_GetItemFlags() & c.ImGuiItemFlags_Disabled) != 0;
+    const amber = if (disabled) theme.text_tertiary else theme.accent;
+    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - px(2)), vec2(left + span, middle + px(2)), theme.imU32(theme.track), px(2), 0);
+    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - px(2)), vec2(left + span * share, middle + px(2)), theme.imU32(amber), px(2), 0);
+    c.ImDrawList_AddCircleFilled(list, vec2(left + span * share, middle), if (hovered or active) thumb + px(1) else thumb, theme.imU32(amber), 16);
+    return changed;
+}
+
+/// A value in the value column after a slider: monospaced, to the right.
+pub fn valueText(shown: []const u8) void {
+    c.ImGui_SameLineEx(0, px(label_gap));
+    const end = c.ImGui_GetCursorPosX() + px(value_column);
+    fonts.push(.mono);
+    const width = c.ImGui_CalcTextSize(print("{s}", .{shown}).ptr).x;
+    c.ImGui_SetCursorPosX(end - width);
+    c.ImGui_AlignTextToFramePadding();
+    text(shown);
+    fonts.pop();
+}
+
+/// A labelled slider row with its value: the settings grid's commonest row. True when it moved.
+pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format: []const u8) bool {
+    c.ImGui_PushID(print("{s}", .{label}).ptr);
+    defer c.ImGui_PopID();
+    rowLabel(label);
+    const changed = slider("slider", v, min, max, 0);
+    valueText(formatSigned(format, v.*));
+    return changed;
+}
+
+/// `v` printed with `format`, with a true minus sign as in the design.
+fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
+    const shown = print(format, .{@abs(v)});
+    // −0.00 reads as a mistake: a value that prints as zero gets no sign.
+    const zero = for (shown) |ch| {
+        if (ch >= '1' and ch <= '9') break false;
+    } else true;
+    if (v < 0 and !zero) return print("−{s}", .{shown});
+    return shown;
+}
+
+/// A horizontal line across the window at the cursor, in the divider colour.
+pub fn divider() void {
+    const origin = c.ImGui_GetCursorScreenPos();
+    const window = c.ImGui_GetWindowPos();
+    const width = c.ImGui_GetWindowWidth();
+    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(window.x, origin.y), vec2(window.x + width, origin.y), theme.imU32(theme.divider));
+}
+
+/// A section of a side panel: 12 pixels of space above and below, and a divider under it. The
+/// panel's own padding gives the sides. Call `endSection` after.
+pub fn beginSection(id: [:0]const u8) void {
+    c.ImGui_PushID(id.ptr);
+    const y = c.ImGui_GetCursorPosY();
+    // After an earlier section the cursor is a line's spacing below its divider.
+    const at_top = y <= c.ImGui_GetCursorStartPos().y;
+    c.ImGui_SetCursorPosY(y + px(12) - if (at_top) 0 else c.ImGui_GetStyle().*.ItemSpacing.y);
+}
+
+pub fn endSection(line: bool) void {
+    const bottom = c.ImGui_GetCursorPosY() - c.ImGui_GetStyle().*.ItemSpacing.y + px(12);
+    c.ImGui_SetCursorPosY(bottom);
+    if (line) divider();
+    c.ImGui_Dummy(vec2(0, 1));
+    c.ImGui_PopID();
+}
+
+/// An image `width` × `height` filling the box from `min` to `max`, cut to the box's shape from
+/// the middle.
+pub fn imageCover(list: *c.ImDrawList, texture: c.ImTextureRef, width: u32, height: u32, min: Vec2, max: Vec2, rounding: f32) void {
+    const box = (max.x - min.x) / (max.y - min.y);
+    const picture = @as(f32, @floatFromInt(width)) / @as(f32, @floatFromInt(height));
+    var uv_min = vec2(0, 0);
+    var uv_max = vec2(1, 1);
+    if (picture > box) {
+        uv_min.x = (1 - box / picture) / 2;
+        uv_max.x = 1 - uv_min.x;
+    } else {
+        uv_min.y = (1 - picture / box) / 2;
+        uv_max.y = 1 - uv_min.y;
+    }
+    c.ImDrawList_AddImageRounded(list, texture, min, max, uv_min, uv_max, 0xFFFFFFFF, rounding, 0);
+}
+
+/// A rectangle outline.
+pub fn outline(min: Vec2, max: Vec2, color: theme.Color, rounding: f32, thickness: f32) void {
+    c.ImDrawList_AddRectEx(c.ImGui_GetWindowDrawList(), min, max, theme.imU32(color), rounding, thickness, 0);
+}
+
+/// A divider along one side of the current child window.
+pub fn edge(side: enum { left, right }) void {
+    const pos = c.ImGui_GetWindowPos();
+    const size = c.ImGui_GetWindowSize();
+    const x = if (side == .left) pos.x else pos.x + size.x - 1;
+    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(x, pos.y), vec2(x, pos.y + size.y), theme.imU32(theme.divider));
+}
+
+/// A dashed line from `from` to `to`: dashes `dash` long with `gap` between, in screen pixels.
+pub fn dashedLine(list: *c.ImDrawList, from: Vec2, to: Vec2, colour: u32, thickness: f32, dash: f32, gap: f32) void {
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = @sqrt(dx * dx + dy * dy);
+    if (length == 0) return;
+    var at: f32 = 0;
+    while (at < length) : (at += dash + gap) {
+        const end = @min(at + dash, length);
+        c.ImDrawList_AddLineEx(list, vec2(from.x + dx * at / length, from.y + dy * at / length), vec2(from.x + dx * end / length, from.y + dy * end / length), colour, thickness);
+    }
+}
+
+/// The dashed outline of the rectangle from `min` to `max`, its lines inside it.
+pub fn dashedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, thickness: f32, dash: f32, gap: f32) void {
+    const inset = thickness / 2;
+    const a = vec2(min.x + inset, min.y + inset);
+    const b = vec2(max.x - inset, min.y + inset);
+    const d = vec2(max.x - inset, max.y - inset);
+    const e = vec2(min.x + inset, max.y - inset);
+    for ([_][2]Vec2{ .{ a, b }, .{ b, d }, .{ e, d }, .{ a, e } }) |side| dashedLine(list, side[0], side[1], colour, thickness, dash, gap);
+}
+
+/// The design's dashed box for something to add or not yet available: a one-pixel dashed outline
+/// with rounded corners of `radius`.
+pub fn dashedRoundedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, radius: f32) void {
+    const dash = px(3);
+    const gap = px(3);
+    dashedLine(list, vec2(min.x + radius, min.y + 0.5), vec2(max.x - radius, min.y + 0.5), colour, 1, dash, gap);
+    dashedLine(list, vec2(min.x + radius, max.y - 0.5), vec2(max.x - radius, max.y - 0.5), colour, 1, dash, gap);
+    dashedLine(list, vec2(min.x + 0.5, min.y + radius), vec2(min.x + 0.5, max.y - radius), colour, 1, dash, gap);
+    dashedLine(list, vec2(max.x - 0.5, min.y + radius), vec2(max.x - 0.5, max.y - radius), colour, 1, dash, gap);
+    // The corners, whole.
+    const corners = [_]struct { Vec2, f32 }{
+        .{ vec2(min.x + radius, min.y + radius), std.math.pi },
+        .{ vec2(max.x - radius, min.y + radius), 1.5 * std.math.pi },
+        .{ vec2(max.x - radius, max.y - radius), 0 },
+        .{ vec2(min.x + radius, max.y - radius), 0.5 * std.math.pi },
+    };
+    for (corners) |corner| {
+        c.ImDrawList_PathArcTo(list, corner[0], radius - 0.5, corner[1], corner[1] + 0.5 * std.math.pi, 6);
+        c.ImDrawList_PathStroke(list, colour, 1, 0);
+    }
+}

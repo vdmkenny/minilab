@@ -1,0 +1,24 @@
+# Zig's build output, its cache, and the packages it fetches into the project.
+/zig-out/
+/.zig-cache/
+/zig-pkg/
+
+# Scans, camera files, pictures and the makers' datasheets: people's own films and other people's
+# documents. `scripts/check-files.sh`, run by the pre-commit hook and by CI, refuses them too.
+*.[pP][pP][mM]
+*.[pP][gG][mM]
+*.[pP][nN][mM]
+*.[tT][iI][fF]
+*.[tT][iI][fF][fF]
+*.[jJ][pP][gG]
+*.[jJ][pP][eE][gG]
+*.[hH][eE][iI][cC]
+*.[dD][nN][gG]
+*.[nN][eE][fF]
+*.[cC][rR][23]
+*.[aA][rR][wW]
+*.[rR][aA][fF]
+*.[pP][dD][fF]
+
+# The pictures negscan takes of its screens with --screenshot.
+/shots/

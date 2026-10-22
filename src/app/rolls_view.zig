@@ -1,0 +1,464 @@
+//! The Rolls workspace: a contact sheet per roll, each with its card and filmstrip, and the panel
+//! for a new roll.
+
+const std = @import("std");
+const c = @import("c");
+const negscan = @import("negscan");
+const gui = @import("../ui/gui.zig");
+const theme = @import("../ui/theme.zig");
+const fonts = @import("../ui/fonts.zig");
+const labels = @import("labels.zig");
+const Library = @import("library.zig").Library;
+const shortcuts = @import("shortcuts.zig");
+const Dialog = @import("../platform/file_dialog.zig").Dialog;
+
+const roll = negscan.roll;
+const develop = negscan.develop;
+const formats = negscan.formats;
+
+/// Sizes in the design's pixels.
+const page_padding_x = 20;
+const page_padding_y = 16;
+const card_width = 210;
+const card_padding_x = 14;
+const card_padding_y = 12;
+const thumb_height = 64;
+const thumb_gap = 4;
+const sprocket_band = 8;
+const row_gap = 12;
+const form_width = 340;
+const search_width = 240;
+/// The longest path the form keeps.
+const path_field = 1024;
+
+/// What the flat field's button opens.
+const flat_files = [_]c.SDL_DialogFileFilter{
+    .{ .name = "Camera RAW and TIFF", .pattern = negscan.input.extensions },
+};
+
+pub const State = struct {
+    search: [gui.text_capacity:0]u8 = @splat(0),
+    /// 0 for all film sizes, else the size's index in `film_sizes` plus one.
+    size_filter: usize = 0,
+    show_form: bool = false,
+    form: Form = .{},
+    /// Put the keyboard in the search field on the next frame.
+    focus_search: bool = false,
+    /// The dialog for the new roll's flat field.
+    flat_dialog: Dialog = .{ .filters = &flat_files },
+
+    pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
+        state.flat_dialog.deinit(gpa);
+    }
+};
+
+/// The new roll's fields.
+const Form = struct {
+    name: [gui.text_capacity:0]u8 = @splat(0),
+    kind: usize = 0,
+    stock: usize = 0,
+    size: usize = 0,
+    format: usize = 0,
+    camera: [gui.text_capacity:0]u8 = @splat(0),
+    lens: [gui.text_capacity:0]u8 = @splat(0),
+    copyright: [gui.text_capacity:0]u8 = @splat(0),
+    notes: [gui.text_capacity * 4:0]u8 = @splat(0),
+    input: usize = 0,
+    /// A camera roll's flat field: the file of a shot of the light source with no film.
+    flat: [path_field:0]u8 = @splat(0),
+    /// Whether the name was filled in for this showing of the form.
+    named: bool = false,
+    /// Why the last Create didn't make the roll.
+    problem: ?[]const u8 = null,
+};
+
+/// What the user did on the sheet.
+pub const Action = union(enum) {
+    none,
+    /// Open the roll in Develop, at this frame.
+    open: struct { roll: usize, frame: usize = 0 },
+    created: usize,
+    /// Files were dropped on this roll's row.
+    dropped_on: usize,
+};
+
+/// The film sizes a roll can have, and how the form lists them.
+const film_sizes = [_]formats.FilmSize{ .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet };
+const film_size_names = [_][]const u8{ "135 (35mm)", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
+const filter_names = [_][]const u8{ "All film sizes", "135", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
+const inputs = [_]roll.Input{ .scanner, .camera_raw, .tiff_files };
+const input_names = [_][]const u8{ "Scanner", "Camera RAW", "TIFF files" };
+
+/// The standard formats of film size `size`.
+fn formatsOf(size: formats.FilmSize, buffer: []formats.Standard) []formats.Standard {
+    var n: usize = 0;
+    for (std.enums.values(formats.Standard)) |id| {
+        if (id.format().size != size) continue;
+        buffer[n] = id;
+        n += 1;
+    }
+    return buffer[0..n];
+}
+
+/// Draws the sheet. `drop` is where files were dropped this frame, if they were.
+pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, drop: ?gui.Vec2) Action {
+    var action: Action = .none;
+    const available = c.ImGui_GetContentRegionAvail();
+    const top = c.ImGui_GetCursorScreenPos();
+    const form = if (state.show_form) gui.px(form_width) else 0;
+
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ChildBg, theme.page);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(page_padding_x), gui.px(page_padding_y)));
+    _ = c.ImGui_BeginChild("sheet", gui.vec2(available.x - form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
+    c.ImGui_PopStyleVar();
+    drawTitleRow(state, library);
+    c.ImGui_Dummy(gui.vec2(0, gui.px(14) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
+
+    var shown: usize = 0;
+    for (library.rolls.items, 0..) |*r, i| {
+        if (!matches(state, r.info)) continue;
+        shown += 1;
+        c.ImGui_PushIDInt(@intCast(i));
+        if (drawRow(library, gpa, r, i, drop)) |row_action| action = row_action;
+        c.ImGui_PopID();
+        c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
+    }
+    if (library.rolls.items.len == 0) {
+        gui.paragraph(theme.text_tertiary, "No rolls yet. Make one with New roll; then scan into it, or drop scans on its row.");
+    } else if (shown == 0) {
+        gui.paragraph(theme.text_tertiary, "No roll matches.");
+    }
+    c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
+    gui.paragraph(theme.text_tertiary, "Undeveloped frames show the raw scan. A roll is a folder: raw scans that are never changed, one settings file per frame, and the exports.");
+    c.ImGui_EndChild();
+    c.ImGui_PopStyleColor();
+
+    if (state.show_form) {
+        c.ImGui_SetCursorScreenPos(gui.vec2(top.x + available.x - form, top.y));
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(16), gui.px(16)));
+        _ = c.ImGui_BeginChild("new roll", gui.vec2(form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
+        c.ImGui_PopStyleVar();
+        const window = c.ImGui_GetWindowPos();
+        c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.divider));
+        if (drawForm(state, library, gpa, io)) |index| action = .{ .created = index };
+        c.ImGui_EndChild();
+    }
+    return action;
+}
+
+fn matches(state: *const State, info: roll.Info) bool {
+    if (state.size_filter > 0 and info.format.format().size != film_sizes[state.size_filter - 1]) return false;
+    const query = std.mem.sliceTo(&state.search, 0);
+    if (query.len == 0) return true;
+    for ([_]?[]const u8{ info.name, info.stock, info.camera }) |field| {
+        if (field) |f| if (gui.containsIgnoreCase(f, query)) return true;
+    }
+    return false;
+}
+
+/// "Rolls", where the library is, then search, the film-size filter and New roll on the right.
+fn drawTitleRow(state: *State, library: *Library) void {
+    const row_top = c.ImGui_GetCursorPosY();
+    const height = c.ImGui_GetFrameHeight();
+    const right = c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX();
+    const new_label = "New roll";
+    fonts.push(.semibold);
+    const new_width = c.ImGui_CalcTextSize(new_label).x + gui.px(12 * 2 + 14 + 6);
+    fonts.pop();
+    const filter_width = gui.px(130);
+    const controls = gui.px(search_width) + filter_width + new_width + gui.px(10 * 2);
+
+    fonts.pushSized(.semibold, 18);
+    const title_height = c.ImGui_GetFontSize();
+    c.ImGui_SetCursorPosY(row_top + (height - title_height) / 2);
+    gui.text("Rolls");
+    fonts.pop();
+    c.ImGui_SameLineEx(0, gui.px(10));
+    c.ImGui_SetCursorPosY(row_top);
+    c.ImGui_AlignTextToFramePadding();
+    const count = gui.print(" · {d} {s}", .{ library.rolls.items.len, if (library.rolls.items.len == 1) "roll" else "rolls" });
+    const room = right - c.ImGui_GetCursorPosX() - controls - gui.px(20) - c.ImGui_CalcTextSize(count).x;
+    gui.textColored(theme.text_tertiary, gui.print("{s}{s}", .{ gui.elideStart(library.label, room), count }));
+
+    c.ImGui_SameLineEx(right - controls, 0);
+    if (state.focus_search) c.ImGui_SetKeyboardFocusHere();
+    state.focus_search = false;
+    _ = gui.textField("search", &state.search, "Search name, stock, camera", search_width);
+    shortcuts.tooltip("Finds rolls by name, stock or camera", .find);
+    c.ImGui_SameLineEx(0, gui.px(10));
+    if (gui.combo("film size", &filter_names, state.size_filter, filter_width / gui.scale)) |picked| state.size_filter = picked;
+    c.ImGui_SameLineEx(0, gui.px(10));
+    const corner = c.ImGui_GetCursorScreenPos();
+    if (gui.buttonOf(.primary, "##new roll", gui.vec2(new_width / gui.scale, height / gui.scale))) {
+        state.show_form = !state.show_form;
+        state.form = .{};
+    }
+    shortcuts.tooltip("A new roll in the library", .new_roll);
+    // The plus sign, then the label, as the design has them: 12 pixels in, a 14-pixel icon, a
+    // 6-pixel gap.
+    const list = c.ImGui_GetWindowDrawList();
+    const ink = theme.imU32(theme.on_accent);
+    const plus = gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2);
+    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x - gui.px(5), plus.y), gui.vec2(plus.x + gui.px(5), plus.y), ink, gui.px(1.8));
+    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x, plus.y - gui.px(5)), gui.vec2(plus.x, plus.y + gui.px(5)), ink, gui.px(1.8));
+    fonts.push(.semibold);
+    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(12 + 14 + 6), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), ink, new_label);
+    fonts.pop();
+}
+
+/// How the holes along a film's edge are drawn.
+const Sprockets = enum { dense, per_frame, none };
+
+fn sprocketsOf(size: formats.FilmSize) Sprockets {
+    return switch (size) {
+        .@"135" => .dense,
+        .@"110", .@"126" => .per_frame,
+        else => .none,
+    };
+}
+
+/// One roll: its card, then its filmstrip.
+fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
+    var action: ?Action = null;
+    const origin = c.ImGui_GetCursorScreenPos();
+    const list = c.ImGui_GetWindowDrawList();
+    const line = c.ImGui_GetTextLineHeight() * 1.4;
+    const card_height = gui.px(card_padding_y * 2 + 21 + 17 + 3 * 3 + 6 + 3 + 3) + line * 3;
+    const format = r.info.format.format();
+
+    // The card.
+    if (c.ImGui_InvisibleButton("card", gui.vec2(gui.px(card_width), card_height), 0)) action = .{ .open = .{ .roll = index } };
+    const hovered = c.ImGui_IsItemHovered(0);
+    c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + gui.px(card_width), origin.y + card_height), theme.imU32(if (hovered) theme.control else theme.panel), gui.px(6), 0);
+    var at = gui.vec2(origin.x + gui.px(card_padding_x), origin.y + gui.px(card_padding_y));
+    const inner = gui.px(card_width - 2 * card_padding_x);
+    fonts.pushSized(.semibold, 15);
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.text), gui.elideEnd(r.info.name, inner));
+    fonts.pop();
+    at.y += gui.px(21 + 3);
+    fonts.pushSized(.mono, 12);
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.accent), gui.print("{s}", .{r.info.shot orelse r.info.created orelse ""}));
+    fonts.pop();
+    at.y += gui.px(17 + 3);
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), gui.elideEnd(r.info.stock orelse labels.filmKind(r.info.kind), inner));
+    at.y += line + gui.px(3);
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_tertiary), gui.elideEnd(labels.filmAndFormat(r.info.format), inner));
+
+    const total = r.frames.items.len;
+    const developed = r.developedCount();
+    const bar_y = origin.y + card_height - gui.px(card_padding_y + 3);
+    c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(3) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
+    const bar_width = gui.px(card_width - 2 * card_padding_x);
+    c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(3)), theme.imU32(theme.border), gui.px(2), 0);
+    if (total > 0 and developed > 0) {
+        const done = bar_width * @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
+    }
+
+    // The filmstrip, in the middle of the row's height.
+    const number_height = gui.px(15);
+    const strip_height = gui.px(sprocket_band * 2 + thumb_gap * 2 + thumb_height + 3) + number_height;
+    const strip_x = origin.x + gui.px(card_width + 12);
+    const strip_top = origin.y + (card_height - strip_height) / 2;
+    const thumbs_top = strip_top + gui.px(sprocket_band + thumb_gap);
+    const height = gui.px(thumb_height);
+    const width = @round(height * format.ratio());
+    const right = c.ImGui_GetWindowPos().x + c.ImGui_GetWindowWidth() - gui.px(page_padding_x);
+    const more_width = gui.px(14 * 2) + c.ImGui_CalcTextSize("+00 more").x;
+    var fit = @max(1, @as(usize, @intFromFloat(@floor((right - strip_x + gui.px(thumb_gap)) / (width + gui.px(thumb_gap))))));
+    if (fit < total) fit = @max(1, @as(usize, @intFromFloat(@floor((right - strip_x - more_width) / (width + gui.px(thumb_gap))))));
+    const shown = @min(total, fit);
+
+    var x = strip_x;
+    for (0..shown) |frame| {
+        const corner = gui.vec2(x, thumbs_top);
+        const far = gui.vec2(x + width, thumbs_top + height);
+        c.ImGui_SetCursorScreenPos(corner);
+        c.ImGui_PushIDInt(@intCast(frame));
+        if (c.ImGui_InvisibleButton("frame", gui.vec2(width, height + gui.px(3) + number_height), 0)) action = .{ .open = .{ .roll = index, .frame = frame } };
+        c.ImGui_PopID();
+        if (library.thumbnail(gpa, .{ .roll = index, .frame = frame })) |t| {
+            gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(2));
+        } else {
+            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(2), 0);
+        }
+        fonts.pushSized(.mono, 11);
+        const number = gui.print("{d:0>2}", .{frame + 1});
+        const number_width = c.ImGui_CalcTextSize(number).x;
+        c.ImDrawList_AddText(list, gui.vec2(x + (width - number_width) / 2, far.y + gui.px(3)), theme.imU32(theme.text_tertiary), number);
+        fonts.pop();
+        x += width + gui.px(thumb_gap);
+    }
+    if (total > shown) {
+        const corner = gui.vec2(x, thumbs_top);
+        c.ImGui_SetCursorScreenPos(corner);
+        if (c.ImGui_InvisibleButton("more", gui.vec2(more_width, height), 0)) action = .{ .open = .{ .roll = index, .frame = shown } };
+        gui.dashedRect(list, corner, gui.vec2(corner.x + more_width, corner.y + height), theme.imU32(theme.border), 1, gui.px(4), gui.px(3));
+        const more = gui.print("+{d} more", .{total - shown});
+        const size = c.ImGui_CalcTextSize(more);
+        c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.text_secondary), more);
+        x += more_width + gui.px(thumb_gap);
+    }
+    if (total == 0) {
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet: scan into this roll, or drop scans here.");
+    }
+
+    // The holes along both edges.
+    const sprockets: Sprockets = if (total == 0) .none else sprocketsOf(format.size);
+    for ([_]f32{ strip_top + gui.px(sprocket_band / 2), thumbs_top + height + gui.px(3) + number_height + gui.px(thumb_gap + sprocket_band / 2) }) |y| {
+        switch (sprockets) {
+            .none => {},
+            .dense => {
+                var hole = strip_x + gui.px(6);
+                while (hole < right) : (hole += gui.px(12)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(1.6), theme.imU32(theme.sprocket), 8);
+            },
+            .per_frame => {
+                var hole = strip_x + gui.px(6);
+                while (hole < right) : (hole += width + gui.px(thumb_gap)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(2), theme.imU32(theme.sprocket), 8);
+            },
+        }
+    }
+
+    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
+    c.ImGui_Dummy(gui.vec2(0, 0));
+    if (action == null) {
+        if (drop) |p| {
+            if (p.y >= origin.y and p.y < origin.y + card_height and p.x >= origin.x and p.x < right) action = .{ .dropped_on = index };
+        }
+    }
+    return action;
+}
+
+/// The new-roll panel. Returns the new roll's index once it's made.
+fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?usize {
+    const form = &state.form;
+    if (!form.named) {
+        _ = std.fmt.bufPrintSentinel(&form.name, "Roll {d:0>3}", .{library.rolls.items.len + 1}, 0) catch {};
+        form.named = true;
+    }
+
+    const close_size = c.ImGui_GetFrameHeight();
+    c.ImGui_AlignTextToFramePadding();
+    gui.title("New roll", 15);
+    c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - close_size - c.ImGui_GetStyle().*.ItemSpacing.x, 0);
+    const corner = c.ImGui_GetCursorScreenPos();
+    if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
+    const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
+    const list = c.ImGui_GetWindowDrawList();
+    const ink = theme.imU32(theme.text_secondary);
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x + gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x - gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
+
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(10)));
+    defer c.ImGui_PopStyleVar();
+    gui.rowLabel("Name");
+    if (gui.textField("name", &form.name, "", 0)) form.problem = null;
+    if (form.problem) |problem| {
+        gui.rowLabel("");
+        gui.paragraph(theme.text_tertiary, problem);
+    }
+    gui.rowLabel("Film type");
+    if (gui.combo("film type", &labels.film_kind_labels, form.kind, 0)) |picked| {
+        form.kind = picked;
+        form.stock = 0;
+    }
+    gui.rowLabel("Stock");
+    var stock_buffer: [labels.stock_choices.len + 1][]const u8 = undefined;
+    const stock_names = labels.stockNames(labels.film_kinds[form.kind], "Other", &stock_buffer);
+    if (form.stock >= stock_names.len) form.stock = 0;
+    if (gui.searchCombo("stock", stock_names, form.stock, 0, "Search stocks")) |picked| form.stock = picked;
+    gui.rowLabel("Film size");
+    if (gui.combo("film size", &film_size_names, form.size, 0)) |picked| {
+        form.size = picked;
+        form.format = 0;
+    }
+    var buffer: [std.enums.values(formats.Standard).len]formats.Standard = undefined;
+    const choices = formatsOf(film_sizes[form.size], &buffer);
+    var names: [buffer.len][]const u8 = undefined;
+    for (choices, 0..) |id, i| names[i] = labels.format(id);
+    gui.rowLabel("Format");
+    if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
+    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
+    gui.paragraph(theme.text_tertiary, "One format for the whole roll; detection snaps every frame to it. Sizes are nominal and measured from the scan.");
+    gui.rowLabel("Camera");
+    _ = gui.textField("camera", &form.camera, "[Camera]", 0);
+    gui.rowLabel("Lens");
+    _ = gui.textField("lens", &form.lens, "[Lens]", 0);
+    gui.rowLabel("Copyright");
+    _ = gui.textField("copyright", &form.copyright, "[Your name]", 0);
+    const notes_x = c.ImGui_GetCursorPosX();
+    gui.textColored(theme.text_secondary, "Notes");
+    c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
+    _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), c.ImGui_GetTextLineHeight() * 1.4 * 3 + gui.px(12)), 0, null, null);
+    gui.rowLabel("Input");
+    if (gui.combo("input", &input_names, form.input, 0)) |picked| form.input = picked;
+    const chosen = state.flat_dialog.take(gpa, io);
+    defer Dialog.free(gpa, chosen);
+    if (chosen.len > 0) {
+        const path = chosen[chosen.len - 1];
+        gui.setText(&form.flat, path) catch std.log.err("the flat field's path is too long: {s}", .{path});
+    }
+    const camera = inputs[form.input] == .camera_raw;
+    if (camera) {
+        gui.rowLabel("Flat field");
+        const flat = std.mem.sliceTo(&form.flat, 0);
+        const width = c.ImGui_GetContentRegionAvail().x;
+        const label = if (flat.len == 0) "Choose a shot…" else gui.elideStart(std.fs.path.basename(flat), width - c.ImGui_GetStyle().*.FramePadding.x * 2);
+        c.ImGui_PushID("flat field");
+        if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
+        c.ImGui_PopID();
+        c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
+        gui.paragraph(theme.text_tertiary, "Optional: the light source with no film, at the frames' exposure. Every frame imported is divided by it, to even out the light.");
+    }
+
+    // The button sits at the bottom of the panel.
+    const button_height = 38;
+    const bottom = c.ImGui_GetWindowHeight() - gui.px(16 + button_height);
+    if (c.ImGui_GetCursorPosY() < bottom) c.ImGui_SetCursorPosY(bottom);
+    const name = std.mem.sliceTo(&form.name, 0);
+    c.ImGui_BeginDisabled(name.len == 0 or choices.len == 0);
+    defer c.ImGui_EndDisabled();
+    if (!gui.buttonOf(.primary, if (inputs[form.input] == .scanner) "Create roll and scan" else "Create roll", gui.vec2(c.ImGui_GetContentRegionAvail().x / gui.scale, button_height))) return null;
+
+    const stock_count = stock_names.len - 1;
+    var made = roll.Roll.create(gpa, io, library.path, .{
+        .name = name,
+        .kind = labels.film_kinds[form.kind],
+        .stock = if (form.stock < stock_count) stock_names[form.stock] else null,
+        .format = choices[form.format],
+        .input = inputs[form.input],
+        .camera = optional(&form.camera),
+        .lens = optional(&form.lens),
+        .copyright = optional(&form.copyright),
+        .notes = optional(&form.notes),
+    }) catch |err| {
+        std.log.err("can't make the roll: {t}", .{err});
+        form.problem = switch (err) {
+            error.RollExists => "The library has a roll of that name already.",
+            error.BadRollName => "A roll's name can't hold / \\ or :, or be . or ..",
+            else => "The roll couldn't be made; the log says why.",
+        };
+        return null;
+    };
+    const flat = std.mem.sliceTo(&form.flat, 0);
+    if (camera and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| std.log.err("can't use {s} as the flat field: {t}", .{ flat, err });
+    const path = gpa.dupe(u8, made.path) catch return null;
+    defer gpa.free(path);
+    made.close();
+    library.reload(gpa, io) catch return null;
+    state.show_form = false;
+    state.form = .{};
+    return library.find(path);
+}
+
+/// Gives `r` the shot in the file at `path` as its flat field.
+fn setFlatField(gpa: std.mem.Allocator, io: std.Io, r: *roll.Roll, path: []const u8) !void {
+    var shot = try negscan.input.read(gpa, io, path);
+    defer shot.deinit(gpa);
+    try r.setFlatField(gpa, io, shot.scan);
+}
+
+fn optional(buffer: anytype) ?[]const u8 {
+    const text = std.mem.sliceTo(buffer, 0);
+    return if (text.len == 0) null else text;
+}

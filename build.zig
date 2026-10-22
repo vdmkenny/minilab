@@ -1,0 +1,161 @@
+const std = @import("std");
+const Translator = @import("translate_c").Translator;
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const strip = b.option(bool, "strip", "Leave the debug information out of the executable, as the releases do") orelse false;
+
+    // The codecs: libjpeg-turbo, libtiff, LibRaw and Little CMS, with their licences.
+    const codecs = b.dependency("codecs", .{ .target = target, .optimize = optimize });
+    for (@import("codecs").licences) |name| b.getInstallStep().dependOn(&b.addInstallFile(codecs.namedLazyPath(name), name).step);
+
+    // The core: everything that works without a window.
+    const core = b.addModule("negscan", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "codecs", .module = codecs.module("codecs") },
+        },
+    });
+
+    // Building for a Mac other than the host, SDL and the app need the SDK's paths: from xcrun.
+    const macos_sdk: ?[]const u8 = if (target.result.os.tag == .macos and !target.query.isNative())
+        std.mem.trimEnd(u8, b.run(&.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" }), "\n")
+    else
+        null;
+    const sdl_dependency = if (macos_sdk) |sdk| b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        .system_include_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/include" })),
+        .system_framework_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "System/Library/Frameworks" })),
+        .library_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/lib" })),
+    }) else b.dependency("sdl", .{ .target = target, .optimize = optimize });
+    const sdl_library = sdl_dependency.artifact("SDL3");
+
+    // Dear ImGui's docking branch draws the interface. It is C++: Dear Bindings' C API wraps it,
+    // and its own backends drive it with SDL3 and SDL_GPU.
+    const interface = interfaceLibrary(b, target, sdl_library);
+    if (macos_sdk) |sdk| addMacosSdk(b, interface.root_module, sdk);
+
+    // One translated header holds SDL and Dear ImGui, so the types they share are the same.
+    const translator: Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("src/platform/c.h"),
+        .target = target,
+        .optimize = optimize,
+        .default_init = true,
+    });
+    translator.linkLibrary(interface);
+    translator.linkLibrary(sdl_library);
+    for (interfaceIncludes(b)) |include| translator.addIncludePath(include);
+
+    // The version Release Please keeps in build.zig.zon, and where the checkout is past its last
+    // release, for `--version` (`src/version.zig`).
+    const build_options = b.addOptions();
+    build_options.addOption([]const u8, "version", @import("build.zig.zon").version);
+    build_options.addOption([]const u8, "describe", describe(b));
+
+    const app = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .strip = strip,
+        .imports = &.{
+            .{ .name = "negscan", .module = core },
+            .{ .name = "c", .module = translator.mod },
+        },
+    });
+    app.addOptions("build_options", build_options);
+    if (macos_sdk) |sdk| addMacosSdk(b, app, sdk);
+    addFonts(b, app);
+
+    const exe = b.addExecutable(.{ .name = "negscan", .root_module = app });
+    b.installArtifact(exe);
+
+    const run = b.addRunArtifact(exe);
+    run.step.dependOn(b.getInstallStep());
+    run.addPassthruArgs();
+    b.step("run", "Run negscan").dependOn(&run.step);
+
+    const tests = b.step("test", "Run tests");
+    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = core })).step);
+    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = app })).step);
+
+    // `zig build check` compiles the program and the tests without linking them:
+    // `zig build check -fincremental --watch` reports errors within moments of a save.
+    const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
+    check.dependOn(&b.addTest(.{ .root_module = core }).step);
+    check.dependOn(&b.addTest(.{ .root_module = app }).step);
+    check.dependOn(&b.addExecutable(.{ .name = "negscan", .root_module = app }).step);
+}
+
+/// `git describe` of the checkout against the release tags, such as `v0.0.1-12-gabc1234-dirty`, or
+/// nothing where there is no git or no tag, as in a source archive. The build can't track what
+/// the answer depends on, so asking makes the build run build.zig again each time.
+fn describe(b: *std.Build) []const u8 {
+    b.graph.poisonCache();
+    const root = b.root.toString(b.allocator) catch @panic("out of memory");
+    return switch (b.runFallible(&.{ "git", "-C", root, "describe", "--tags", "--match", "v*", "--long", "--dirty", "--abbrev=7" }, .{ .stderr_behavior = .ignore })) {
+        .success => |out| std.mem.trimEnd(u8, out, "\n"),
+        else => "",
+    };
+}
+
+/// Gives `module` the macOS SDK's headers, frameworks and libraries at `sdk`.
+fn addMacosSdk(b: *std.Build, module: *std.Build.Module, sdk: []const u8) void {
+    module.addSystemIncludePath(b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/include" })));
+    module.addSystemFrameworkPath(b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "System/Library/Frameworks" })));
+    module.addLibraryPath(b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/lib" })));
+}
+
+/// Dear ImGui with its docking branch, Dear Bindings' C API over it, and its SDL3 and SDL_GPU
+/// backends, as one static library, built optimised whatever the app's mode.
+fn interfaceLibrary(b: *std.Build, target: std.Build.ResolvedTarget, sdl_library: *std.Build.Step.Compile) *std.Build.Step.Compile {
+    const imgui = b.dependency("imgui", .{});
+    const bindings = b.dependency("dear_bindings", .{});
+    const library = b.addLibrary(.{
+        .name = "interface",
+        .linkage = .static,
+        .root_module = b.createModule(.{ .target = target, .optimize = .fast, .link_libcpp = true }),
+    });
+    library.root_module.linkLibrary(sdl_library);
+    for (interfaceIncludes(b)) |include| library.root_module.addIncludePath(include);
+    const flags: []const []const u8 = &.{ "-std=c++17", "-fno-sanitize=undefined" };
+    library.root_module.addCSourceFiles(.{
+        .root = imgui.path("."),
+        .files = &.{ "imgui.cpp", "imgui_draw.cpp", "imgui_tables.cpp", "imgui_widgets.cpp", "imgui_demo.cpp", "backends/imgui_impl_sdl3.cpp", "backends/imgui_impl_sdlgpu3.cpp" },
+        .flags = flags,
+    });
+    library.root_module.addCSourceFiles(.{
+        .root = bindings.path("."),
+        .files = &.{ "dcimgui.cpp", "backends/dcimgui_impl_sdl3.cpp", "backends/dcimgui_impl_sdlgpu3.cpp" },
+        .flags = flags,
+    });
+    for ([_]struct { std.Build.LazyPath, []const u8 }{
+        .{ imgui.path("LICENSE.txt"), "LICENSE-imgui.txt" },
+        .{ bindings.path("LICENSE.txt"), "LICENSE-dear-bindings.txt" },
+    }) |notice| b.getInstallStep().dependOn(&b.addInstallFile(notice[0], notice[1]).step);
+    return library;
+}
+
+fn interfaceIncludes(b: *std.Build) [4]std.Build.LazyPath {
+    const imgui = b.dependency("imgui", .{});
+    const bindings = b.dependency("dear_bindings", .{});
+    return .{ imgui.path("."), imgui.path("backends"), bindings.path("."), bindings.path("backends") };
+}
+
+/// The fonts the app carries: IBM Plex Sans for the interface and JetBrains Mono for values.
+fn addFonts(b: *std.Build, module: *std.Build.Module) void {
+    const plex = b.dependency("plex_sans", .{});
+    const mono = b.dependency("jetbrains_mono", .{});
+    for ([_]struct { []const u8, std.Build.LazyPath }{
+        .{ "IBMPlexSans-Regular.ttf", plex.path("fonts/complete/ttf/IBMPlexSans-Regular.ttf") },
+        .{ "IBMPlexSans-SemiBold.ttf", plex.path("fonts/complete/ttf/IBMPlexSans-SemiBold.ttf") },
+        .{ "JetBrainsMono-Regular.ttf", mono.path("fonts/ttf/JetBrainsMono-Regular.ttf") },
+    }) |font| module.addAnonymousImport(font[0], .{ .root_source_file = font[1] });
+    for ([_]struct { std.Build.LazyPath, []const u8 }{
+        .{ plex.path("LICENSE.txt"), "LICENSE-ibm-plex.txt" },
+        .{ mono.path("OFL.txt"), "LICENSE-jetbrains-mono.txt" },
+    }) |notice| b.getInstallStep().dependOn(&b.addInstallFile(notice[0], notice[1]).step);
+}

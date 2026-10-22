@@ -1,0 +1,147 @@
+//! Binary PNM: what SANE's scanimage writes. Reads colour (PPM) and greyscale (PGM), 8- and
+//! 16-bit; writes colour, 8- or 16-bit.
+
+const std = @import("std");
+const image = @import("../core/image.zig");
+
+/// The magic numbers of a binary PPM and a binary PGM.
+const magic = "P6";
+const grey_magic = "P5";
+
+pub const Error = error{ NotAPpm, UnsupportedDepth, Truncated, InvalidHeader };
+
+/// Bits per sample in the file.
+pub const Depth = enum { eight, sixteen };
+
+/// A PNM read into a scan.
+pub const Decoded = struct {
+    /// The pixels. 8-bit samples are scaled to 16 bits; a greyscale file has its value in all
+    /// three channels.
+    scan: image.Scan,
+    depth: Depth,
+};
+
+/// A colour or greyscale PNM as a scan; see `decode`.
+pub fn read(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocator.Error)!image.Scan {
+    return (try decode(gpa, bytes)).scan;
+}
+
+/// A colour or greyscale PNM as a scan, with the file's depth.
+pub fn decode(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocator.Error)!Decoded {
+    var reader: Header = .{ .bytes = bytes };
+    const kind = try reader.field();
+    const channels: usize = if (std.mem.eql(u8, kind, magic))
+        image.channel_count
+    else if (std.mem.eql(u8, kind, grey_magic))
+        1
+    else
+        return error.NotAPpm;
+    const width = std.fmt.parseInt(usize, try reader.field(), 10) catch return error.InvalidHeader;
+    const height = std.fmt.parseInt(usize, try reader.field(), 10) catch return error.InvalidHeader;
+    const max_value = std.fmt.parseInt(u16, try reader.field(), 10) catch return error.InvalidHeader;
+    if (width == 0 or height == 0) return error.InvalidHeader;
+    // One whitespace character ends the header; the samples follow it.
+    if (reader.position >= bytes.len) return error.Truncated;
+    const data = bytes[reader.position + 1 ..];
+
+    const depth: Depth = switch (max_value) {
+        std.math.maxInt(u8) => .eight,
+        std.math.maxInt(u16) => .sixteen,
+        else => return error.UnsupportedDepth,
+    };
+    const sample_bytes: usize = switch (depth) {
+        .eight => 1,
+        .sixteen => 2,
+    };
+    const pixels = std.math.mul(usize, width, height) catch return error.InvalidHeader;
+    const needed = std.math.mul(usize, pixels, channels * sample_bytes) catch return error.InvalidHeader;
+    if (data.len < needed) return error.Truncated;
+
+    const scan: image.Scan = try .init(gpa, width, height);
+    for (scan.pixels, 0..) |*p, i| {
+        for (p, 0..) |*c, channel| {
+            const at = (i * channels + @min(channel, channels - 1)) * sample_bytes;
+            c.* = switch (depth) {
+                .sixteen => std.mem.readInt(u16, data[at..][0..2], .big),
+                .eight => @as(u16, data[at]) * image.widen_8_to_16,
+            };
+        }
+    }
+    return .{ .scan = scan, .depth = depth };
+}
+
+const Header = struct {
+    bytes: []const u8,
+    position: usize = 0,
+
+    /// The next whitespace-separated field, skipping comments.
+    fn field(header: *Header) Error![]const u8 {
+        const b = header.bytes;
+        while (header.position < b.len) {
+            if (std.ascii.isWhitespace(b[header.position])) {
+                header.position += 1;
+            } else if (b[header.position] == '#') {
+                while (header.position < b.len and b[header.position] != '\n') header.position += 1;
+            } else break;
+        }
+        const start = header.position;
+        while (header.position < b.len and !std.ascii.isWhitespace(b[header.position])) header.position += 1;
+        if (start == header.position) return error.Truncated;
+        return b[start..header.position];
+    }
+};
+
+/// An encoded image as a binary PPM, 8 or 16 bits per sample.
+pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample)) ![]u8 {
+    const header = try std.fmt.allocPrint(gpa, "{s}\n{d} {d}\n{d}\n", .{ magic, encoded.width, encoded.height, std.math.maxInt(Sample) });
+    defer gpa.free(header);
+    const out = try gpa.alloc(u8, header.len + encoded.pixels.len * image.channel_count * @sizeOf(Sample));
+    @memcpy(out[0..header.len], header);
+    var at = header.len;
+    for (encoded.pixels) |p| {
+        for (p) |c| {
+            std.mem.writeInt(Sample, out[at..][0..@sizeOf(Sample)], c, .big);
+            at += @sizeOf(Sample);
+        }
+    }
+    return out;
+}
+
+test "16-bit round trip, with a comment in the header" {
+    const gpa = std.testing.allocator;
+    const bytes = "P6\n# SANE data follows\n2 1\n65535\n" ++ [_]u8{ 0, 1, 0, 2, 0, 3, 0xff, 0xff, 0, 0, 1, 0 };
+    var scan = try read(gpa, bytes);
+    defer scan.deinit(gpa);
+    try std.testing.expectEqual([3]u16{ 1, 2, 3 }, scan.at(0, 0));
+    try std.testing.expectEqual([3]u16{ 65535, 0, 256 }, scan.at(1, 0));
+    const written = try write(gpa, u16, scan);
+    defer gpa.free(written);
+    var again = try read(gpa, written);
+    defer again.deinit(gpa);
+    try std.testing.expectEqualSlices([3]u16, scan.pixels, again.pixels);
+}
+
+test "8-bit samples scale to 16 bits" {
+    const gpa = std.testing.allocator;
+    var decoded = try decode(gpa, "P6 1 1 255\n" ++ [_]u8{ 0, 128, 255 });
+    defer decoded.scan.deinit(gpa);
+    try std.testing.expectEqual(Depth.eight, decoded.depth);
+    try std.testing.expectEqual([3]u16{ 0, 128 * image.widen_8_to_16, image.full_scale }, decoded.scan.at(0, 0));
+}
+
+test "a greyscale PGM has its value in every channel" {
+    const gpa = std.testing.allocator;
+    var decoded = try decode(gpa, "P5 2 1 65535\n" ++ [_]u8{ 0x12, 0x34, 0xff, 0xff });
+    defer decoded.scan.deinit(gpa);
+    try std.testing.expectEqual(Depth.sixteen, decoded.depth);
+    try std.testing.expectEqual([3]u16{ 0x1234, 0x1234, 0x1234 }, decoded.scan.at(0, 0));
+    try std.testing.expectEqual([3]u16{ 65535, 65535, 65535 }, decoded.scan.at(1, 0));
+}
+
+test "headers that lie are refused" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectError(error.Truncated, read(gpa, "P6 1 1 255"));
+    try std.testing.expectError(error.InvalidHeader, read(gpa, "P6 9223372036854775808 2 255\n"));
+    try std.testing.expectError(error.InvalidHeader, read(gpa, "P6 0 5 255\n"));
+    try std.testing.expectError(error.Truncated, read(gpa, "P6 2 2 255\n\x00\x00\x00"));
+}

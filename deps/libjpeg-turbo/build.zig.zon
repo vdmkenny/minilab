@@ -1,0 +1,17 @@
+.{
+    .name = .libjpeg_turbo,
+    // libjpeg-turbo's release 3.2.0: the tag 3.2.0, commit c85e6b905bf237038faa936dab160ebfc5da0344.
+    .version = "3.2.0",
+    .fingerprint = 0xb6dab2cee9a5d49a,
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        .upstream = .{
+            .url = "git+https://github.com/libjpeg-turbo/libjpeg-turbo.git?ref=3.2.0#c85e6b905bf237038faa936dab160ebfc5da0344",
+            .hash = "N-V-__8AABmGjQAgYQlyrJ-ouMoNaYCjrxOVYN6jYelah779",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+    },
+}
