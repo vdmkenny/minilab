@@ -7,6 +7,7 @@ const Texture = @import("../platform/texture.zig").Texture;
 
 const image = minilab.image;
 const roll = minilab.roll;
+const labels = @import("labels.zig");
 
 pub const Key = struct { roll: usize, frame: usize };
 
@@ -104,6 +105,35 @@ pub const Library = struct {
             if (std.mem.eql(u8, r.path, path)) return i;
         }
         return null;
+    }
+
+    /// The scanner or camera a roll was made with, by the name its calibration goes by.
+    pub fn scannerOf(info: roll.Info) ?[]const u8 {
+        return info.scanner orelse info.camera;
+    }
+
+    /// The roll's stock's layer slopes on its scanner, for Stock balance: when the stock has a
+    /// preset with gammas and the scanner is calibrated.
+    pub fn stockSlopes(library: *const Library, rl: *const roll.Roll) ?[3]f32 {
+        if (rl.info.kind != .colour_negative) return null;
+        const gamma = labels.stockGamma(rl.info.stock) orelse return null;
+        const factors = library.calibrations.factors(scannerOf(rl.info) orelse return null) orelse return null;
+        return minilab.calibration.stockSlopes(factors, gamma);
+    }
+
+    /// The roll's stock's curves on its scanner, for frames of film `kind`: null without a stock
+    /// with curves, or for film of another kind.
+    pub fn stockCurves(library: *const Library, rl: *const roll.Roll, kind: minilab.develop.FilmKind) ?minilab.stock_curves.Curves {
+        const choice = labels.findStock(rl.info.stock orelse return null) orelse return null;
+        const preset = choice.preset orelse return null;
+        if (choice.kind != kind) return null;
+        // Each layer's density against Status M: green taken as reading it, and the others scaled
+        // by the scanner's calibration, or as Status M without one.
+        var scale: [3]f32 = @splat(1);
+        if (scannerOf(rl.info)) |scanner| if (library.calibrations.factors(scanner)) |factors| {
+            for (&scale, factors) |*s, f| s.* = if (f > 0) 1 / f else 1;
+        };
+        return minilab.stock_curves.of(preset.*, scale);
     }
 
     /// What `importScans` added: the frames from `first` on, out of `files` files.

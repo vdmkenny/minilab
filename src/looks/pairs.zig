@@ -209,7 +209,7 @@ fn developPlaced(gpa: std.mem.Allocator, scan: image.Scan, longest: usize, gap_b
 
     // The automatic settings, measured as Develop measures an undeveloped frame.
     const stats = try develop.FrameStatistics.measure(gpa, work);
-    var settings = develop.automatic(.colour_negative, gap_base orelse stats.whole.thinnest, stats.centre);
+    var settings = develop.automatic(.colour_negative, gap_base orelse stats.whole.thinnest, stats.centre, null);
     // A channel clipped at full scale in the base and the shadows has nothing to balance by.
     for (&settings.highlight_balance, &settings.shadow_balance) |*high, *low| {
         if (!std.math.isFinite(high.*) or high.* <= 0) high.* = 1;

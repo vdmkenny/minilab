@@ -14,6 +14,7 @@ const develop = @import("develop.zig");
 const encode = @import("encode.zig");
 const look = @import("look.zig");
 const roll = @import("roll.zig");
+const stock_curves = @import("stock_curves.zig");
 /// Reducing by area, to any size.
 pub const resample = @import("resample.zig");
 const pnm = @import("../io/pnm.zig");
@@ -169,7 +170,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     var developed = if (frame.developed)
         try render(gpa, current, frame.settings, frame_look, cancel)
     else
-        try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base);
+        try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, frame.settings.curves());
     defer developed.deinit(gpa);
     if (owned) |*s| {
         s.deinit(gpa);
@@ -517,6 +518,9 @@ pub const Batch = struct {
         /// The file names' pattern, as `fileStem` takes it.
         pattern: []const u8,
         folder: []const u8,
+        /// The roll's stock's curves, for the frames not developed yet, which are developed with
+        /// automatic settings.
+        stock_curves: ?stock_curves.Curves = null,
     };
 
     /// A batch of frames `indices` of `r`, in the looks `catalog` has for them. Destroy it with
@@ -542,6 +546,7 @@ pub const Batch = struct {
             var frame = r.frames.items[index];
             frame.scan = try arena.dupe(u8, frame.scan);
             frame.film_base = r.baseFor(index);
+            if (!frame.developed) frame.settings.stock_curves = request.stock_curves;
             job.* = .{
                 .number = index + 1,
                 .scan_path = try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, frame.scan }),

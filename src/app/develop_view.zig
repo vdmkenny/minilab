@@ -450,13 +450,18 @@ pub const State = struct {
                     library.invalidate(.{ .roll = r, .frame = index });
                 } else |_| {}
             }
-            frame.stock_slopes = stockSlopes(library, rl);
             frame.gap_base = rl.baseFor(index);
             frame.base_from_roll = frame.gap_base != null and (saved.film_base == null or !std.meta.eql(frame.gap_base.?, saved.film_base.?));
             frame.fillNegative();
             // The look holds for undeveloped frames too, as Export takes it.
             frame.look = saved.look;
-            if (saved.developed) frame.settings = saved.settings else frame.measure(saved.settings.kind);
+            if (saved.developed) {
+                frame.settings = saved.settings;
+                frame.stock_slopes = library.stockSlopes(rl);
+            } else {
+                prepareStock(library, rl, &frame, saved.settings.kind);
+                frame.measure(saved.settings.kind);
+            }
             break :frame frame;
         } else frame: {
             const path = state.loose.items[index];
@@ -584,7 +589,7 @@ pub const State = struct {
         const rl = &library.rolls.items[r];
         if (rl.info.kind != .colour_negative or labels.stockGamma(rl.info.stock) == null) return;
         gui.rowLabel("");
-        const scanner = scannerOf(rl.info) orelse {
+        const scanner = Library.scannerOf(rl.info) orelse {
             gui.paragraph(theme.text_tertiary, "Stock balance needs to know the roll's scanner, and this roll doesn't say.");
             return;
         };
@@ -631,11 +636,29 @@ pub const State = struct {
             return;
         };
         state.calibration_note.set("Measured {d} frames: against the datasheet, this scanner's red is ×{d:.2} and its blue ×{d:.2}.", .{ slopes.items.len, factors[0], factors[2] });
-        const frame = if (state.frame) |*f| f else return;
-        frame.stock_slopes = stockSlopes(library, rl);
-        if (frame.settings.white_balance == .stock) {
-            frame.rebalance(.stock, null);
+        state.applyStock(gpa, io, library, r);
+    }
+
+    /// After the roll's stock or its scanner's calibration changed: each developed frame gets the
+    /// stock's curves and is measured again with them, keeping the user's other choices, and on a
+    /// calibrated scanner Auto neutral becomes the stock's balance (`develop.restocked`). Frames
+    /// not developed yet get it when they're opened.
+    fn applyStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
+        const rl = &library.rolls.items[r];
+        const slopes = library.stockSlopes(rl);
+        if (state.frame) |*frame| {
+            frame.stock_slopes = slopes;
+            frame.settings = develop.restocked(frame.settings, frame.centre, library.stockCurves(rl, frame.settings.kind), slopes);
             state.changed();
+        }
+        for (rl.frames.items, 0..) |*saved, i| {
+            if (!saved.developed or i == state.selected) continue;
+            var thumbnail = rl.frameThumbnail(gpa, io, i) catch continue;
+            defer thumbnail.deinit(gpa);
+            const stats = develop.FrameStatistics.measure(gpa, thumbnail) catch continue;
+            saved.settings = develop.restocked(saved.settings, stats.centre, library.stockCurves(rl, saved.settings.kind), slopes);
+            rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
+            library.invalidate(.{ .roll = r, .frame = i });
         }
     }
 
@@ -671,6 +694,7 @@ pub const State = struct {
         const kind = frame.settings.kind;
         frame.settings = .{};
         frame.look = .neutral;
+        if (state.rollIndex(library)) |r| prepareStock(library, &library.rolls.items[r], frame, kind);
         frame.measure(kind);
         state.committed = .of(frame);
         const r = state.rollIndex(library) orelse return;
@@ -1284,11 +1308,12 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         gui.rowLabel("Film type");
         const kind_index = std.mem.indexOfScalar(develop.FilmKind, &labels.film_kinds, s.kind) orelse 0;
         if (gui.combo("film type", &labels.film_kind_labels, kind_index, 0)) |picked| {
+            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, labels.film_kinds[picked]);
             frame.measure(labels.film_kinds[picked]);
             state.changed();
         }
         gui.rowLabel("Stock");
-        drawStock(state, io, library, roll_index);
+        drawStock(state, gpa, io, library, roll_index);
         gui.rowLabel("Look");
         state.drawLook(gpa, io, library);
         if (state.import_failed) |err| {
@@ -1377,7 +1402,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
 }
 
 /// The stock: the roll's, for the whole roll, from the stocks of the frame's film type.
-fn drawStock(state: *State, io: std.Io, library: *Library, roll_index: ?usize) void {
+fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
     const r = roll_index orelse {
         c.ImGui_BeginDisabled(true);
         _ = gui.combo("stock", &.{"None"}, 0, 0);
@@ -1397,11 +1422,7 @@ fn drawStock(state: *State, io: std.Io, library: *Library, roll_index: ?usize) v
     if (gui.searchCombo("stock", names, chosen, 0, "Search stocks")) |picked| {
         info.stock = if (picked < names.len - 1) names[picked] else null;
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
-        frame.stock_slopes = stockSlopes(library, &library.rolls.items[r]);
-        if (frame.settings.white_balance == .stock) {
-            frame.rebalance(.stock, null);
-            state.changed();
-        }
+        state.applyStock(gpa, io, library, r);
     }
     if (labels.findStock(info.stock orelse "")) |choice| {
         if (choice.preset) |preset| {
@@ -1555,7 +1576,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
     const s = source.settings;
     var own = if (target.developed) target.settings else own: {
         const base = rl.baseFor(index);
-        var automatic = develop.automatic(s.kind, base orelse stats.whole.thinnest, stats.centre);
+        var automatic = develop.automatic(s.kind, base orelse stats.whole.thinnest, stats.centre, s.curves());
         if (base != null) automatic.base_source = .gaps;
         break :own automatic;
     };
@@ -1695,15 +1716,10 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
 }
 
 /// The name a roll's calibration goes by: its scanner's, or for camera scans its camera's.
-fn scannerOf(info: roll.Info) ?[]const u8 {
-    return info.scanner orelse info.camera;
-}
-
-/// The roll's stock's layer slopes on its scanner, for Stock balance: when the stock has a preset
-/// with gammas and the scanner is calibrated.
-fn stockSlopes(library: *const Library, rl: *const roll.Roll) ?[3]f32 {
-    if (rl.info.kind != .colour_negative) return null;
-    const gamma = labels.stockGamma(rl.info.stock) orelse return null;
-    const factors = library.calibrations.factors(scannerOf(rl.info) orelse return null) orelse return null;
-    return minilab.calibration.stockSlopes(factors, gamma);
+/// Gives `frame`, about to be measured as film `kind`, the roll's stock: its curves, and on a
+/// calibrated scanner its balance in place of Auto neutral.
+fn prepareStock(library: *const Library, rl: *const roll.Roll, frame: *Frame, kind: develop.FilmKind) void {
+    frame.settings.stock_curves = library.stockCurves(rl, kind);
+    frame.stock_slopes = library.stockSlopes(rl);
+    if (frame.stock_slopes != null and frame.settings.white_balance == .auto_neutral) frame.settings.white_balance = .stock;
 }

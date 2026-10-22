@@ -2,7 +2,8 @@
 //!
 //! 1. Density above the film base, per channel: d = log10(T / T_base), 0 at the base and negative
 //!    for denser film.
-//! 2. A 3×3 matrix in density, for channel crosstalk.
+//! 2. A 3×3 matrix in density, for channel crosstalk, then, with a stock's datasheet curves, each
+//!    layer's density straightened (`stock_curves`).
 //! 3. The inversion curve: density scaled by the density range and balanced per channel, then
 //!    y = max(exposure · (1 + black − 10^c), 0)^contrast, with a soft roll-off of the highlights.
 //! 4. The tone: the curve as it is, softer or harder, or a flat linear or log image for grading.
@@ -16,6 +17,7 @@
 const std = @import("std");
 const image = @import("image.zig");
 const encode = @import("encode.zig");
+const stock_curves = @import("stock_curves.zig");
 
 pub const FilmKind = enum {
     colour_negative,
@@ -153,6 +155,14 @@ pub const Settings = struct {
     tone: Tone = .standard,
     /// Colour after the look, 0..2: 0 grey, 1 as it is. Applied by `saturate`.
     saturation: f32 = 1,
+    /// The roll's stock's curves, straightening each layer's density; null for no stock, or one
+    /// without curves.
+    stock_curves: ?stock_curves.Curves = null,
+
+    /// The curves, for `automatic`.
+    pub fn curves(settings: *const Settings) ?*const stock_curves.Curves {
+        return if (settings.stock_curves) |*c| c else null;
+    }
 };
 
 /// Per-channel gains for `temperature` and `tint` (−100..100): ±100 is half a stop on red and
@@ -214,7 +224,17 @@ fn density(prepared: Prepared, transmission: [3]f32) [3]f32 {
     if (s.kind.isMonochrome()) d = @splat(d[@backingInt(s.monochrome_channel)]);
     var mixed: [3]f32 = undefined;
     for (&mixed, s.matrix) |*out, row| out.* = row[0] * d[0] + row[1] * d[1] + row[2] * d[2];
+    const curves = s.curves() orelse return mixed;
+    // The curves take density above the base, which is `d` turned round.
+    for (&mixed, 0..) |*v, c| v.* = -curves.layer(c, -v.*);
     return mixed;
+}
+
+/// Density above `base` of film that transmits `t`, for channel `c`: straightened by `curves` where
+/// there are some.
+fn densityAbove(curves: ?*const stock_curves.Curves, c: usize, base: f32, t: f32) f32 {
+    const d = std.math.log10(base / t);
+    return if (curves) |cv| cv.layer(c, d) else d;
 }
 
 fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
@@ -363,23 +383,23 @@ fn percentile(histogram: []const [image.channel_count]u32, channel: usize, count
 /// Automatic settings for a negative: the base from `base`, the density range from the densest
 /// highlights, the offset from the shadows, and each channel balanced so the highlights and the
 /// shadows come out neutral.
-pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics) Settings {
+pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics, curves: ?*const stock_curves.Curves) Settings {
     // A base picked where a channel reads nothing would put infinities everywhere below.
     var base = measured_base;
     for (&base) |*b| b.* = @max(b.*, smallest_transmission);
     var settings: Settings = .{ .kind = kind, .base = base };
     var range: f32 = 0;
-    for (base, stats.densest) |b, densest| range = @max(range, std.math.log10(b / densest));
+    for (base, stats.densest, 0..) |b, densest, c| range = @max(range, densityAbove(curves, c, b, densest));
     // A frame with next to no density in it (blank film, or bare light) keeps the defaults.
     if (!(range > min_range)) return settings;
     settings.density_range = range;
 
     var shadow: [3]f32 = undefined;
     var lowest: f32 = std.math.inf(f32);
-    for (&shadow, base, stats.shadows) |*s, b, t| {
+    for (&shadow, base, stats.shadows, 0..) |*s, b, t, c| {
         // A channel whose shadows read as the base itself, as when a channel is at full scale in
         // both, would divide by zero below; it counts as barely above the base instead.
-        s.* = @max(std.math.log10(b / t) / range, min_shadow);
+        s.* = @max(densityAbove(curves, c, b, t) / range, min_shadow);
         lowest = @min(lowest, s.*);
     }
     settings.offset = lowest;
@@ -391,8 +411,8 @@ pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics) Setti
 
     var highlight: [3]f32 = undefined;
     var smallest_highlight: f32 = std.math.inf(f32);
-    for (&highlight, base, stats.densest, settings.shadow_balance) |*h, b, t, low| {
-        const span = settings.offset * low - std.math.log10(b / t) / range;
+    for (&highlight, base, stats.densest, settings.shadow_balance, 0..) |*h, b, t, low, c| {
+        const span = settings.offset * low - densityAbove(curves, c, b, t) / range;
         h.* = if (@abs(span) > min_span) @abs(-1 / span) else 1;
         smallest_highlight = @min(smallest_highlight, h.*);
     }
@@ -406,12 +426,36 @@ pub fn automatic(kind: FilmKind, measured_base: [3]f32, stats: Statistics) Setti
 /// highlight balance. Null when the frame has too little in it to tell, or for B&W and slides.
 pub fn neutralSlopes(kind: FilmKind, base: [3]f32, stats: Statistics) ?[3]f32 {
     if (kind != .colour_negative) return null;
-    const auto = automatic(kind, base, stats);
+    // The scanner's own slopes, in its own density: without a stock's curves.
+    const auto = automatic(kind, base, stats, null);
     const h = auto.highlight_balance;
     if (!(h[1] > 0) or !std.math.isFinite(h[0]) or !std.math.isFinite(h[1]) or !std.math.isFinite(h[2])) return null;
     // Without density to measure, `automatic` keeps the default balance, which says nothing.
     if (std.meta.eql(h, (Settings{}).highlight_balance)) return null;
     return .{ h[0] / h[1], 1, h[2] / h[1] };
+}
+
+/// `settings` with the roll's stock `curves`, and what `automatic` measures (the density range,
+/// offset and balance) measured again on `stats` with them; the user's other choices stay. On a
+/// scanner with `stock_slopes` an Auto neutral balance becomes the stock's, and without them a
+/// stock balance becomes Auto neutral.
+pub fn restocked(settings: Settings, stats: Statistics, curves: ?stock_curves.Curves, stock_slopes: ?[3]f32) Settings {
+    var s = settings;
+    s.stock_curves = curves;
+    if (!s.kind.isNegative()) return s;
+    const auto = automatic(s.kind, s.base, stats, s.curves());
+    s.density_range = auto.density_range;
+    s.offset = auto.offset;
+    const mode: WhiteBalance = switch (s.white_balance) {
+        .auto_neutral, .stock => if (stock_slopes != null) .stock else .auto_neutral,
+        .auto_warm, .auto_cool, .average, .picked => s.white_balance,
+    };
+    // A picked balance can't be picked again without its point: its highlight slopes stay.
+    if (mode == .picked) {
+        s.shadow_balance = auto.shadow_balance;
+        return s;
+    }
+    return balanced(s, mode, stats, null, stock_slopes);
 }
 
 /// `settings` with its balance set by `mode`: from `stats` of the frame; for `.picked`, making the
@@ -422,7 +466,7 @@ pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picke
     var s = settings;
     s.white_balance = mode;
     if (s.kind.isMonochrome() or !s.kind.isNegative()) return s;
-    const neutral = automatic(s.kind, s.base, stats);
+    const neutral = automatic(s.kind, s.base, stats, s.curves());
     switch (mode) {
         .stock => {
             const slopes = stock_slopes orelse return s;
@@ -447,7 +491,8 @@ pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picke
             var d: [3]f32 = undefined;
             for (&d, s.base, 0..) |*out, b, i| {
                 const log_t = if (picked) |p| std.math.log10(@max(p[i], smallest_transmission)) else stats.mean_log[i];
-                out.* = @min(log_t - std.math.log10(b), -min_reference_density);
+                const above = densityAbove(s.curves(), i, b, std.math.pow(f32, 10, log_t));
+                out.* = @min(-above, -min_reference_density);
             }
             s.shadow_balance = neutral.shadow_balance;
             for (&s.highlight_balance, d) |*high, v| high.* = d[1] / v;
@@ -473,7 +518,7 @@ test "automatic settings balance highlights and shadows" {
         .shadows = .{ 0.6, 0.35, 0.2 },
         .mean_log = @splat(-1),
     };
-    const settings = automatic(.colour_negative, base, stats);
+    const settings = automatic(.colour_negative, base, stats, null);
     const prepared: Prepared = .init(settings);
     var shadows: [3]u16 = undefined;
     var highlights: [3]u16 = undefined;
@@ -560,7 +605,7 @@ test "the stock balance takes the stock's slopes, and the frame's own shadows" {
     const stats: Statistics = .{ .thinnest = settings.base, .densest = .{ 0.008, 0.004, 0.0035 }, .shadows = .{ 0.6, 0.35, 0.2 }, .mean_log = @splat(-1) };
     const out = balanced(settings, .stock, stats, null, .{ 1.3, 1, 0.88 });
     try std.testing.expectEqual([3]f32{ 1.3, 1, 0.88 }, out.highlight_balance);
-    try std.testing.expectEqual(automatic(.colour_negative, settings.base, stats).shadow_balance, out.shadow_balance);
+    try std.testing.expectEqual(automatic(.colour_negative, settings.base, stats, null).shadow_balance, out.shadow_balance);
     // Without slopes, the balance stays.
     try std.testing.expectEqual(settings.highlight_balance, balanced(settings, .stock, stats, null, null).highlight_balance);
 }
@@ -569,7 +614,7 @@ test "neutral slopes are the automatic balance against green, and none for a bla
     const base: [3]f32 = .{ 0.8, 0.5, 0.3 };
     const stats: Statistics = .{ .thinnest = base, .densest = .{ 0.008, 0.004, 0.0035 }, .shadows = .{ 0.6, 0.35, 0.2 }, .mean_log = @splat(-1) };
     const slopes = neutralSlopes(.colour_negative, base, stats).?;
-    const auto = automatic(.colour_negative, base, stats);
+    const auto = automatic(.colour_negative, base, stats, null);
     try std.testing.expectApproxEqAbs(auto.highlight_balance[0] / auto.highlight_balance[1], slopes[0], 1e-6);
     try std.testing.expectEqual(@as(f32, 1), slopes[1]);
     try std.testing.expectEqual(@as(?[3]f32, null), neutralSlopes(.colour_negative, base, .{ .thinnest = base, .densest = base, .shadows = base, .mean_log = @splat(0) }));
@@ -579,7 +624,7 @@ test "neutral slopes are the automatic balance against green, and none for a bla
 test "a base with a channel at zero, and an empty area, still give finite settings" {
     const gpa = std.testing.allocator;
     const stats: Statistics = .{ .thinnest = .{ 0.5, 0.4, 0 }, .densest = .{ 0.01, 0.02, 0.03 }, .shadows = .{ 0.4, 0.3, 0.1 }, .mean_log = @splat(-1) };
-    const settings = automatic(.colour_negative, .{ 0.5, 0.4, 0 }, stats);
+    const settings = automatic(.colour_negative, .{ 0.5, 0.4, 0 }, stats, null);
     for (settings.highlight_balance ++ settings.shadow_balance ++ settings.base) |v| try std.testing.expect(std.math.isFinite(v));
     for (pixel(.init(settings), .{ 1000, 1000, 1000 })) |v| try std.testing.expect(std.math.isFinite(v));
 
@@ -587,15 +632,83 @@ test "a base with a channel at zero, and an empty area, still give finite settin
     defer scan.deinit(gpa);
     @memset(scan.pixels, .{ 100, 100, 100 });
     const empty = try Statistics.measure(gpa, scan, (image.Area.whole(1, 4)).centre(0.5));
-    const blank = automatic(.colour_negative, .{ 0.5, 0.4, 0.3 }, empty);
+    const blank = automatic(.colour_negative, .{ 0.5, 0.4, 0.3 }, empty, null);
     try std.testing.expectEqual((Settings{}).density_range, blank.density_range);
 }
 
 test "automatic settings stay finite when a channel's shadows read as the base" {
     const base: [3]f32 = .{ 0.8, 1, 1 };
     const stats: Statistics = .{ .thinnest = base, .densest = .{ 0.01, 0.02, 0.03 }, .shadows = .{ 0.6, 1, 1 }, .mean_log = @splat(-1) };
-    const settings = automatic(.colour_negative, base, stats);
+    const settings = automatic(.colour_negative, base, stats, null);
     for (settings.highlight_balance ++ settings.shadow_balance) |v| try std.testing.expect(std.math.isFinite(v));
-    const blank = automatic(.colour_negative, base, .{ .thinnest = base, .densest = base, .shadows = base, .mean_log = @splat(0) });
+    const blank = automatic(.colour_negative, base, .{ .thinnest = base, .densest = base, .shadows = base, .mean_log = @splat(0) }, null);
     try std.testing.expect(std.math.isFinite(blank.density_range));
+}
+
+test "a stock's curves open up the shadows its toe crushed" {
+    const stocks = @import("../presets/stocks.zig");
+    const superia = for (stocks.stocks) |s| {
+        if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
+    } else unreachable;
+    const curves = stock_curves.of(superia, @splat(1)).?;
+    const base = [3]f32{ 0.4, 0.2, 0.12 };
+    // Shadows 0.08 D above the base, highlights 1.6 D.
+    var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
+    for (&stats.densest, &stats.shadows, &stats.mean_log, base) |*dense, *shadow, *mean, b| {
+        dense.* = b / std.math.pow(f32, 10, 1.6);
+        shadow.* = b / std.math.pow(f32, 10, 0.08);
+        mean.* = std.math.log10(b) - 0.8;
+    }
+    var plain = automatic(.colour_negative, base, stats, null);
+    var corrected = automatic(.colour_negative, base, stats, &curves);
+    corrected.stock_curves = curves;
+    // Two deep shadows, 0.12 and 0.2 D above the base, in green: further apart once straightened.
+    var spread: [2]f32 = undefined;
+    for ([_]*Settings{ &plain, &corrected }, &spread) |s, *out| {
+        const prepared: Prepared = .init(s.*);
+        var raw: [2][3]u16 = undefined;
+        for (&raw, [_]f32{ 0.12, 0.2 }) |*r, d| {
+            for (r, base) |*v, b| v.* = @intFromFloat(b / std.math.pow(f32, 10, d) * image.full_scale);
+        }
+        out.* = pixel(prepared, raw[1])[1] - pixel(prepared, raw[0])[1];
+    }
+    try std.testing.expect(spread[1] > spread[0]);
+    // The highlights stay where they were, a little higher up the straightened range.
+    try std.testing.expect(corrected.density_range >= plain.density_range);
+    // Nothing is clipped that wasn't: the shadows are measured where the curves put them.
+    try std.testing.expect(corrected.offset > 0);
+}
+
+test "a new stock measures the frame again and keeps the user's choices" {
+    const stocks = @import("../presets/stocks.zig");
+    const superia = for (stocks.stocks) |s| {
+        if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
+    } else unreachable;
+    const curves = stock_curves.of(superia, @splat(1)).?;
+    const base = [3]f32{ 0.4, 0.2, 0.12 };
+    var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
+    for (&stats.densest, &stats.shadows, &stats.mean_log, base) |*dense, *shadow, *mean, b| {
+        dense.* = b / std.math.pow(f32, 10, 1.5);
+        shadow.* = b / std.math.pow(f32, 10, 0.1);
+        mean.* = std.math.log10(b) - 0.8;
+    }
+    var settings = automatic(.colour_negative, base, stats, null);
+    settings.contrast = 5;
+    settings.saturation = 1.3;
+    settings.temperature[1] = 20;
+    const slopes = [3]f32{ 1.3, 1, 0.9 };
+    const restocked_settings = restocked(settings, stats, curves, slopes);
+    try std.testing.expect(restocked_settings.stock_curves != null);
+    try std.testing.expectEqual(automatic(.colour_negative, base, stats, &curves).offset, restocked_settings.offset);
+    // On a calibrated scanner, Auto neutral becomes the stock's balance.
+    try std.testing.expectEqual(WhiteBalance.stock, restocked_settings.white_balance);
+    try std.testing.expectEqual(slopes, restocked_settings.highlight_balance);
+    // The user's choices stay.
+    try std.testing.expectEqual(@as(f32, 5), restocked_settings.contrast);
+    try std.testing.expectEqual(@as(f32, 1.3), restocked_settings.saturation);
+    try std.testing.expectEqual(@as(f32, 20), restocked_settings.temperature[1]);
+    // No stock: no curves, and a stock balance goes back to Auto neutral.
+    const none = restocked(restocked_settings, stats, null, null);
+    try std.testing.expectEqual(null, none.stock_curves);
+    try std.testing.expectEqual(WhiteBalance.auto_neutral, none.white_balance);
 }

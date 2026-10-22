@@ -145,7 +145,7 @@ pub const Frame = struct {
     /// way the settings ask.
     pub fn measure(frame: *Frame, kind: develop.FilmKind) void {
         const keep = frame.settings;
-        frame.settings = develop.automatic(kind, frame.gap_base orelse frame.whole.thinnest, frame.centre);
+        frame.settings = develop.automatic(kind, frame.gap_base orelse frame.whole.thinnest, frame.centre, keep.curves());
         if (frame.gap_base != null) frame.settings.base_source = .gaps;
         keepUserChoices(&frame.settings, keep);
         frame.rebalance(if (keep.white_balance == .picked) .auto_neutral else keep.white_balance, null);
@@ -154,7 +154,7 @@ pub const Frame = struct {
     /// The automatic settings for the frame on its film base as it stands: what Develop's sliders
     /// reset to.
     pub fn automaticSettings(frame: *const Frame) develop.Settings {
-        return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre);
+        return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre, frame.settings.curves());
     }
 
     /// Sets the balance by `mode`; `.picked` needs `picked`, the transmission to make neutral.
@@ -184,7 +184,7 @@ pub const Frame = struct {
     /// Takes the film base from the point (`x`, `y`) of the preview, and works out the rest again.
     pub fn pickBase(frame: *Frame, x: usize, y: usize) void {
         const keep = frame.settings;
-        frame.settings = develop.automatic(keep.kind, frame.sample(x, y), frame.centre);
+        frame.settings = develop.automatic(keep.kind, frame.sample(x, y), frame.centre, keep.curves());
         frame.settings.base_source = .picked;
         keepUserChoices(&frame.settings, keep);
         frame.rebalance(if (keep.white_balance == .picked) .auto_neutral else keep.white_balance, null);
@@ -224,11 +224,13 @@ pub const Frame = struct {
     }
 };
 
-/// Carries the user's own choices over a fresh measurement: the tone, temperature and tint.
+/// Carries the user's own choices over a fresh measurement: the tone, temperature and tint, and the
+/// roll's stock curves.
 fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.tone = keep.tone;
     settings.temperature = keep.temperature;
     settings.tint = keep.tint;
+    settings.stock_curves = keep.stock_curves;
 }
 
 /// The longer side of the reduced copy of `scan` that a frame `crop` of it is cut from: enough for

@@ -33,7 +33,8 @@ Five workspaces:
   queue that scans them into a roll.
 - **Develop:** a frame's negative and positive side by side, its film base, density, inversion
   curve, colour balance and saturation, a look, and Sync to give the roll's other frames some or
-  all of those settings.
+  all of those settings. A stock with a datasheet preset straightens each layer by its curve, so
+  that the toe doesn't crush the shadows.
 - **Export:** TIFF or JPEG in sRGB, Display P3, Adobe RGB or ProPhoto RGB, with the roll's
   metadata.
 - **Looks:** the looks frames can be developed with, and fitting a look of your own from pairs of

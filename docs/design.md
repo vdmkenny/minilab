@@ -388,8 +388,27 @@ Layered like NLP, but ours, with their sources written down.
 **Film type:** colour negative, B&W negative, colour positive, B&W positive. Picks the pipeline
 path and the scanner settings.
 
-**Stock** (optional): starting values for the per-channel slopes and the base, and the fixed
+**Stock** (optional): each layer's characteristic curve, and on a calibrated scanner the fixed
 white balance.
+
+- **Curves** (`src/core/stock_curves.zig`): a negative's density rises from the base in a toe
+  before it follows log exposure in a straight line, which the inversion assumes. Read as a straight
+  line, the toe crushes the shadows, and as each layer's toe is its own, it tints them. With a
+  stock's datasheet curves, each layer's density above the base goes back to its log exposure and
+  on to the density the curve's straight line gives that exposure, measured from the base: the base
+  stays at 0, the toe opens up, and the straight part keeps its contrast. The line is fitted to the
+  middle of the curve's density range (25 to 85 percent), so that it straightens the curve it's
+  drawn from. Right at the base the toe is all but flat (Superia X-TRA 400's would need 15 to 35
+  times there), so the stretch stops at 3 times. Each layer is a 33-point table, applied after the
+  density matrix and in the automatic settings alike.
+- Datasheet curves are in Status M density. On a calibrated scanner each layer's scale is
+  1 / its calibration factor, green taken as reading Status M; without a calibration, 1. On our
+  V200's Superia X-TRA 400 frames, the calibrated scale keeps neutrals neutral where Status M's
+  leaves a slight magenta in the light greys.
+- Choosing a stock, or calibrating, measures the roll's developed frames again with the curves: the
+  density range, offset and balance; the user's other settings stay. Frames not developed yet get
+  the curves when they're opened. On a calibrated scanner, frames on Auto neutral take the stock's
+  balance.
 
 - Source: the makers' datasheets. The characteristic curves and figures are our own readings of
   the published charts, with each stock's datasheet, edition and reading error recorded in

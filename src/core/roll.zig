@@ -461,8 +461,25 @@ fn finite(comptime T: type, value: *T, default: T) void {
         },
         .array => for (value, default) |*v, d| finite(@TypeOf(d), v, d),
         .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Field| finite(Field, &@field(value, name), @field(default, name)),
+        // An optional with anything not finite in it is dropped: there is no default inside it.
+        .optional => |o| if (value.*) |inner| {
+            if (!allFinite(o.child, inner)) value.* = null;
+        },
         else => {},
     }
+}
+
+fn allFinite(comptime T: type, value: T) bool {
+    return switch (@typeInfo(T)) {
+        .float => std.math.isFinite(value),
+        .array => for (value) |v| {
+            if (!allFinite(@TypeOf(v), v)) break false;
+        } else true,
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Field| {
+            if (!allFinite(Field, @field(value, name))) break false;
+        } else true,
+        else => true,
+    };
 }
 
 const max_json_bytes = 1 << 20;

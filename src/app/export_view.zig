@@ -784,6 +784,7 @@ fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
         .include = state.include,
         .pattern = std.mem.sliceTo(&state.pattern, 0),
         .folder = folder,
+        .stock_curves = ctx.library.stockCurves(r, r.info.kind),
     }) catch |err| {
         ctx.notice.set("Can't export: {t}.", .{err});
         return;

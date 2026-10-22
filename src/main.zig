@@ -26,7 +26,7 @@ const usage =
     \\  minilab looks                    list the looks --look takes by name: neutral, frontier and
     \\                                   the film looks; --look also takes a .cube file
     \\  minilab develop-roll <out folder> <scan>... [--look <look>]
-    \\      [--film colour|bw] [--base r,g,b]
+    \\      [--film colour|bw] [--base r,g,b] [--stock <name>]
     \\                                   develop scans of one 35mm roll together on one film base
     \\  minilab scan --list              list the scanners
     \\  minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
@@ -42,6 +42,9 @@ const usage =
     \\                                   the scan instead of cutting it to the frames found on it
     \\      [--base r,g,b]               the film base's transmission, 0..1, instead of
     \\                                   measuring it in the gaps beside the frame
+    \\      [--stock <name>]             straighten each layer by the stock's datasheet curve,
+    \\                                   as Develop does on a scanner not calibrated: "Kodak
+    \\                                   Portra 400", as minilab names it
     \\
 ;
 
@@ -105,7 +108,24 @@ const Options = struct {
     whole: bool = false,
     /// The film base's transmission per channel, 0..1, when known from elsewhere on the roll.
     base: ?[3]f32 = null,
+    /// The stock's curves, from `--stock`.
+    curves: ?minilab.stock_curves.Curves = null,
 };
+
+/// The curves of the stock called `name`, for film `kind`, in Status M: the command line has no
+/// scanner calibration.
+fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) !?minilab.stock_curves.Curves {
+    for (minilab.stocks.stocks) |stock| {
+        if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
+        const curves = minilab.stock_curves.of(stock, @splat(1)) orelse {
+            std.log.err("{s} has no curves for {t}", .{ stock.name, kind });
+            std.process.exit(usage_status);
+        };
+        return curves;
+    }
+    std.log.err("no stock preset is called {s}", .{name});
+    std.process.exit(usage_status);
+}
 
 /// The look a command names: "neutral", "frontier", or a .cube file's path. `catalog` holds
 /// what it reads.
@@ -331,12 +351,16 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var look_name: []const u8 = "neutral";
     var kind: minilab.develop.FilmKind = .colour_negative;
     var given_base: ?[3]f32 = null;
+    var stock_name: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
         if (std.mem.eql(u8, arg, "--look") and i + 1 < args.len) {
             i += 1;
             look_name = args[i];
+        } else if (std.mem.eql(u8, arg, "--stock") and i + 1 < args.len) {
+            i += 1;
+            stock_name = args[i];
         } else if (std.mem.eql(u8, arg, "--film") and i + 1 < args.len) {
             i += 1;
             kind = try parseFilm(args[i], negative_films);
@@ -398,8 +422,9 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     const look = try lookNamed(gpa, io, &catalog, look_name);
     defer freeLook(gpa, look, look_name);
     const suffix = std.fs.path.stem(look_name);
+    const curves = if (stock_name) |name| try stockNamed(name, kind) else null;
     for (frames.items) |frame| {
-        var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base);
+        var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base, if (curves) |*cv| cv else null);
         defer developed.deinit(gpa);
         var encoded = try minilab.encode.toSrgb16(gpa, developed);
         defer encoded.deinit(gpa);
@@ -538,6 +563,7 @@ fn parse(args: []const [:0]const u8) !Options {
     var positional: [2][]const u8 = undefined;
     var count: usize = 0;
     var options: Options = .{ .input = undefined, .output = undefined };
+    var stock_name: ?[]const u8 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         const arg = args[i];
@@ -551,6 +577,10 @@ fn parse(args: []const [:0]const u8) !Options {
             options.kind = try parseFilm(args[i], negative_films);
         } else if (std.mem.eql(u8, arg, "--whole")) {
             options.whole = true;
+        } else if (std.mem.eql(u8, arg, "--stock")) {
+            i += 1;
+            if (i == args.len) return error.MissingValue;
+            stock_name = args[i];
         } else if (std.mem.eql(u8, arg, "--base")) {
             i += 1;
             if (i == args.len) return error.MissingValue;
@@ -568,6 +598,7 @@ fn parse(args: []const [:0]const u8) !Options {
     if (count != positional.len) return error.MissingArgument;
     options.input = positional[0];
     options.output = positional[1];
+    if (stock_name) |name| options.curves = try stockNamed(name, options.kind);
     return options;
 }
 
@@ -614,7 +645,7 @@ fn developArea(gpa: std.mem.Allocator, io: std.Io, options: Options, format: For
     if (base) |b| std.log.info("film base: {d:.4} {d:.4} {d:.4}", .{ b[0], b[1], b[2] });
     var scan = try full.crop(gpa, area);
     defer scan.deinit(gpa);
-    var developed = try minilab.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base);
+    var developed = try minilab.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base, if (options.curves) |*cv| cv else null);
     defer developed.deinit(gpa);
 
     const file = switch (options.depth) {

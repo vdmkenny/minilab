@@ -10,6 +10,8 @@ pub const light_table = @import("core/light_table.zig");
 pub const look = @import("core/look.zig");
 /// Calibrating scanners against the film makers' datasheets.
 pub const calibration = @import("core/calibration.zig");
+/// Straightening each layer's density by its stock's datasheet curve.
+pub const stock_curves = @import("core/stock_curves.zig");
 /// .cube LUTs, for looks.
 pub const cube_lut = @import("core/cube_lut.zig");
 /// The film looks minilab carries from free collections.

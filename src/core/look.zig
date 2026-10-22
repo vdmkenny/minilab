@@ -18,6 +18,7 @@ const encode = @import("encode.zig");
 const cube_lut = @import("cube_lut.zig");
 const model = @import("../looks/model.zig");
 const saved = @import("../looks/saved.zig");
+const stock_curves = @import("stock_curves.zig");
 const bundled = @import("../presets/looks/bundled.zig");
 
 /// The bundled looks' LUTs, baked by the build (`bake_looks.zig`).
@@ -236,10 +237,12 @@ fn renderBand(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, o
 /// Develops `scan` with `look` and automatic settings measured on `area`, on the film base
 /// `film_base` when it's known from elsewhere, such as the gaps between frames, or else the
 /// thinnest film in `area`.
-pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, kind: develop.FilmKind, look: Resolved, film_base: ?[3]f32) !image.Rendered {
+pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, kind: develop.FilmKind, look: Resolved, film_base: ?[3]f32, curves: ?*const stock_curves.Curves) !image.Rendered {
     const stats = try develop.Statistics.measure(gpa, scan, area.centre(develop.measured_fraction));
     const whole = try develop.Statistics.measure(gpa, scan, area);
-    return render(gpa, scan, develop.automatic(kind, film_base orelse whole.thinnest, stats), look);
+    var settings = develop.automatic(kind, film_base orelse whole.thinnest, stats, curves);
+    if (curves) |cv| settings.stock_curves = cv.*;
+    return render(gpa, scan, settings, look);
 }
 
 /// The largest .cube file read, 64 MiB: a 129-point 3D LUT in text is about 60.
