@@ -8,10 +8,11 @@ const detect = @import("detect.zig");
 const formats = @import("formats.zig");
 
 /// 135 perforations: pitch, size along and across, and distance from the film's edge.
-const perforation_pitch_mm = formats.FilmSize.@"135".perforationPitchMm().?;
-const perforation_length_mm = 1.98;
-const perforation_height_mm = 2.8;
-const perforation_inset_mm = 2.0;
+const perforations = formats.FilmSize.@"135".perforations().?;
+const perforation_pitch_mm = perforations.pitch_mm;
+const perforation_length_mm = perforations.length_mm;
+const perforation_height_mm = perforations.height_mm;
+const perforation_inset_mm = perforations.inset_mm;
 const film_135_mm = formats.FilmSize.@"135".filmWidthMm().?;
 
 /// Periods of the image texture along and across, in mm.

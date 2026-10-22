@@ -54,8 +54,26 @@ pub const FilmSize = enum {
     /// 135's KS perforations. Detection uses it to leave the perforation bands out of the opening
     /// when the holder doesn't cover them.
     pub fn perforationPitchMm(size: FilmSize) ?f32 {
+        return if (size.perforations()) |p| p.pitch_mm else null;
+    }
+
+    /// How the film is holed: rows along both edges, a few holes per frame along one edge, or
+    /// none, as paper-backed roll film and sheet film have.
+    pub fn holes(size: FilmSize) Holes {
         return switch (size) {
-            .@"135" => 4.75,
+            .@"135" => .{ .rows = size.perforations().? },
+            // 126 has one registration hole per frame, 110 one between frames, and APS (IX240)
+            // two close together, all along one edge.
+            .@"126", .@"110" => .{ .per_frame = 1 },
+            .aps => .{ .per_frame = 2 },
+            .@"120", .@"127", .minox, .sheet, .custom => .none,
+        };
+    }
+
+    /// The rows of holes along both edges of the film, where it has them: 135's KS perforations.
+    pub fn perforations(size: FilmSize) ?Perforations {
+        return switch (size) {
+            .@"135" => .{ .pitch_mm = 4.75, .length_mm = 1.98, .height_mm = 2.8, .inset_mm = 2.0 },
             .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet, .custom => null,
         };
     }
@@ -71,6 +89,24 @@ pub const FilmSize = enum {
             .sheet => 0,
         };
     }
+};
+
+/// How a film is holed, from `FilmSize.holes`.
+pub const Holes = union(enum) {
+    none,
+    /// A row along both edges at a fixed pitch.
+    rows: Perforations,
+    /// This many holes for each frame, along one edge.
+    per_frame: u8,
+};
+
+/// A row of perforations: the pitch, each hole's size along and across the film, and how far in
+/// from the film's edge the holes start, mm.
+pub const Perforations = struct {
+    pitch_mm: f32,
+    length_mm: f32,
+    height_mm: f32,
+    inset_mm: f32,
 };
 
 /// Whether a format fixes a frame's length from its height.

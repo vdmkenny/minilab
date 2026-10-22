@@ -27,9 +27,39 @@ pub fn gainForBase(base: [3]f32) f32 {
     return clearest / @max(@max(base[0], base[1]), @max(base[2], min_transmission));
 }
 
+/// How far below the clearest film's brightest channel a pixel may be and still count as the base,
+/// for its colour.
+const base_band = 0.04;
+
 /// The gain for a scan from its own clearest film: on a strip, the base between the frames. Light
 /// through holes in the holder is left out.
 pub fn gainForScan(scan: image.Scan) f32 {
+    const level = clearestLevel(scan) orelse return 1;
+    return gainForBase(@splat(level));
+}
+
+/// The colour of a scan's clearest film, 0..1 per channel: on a strip, its base. The mean of the
+/// pixels whose brightest channel is near the clearest level; null for a scan with no film.
+pub fn baseOfScan(scan: image.Scan) ?[3]f32 {
+    const level = clearestLevel(scan) orelse return null;
+    const top = level + 1.0 / @as(f32, histogram_bins - 1);
+    var sum: [3]f64 = @splat(0);
+    var count: u64 = 0;
+    for (scan.pixels) |p| {
+        const brightest = @as(f32, @floatFromInt(@max(@max(p[0], p[1]), p[2]))) / image.full_scale;
+        if (brightest >= open_light or brightest > top or brightest < level * (1 - base_band)) continue;
+        for (&sum, p) |*s, v| s.* += @floatFromInt(v);
+        count += 1;
+    }
+    if (count == 0) return null;
+    var base: [3]f32 = undefined;
+    for (&base, sum) |*b, s| b.* = @floatCast(s / @as(f64, @floatFromInt(count)) / image.full_scale);
+    return base;
+}
+
+/// The brightest channel of a scan's clearest film, 0..1: what all but a few dust holes are darker
+/// than. Null for a scan with no film.
+fn clearestLevel(scan: image.Scan) ?f32 {
     var bins: [histogram_bins]u32 = @splat(0);
     var counted: u64 = 0;
     for (scan.pixels) |p| {
@@ -38,14 +68,14 @@ pub fn gainForScan(scan: image.Scan) f32 {
         bins[@intFromFloat(brightest * (histogram_bins - 1))] += 1;
         counted += 1;
     }
-    if (counted == 0) return 1;
+    if (counted == 0) return null;
     const wanted = counted * clearest_per_mille / 1000;
     var seen: u64 = 0;
     for (bins, 0..) |n, i| {
         seen += n;
-        if (seen >= wanted) return gainForBase(@splat(@as(f32, @floatFromInt(i)) / (histogram_bins - 1)));
+        if (seen >= wanted) return @as(f32, @floatFromInt(i)) / (histogram_bins - 1);
     }
-    return 1;
+    return null;
 }
 
 /// `pixels` for the screen, RGBA in `out`, brightened by `gain` and sRGB-encoded.
@@ -75,6 +105,9 @@ test "a strip's base shows nearly white, and holes in the holder don't count" {
     toScreen(scan.pixels[500..503], gain, &out);
     // The base's brightest channel near the top, its orange kept.
     try std.testing.expect(out[0][0] > 240 and out[0][1] < out[0][0] and out[0][2] < out[0][1]);
+    // Its colour, from the band of base alone.
+    const base = baseOfScan(scan).?;
+    for (base, [3]f32{ 27000, 13000, 8500 }) |b, expected| try std.testing.expectApproxEqAbs(expected / 65535, b, 1e-4);
 }
 
 test "the gain for a known base" {

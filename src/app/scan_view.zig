@@ -75,6 +75,13 @@ const slider_label_column = 110;
 const slider_value_column = 56;
 const button_height = 32;
 const slider_row_height = 20;
+/// The base drawn beside the frames of film with no set width, mm.
+const plain_film_margin_mm = 2;
+/// The holes of film holed per frame, as drawn: their size, how far in from the edge, and how far
+/// apart a pair is, mm.
+const per_frame_hole_mm = 1.5;
+const per_frame_hole_inset_mm = 1;
+const per_frame_hole_spacing_mm = 3;
 /// The smallest box a drag leaves, in preview pixels.
 const min_box_px = 8;
 /// The design's line height, as a multiple of the font size.
@@ -217,6 +224,8 @@ const Preview = struct {
     /// Whether frames have been detected on it, so that a preview saved before is detected once.
     detected: bool = false,
     texture: ?Texture = null,
+    /// The film base as the texture shows it, for the strip between the frames; null without one.
+    base_colour: ?[4]u8 = null,
 
     fn deinit(preview: *Preview, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         preview.scan.deinit(gpa);
@@ -902,14 +911,14 @@ fn drawMain(state: *State, ctx: context.Context, roll_index: usize) void {
     const x = origin.x + gui.px(main_padding_x);
     const y = origin.y + gui.px(main_padding_y);
     const height = size.y - gui.px(2 * main_padding_y);
-    const strip_width = drawPreviewColumn(state, list, x, y, height);
+    const strip_width = drawPreviewColumn(state, list, x, y, height, ctx.library.rolls.items[roll_index].info.format.format().size);
     const section_x = x + strip_width + gui.px(main_gap);
     const section_width = origin.x + size.x - gui.px(main_padding_x) - section_x;
     drawFrameSection(state, ctx, roll_index, list, section_x, y, section_width);
 }
 
 /// The preview with the frames on it. Returns the column's width.
-fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32) f32 {
+fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, film: formats.FilmSize) f32 {
     var y = top;
     const dpi_shown: u32 = if (state.preview) |p| @intFromFloat(@round(p.dpi[0])) else if (state.capabilities) |caps| caps.resolutionFrom(preview_dpi) orelse preview_dpi else preview_dpi;
     const label = gui.print("Preview · {d} dpi", .{dpi_shown});
@@ -920,15 +929,22 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     const mono_line = gui.px(12) * line_spacing;
     const below = gui.px(8) + mono_line + gui.px(8) + 2 * lineHeight();
     const room = top + height - y - below;
-    const natural = gui.vec2(gui.px(area.width * preview_px_per_mm), gui.px(area.height * preview_px_per_mm));
+    // Once there are frames, the strip is drawn as film, straight, as the design has it: the
+    // film's own width, and the length the preview covers. Before, the scan as it lies.
+    const as_film = if (state.preview) |p| state.boxes.items.len > 0 and p.texture != null else false;
+    const film_mm = if (as_film) gui.vec2(filmWidthMm(state, &state.preview.?, film), state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
+    const natural = gui.vec2(gui.px(film_mm.x * preview_px_per_mm), gui.px(film_mm.y * preview_px_per_mm));
     const fit = @min(1, room / natural.y);
     const shown = gui.vec2(@round(natural.x * fit), @round(natural.y * fit));
     const corner = gui.vec2(x, y);
     const far = gui.vec2(x + shown.x, y + shown.y);
 
     if (state.preview) |*p| {
-        if (p.texture) |t| c.ImDrawList_AddImage(list, t.ref(), corner, far) else c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
-        drawBoxesOnStrip(state, p, list, corner, shown);
+        if (as_film) {
+            const map: StripMap = .film(p, corner, shown, film_mm.x);
+            drawFilm(state, p, map, film, list);
+            drawBoxesOnStrip(state, p, map, list);
+        } else if (p.texture) |t| c.ImDrawList_AddImage(list, t.ref(), corner, far) else c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
     } else {
         c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
         gui.dashedRect(list, corner, far, theme.imU32(theme.border), 1, gui.px(dash), gui.px(dash_gap));
@@ -947,18 +963,128 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     fonts.pop();
     y += mono_line + gui.px(8);
     const note_width = @max(shown.x, gui.px(preview_note_width));
-    if (state.preview != null) _ = paragraphAt(list, x, y, gui.px(preview_note_width), theme.text_tertiary, "The holder covers the film edges.");
+    if (state.preview != null and !as_film) _ = paragraphAt(list, x, y, gui.px(preview_note_width), theme.text_tertiary, "The holder covers the film edges.");
     return @max(@max(shown.x, mm_width), note_width);
+}
+
+/// Where a frame on the preview goes when the strip is drawn as film: along the column as along
+/// the strip, and across it centred, at the film's own scale.
+const StripMap = struct {
+    corner: gui.Vec2,
+    shown: gui.Vec2,
+    /// Screen pixels per preview pixel, along and across the strip.
+    along: f32,
+    across: f32,
+
+    fn film(preview: *const Preview, corner: gui.Vec2, shown: gui.Vec2, film_width_mm: f32) StripMap {
+        const across_per_mm = shown.x / film_width_mm;
+        return .{
+            .corner = corner,
+            .shown = shown,
+            .along = shown.y / preview.alongSize(),
+            .across = across_per_mm / preview.pxPerMm()[if (preview.axis == .y) 0 else 1],
+        };
+    }
+
+    /// The box's rectangle on the screen, its corners top-left and bottom-right.
+    fn rect(map: StripMap, box: Box) [2]gui.Vec2 {
+        const middle = map.corner.x + map.shown.x / 2;
+        const half = box.height * map.across / 2;
+        const top = map.corner.y + (box.along - box.length / 2) * map.along;
+        return .{ gui.vec2(middle - half, top), gui.vec2(middle + half, top + box.length * map.along) };
+    }
+};
+
+/// The film's width in mm: the format's, or for film of no set width, its frames' with a little
+/// base beside them.
+fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmSize) f32 {
+    if (film.filmWidthMm()) |w| return w;
+    var widest: f32 = 0;
+    for (state.boxes.items) |box| widest = @max(widest, box.height);
+    return widest / preview.pxPerMm()[if (preview.axis == .y) 0 else 1] + 2 * plain_film_margin_mm;
+}
+
+/// The film drawn as it looks on a light table: its base's own colour, the perforations along both
+/// edges where it has them, and each frame's picture straight and centred.
+fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
+    const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
+    const base = preview.base_colour orelse theme.rgba8(theme.raised);
+    c.ImDrawList_AddRectFilled(list, map.corner, far, c.IM_COL32(base[0], base[1], base[2], base[3]));
+
+    const per_mm = map.along * preview.alongPerMm();
+    const across_per_mm = map.shown.x / filmWidthMm(state, preview, film);
+    const hole_ink = theme.imU32(theme.viewer);
+    switch (film.holes()) {
+        .none => {},
+        .rows => |holes| drawRows(state, map, holes, per_mm, across_per_mm, list),
+        .per_frame => |count| for (state.boxes.items) |box| {
+            // At the start of each frame, along one edge: drawn sizes, as the formats' own
+            // aren't to hand.
+            const side = per_frame_hole_mm * across_per_mm;
+            const x = map.corner.x + per_frame_hole_inset_mm * across_per_mm;
+            const start = map.corner.y + (box.along - box.length / 2) * map.along;
+            for (0..count) |k| {
+                const offset = (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * per_frame_hole_spacing_mm * per_mm;
+                const top = std.math.clamp(start + offset - side / 2, map.corner.y, far.y);
+                const bottom = std.math.clamp(start + offset + side / 2, map.corner.y, far.y);
+                if (bottom > top) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, top), gui.vec2(x + side, bottom), hole_ink, side / 4, 0);
+            }
+        },
+    }
+    drawPictures(state, preview, map, list);
+}
+
+/// 135's perforations along both edges, at the film's pitch and in step with the first frame, as
+/// a camera advances it.
+fn drawRows(state: *const State, map: StripMap, holes: formats.Perforations, per_mm: f32, across_per_mm: f32, list: *c.ImDrawList) void {
+    const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
+    const first = if (state.boxes.items.len > 0) state.boxes.items[0] else return;
+    const pitch = holes.pitch_mm * per_mm;
+    const length = holes.length_mm * per_mm;
+    const start = map.corner.y + (first.along - first.length / 2) * map.along;
+    var at = start - @ceil((start - map.corner.y) / pitch) * pitch;
+    const inset = holes.inset_mm * across_per_mm;
+    const height = holes.height_mm * across_per_mm;
+    const ink = theme.imU32(theme.viewer);
+    const radius = @min(length, height) / 4;
+    while (at < far.y) : (at += pitch) {
+        const top = @max(at, map.corner.y);
+        const bottom = @min(at + length, far.y);
+        if (bottom <= top) continue;
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(map.corner.x + inset, top), gui.vec2(map.corner.x + inset + height, bottom), ink, radius, 0);
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(far.x - inset - height, top), gui.vec2(far.x - inset, bottom), ink, radius, 0);
+    }
+}
+
+/// Each frame's picture, straight and centred in its box.
+fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, list: *c.ImDrawList) void {
+    const texture = preview.texture orelse return;
+    const size = gui.vec2(@floatFromInt(preview.scan.width), @floatFromInt(preview.scan.height));
+    for (state.boxes.items) |box| {
+        const r = preview.rect(box.crop());
+        const left = std.math.clamp(r[0] / size.x, 0, 1);
+        const upper = std.math.clamp(r[1] / size.y, 0, 1);
+        const right = std.math.clamp(r[2] / size.x, 0, 1);
+        const lower = std.math.clamp(r[3] / size.y, 0, 1);
+        const corners = map.rect(box.crop());
+        const min = corners[0];
+        const max = corners[1];
+        // Along the strip is down the column: for a strip lying along x, the picture turns.
+        if (preview.axis == .y) {
+            c.ImDrawList_AddImageQuadEx(list, texture.ref(), min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), gui.vec2(left, upper), gui.vec2(right, upper), gui.vec2(right, lower), gui.vec2(left, lower), c.IM_COL32_WHITE);
+        } else {
+            c.ImDrawList_AddImageQuadEx(list, texture.ref(), min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), gui.vec2(left, lower), gui.vec2(left, upper), gui.vec2(right, upper), gui.vec2(right, lower), c.IM_COL32_WHITE);
+        }
+    }
 }
 
 /// The boxes over the preview: amber, dashed white where they need checking, the selected one
 /// ringed. Click to select, drag to move along the strip.
-fn drawBoxesOnStrip(state: *State, preview: *Preview, list: *c.ImDrawList, corner: gui.Vec2, shown: gui.Vec2) void {
-    const scale = shown.x / @as(f32, @floatFromInt(preview.scan.width));
+fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.ImDrawList) void {
     for (state.boxes.items, 0..) |box, i| {
-        const r = preview.rect(box.crop());
-        const min = gui.vec2(corner.x + r[0] * scale, corner.y + r[1] * scale);
-        const max = gui.vec2(corner.x + r[2] * scale, corner.y + r[3] * scale);
+        const corners = map.rect(box.crop());
+        const min = corners[0];
+        const max = corners[1];
         c.ImGui_PushIDInt(@intCast(i));
         c.ImGui_SetCursorScreenPos(min);
         _ = c.ImGui_InvisibleButton("box", gui.vec2(@max(max.x - min.x, 1), @max(max.y - min.y, 1)), 0);
@@ -968,11 +1094,10 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, list: *c.ImDrawList, corne
         }
         // A click only selects; the box moves once the mouse has moved past the drag threshold.
         if (c.ImGui_IsItemActive() and c.ImGui_IsMouseDragging(0, -1) and state.drag == .move and state.drag.move == i) {
-            const delta = c.ImGui_GetIO().*.MouseDelta;
-            const moved = (if (preview.axis == .y) delta.y else delta.x) / scale;
+            const moved = c.ImGui_GetIO().*.MouseDelta.y / map.along;
             if (moved != 0) moveBox(state, preview, i, moved, 0);
         }
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetMouseCursor(if (preview.axis == .y) c.ImGuiMouseCursor_ResizeNS else c.ImGuiMouseCursor_ResizeEW);
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeNS);
         c.ImGui_PopID();
 
         const weak = box.check != .none;
@@ -1634,8 +1759,16 @@ fn uploadPreview(state: *State, ctx: context.Context) void {
     if (preview.texture != null) return;
     const pixels = ctx.gpa.alloc([4]u8, preview.scan.pixels.len) catch return;
     defer ctx.gpa.free(pixels);
-    minilab.light_table.toScreen(preview.scan.pixels, minilab.light_table.gainForScan(preview.scan), pixels);
+    const gain = minilab.light_table.gainForScan(preview.scan);
+    minilab.light_table.toScreen(preview.scan.pixels, gain, pixels);
     preview.texture = Texture.upload(ctx.gpu, @intCast(preview.scan.width), @intCast(preview.scan.height), pixels) catch null;
+    preview.base_colour = if (minilab.light_table.baseOfScan(preview.scan)) |base| colour: {
+        var raw: [1][3]u16 = undefined;
+        for (&raw[0], base) |*r, b| r.* = @intFromFloat(@round(b * image.full_scale));
+        var shown: [1][4]u8 = undefined;
+        minilab.light_table.toScreen(&raw, gain, &shown);
+        break :colour shown[0];
+    } else null;
 }
 
 fn rollFile(state: *const State, ctx: context.Context, name: []const u8) ?[]u8 {

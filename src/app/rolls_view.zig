@@ -206,17 +206,6 @@ fn drawTitleRow(state: *State, library: *Library) void {
     fonts.pop();
 }
 
-/// How the holes along a film's edge are drawn.
-const Sprockets = enum { dense, per_frame, none };
-
-fn sprocketsOf(size: formats.FilmSize) Sprockets {
-    return switch (size) {
-        .@"135" => .dense,
-        .@"110", .@"126" => .per_frame,
-        else => .none,
-    };
-}
-
 /// One roll: its card, then its filmstrip.
 fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
     var action: ?Action = null;
@@ -303,20 +292,22 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
         c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet: scan into this roll, or drop scans here.");
     }
 
-    // The holes along both edges.
-    const sprockets: Sprockets = if (total == 0) .none else sprocketsOf(format.size);
-    for ([_]f32{ strip_top + gui.px(sprocket_band / 2), thumbs_top + height + gui.px(3) + number_height + gui.px(thumb_gap + sprocket_band / 2) }) |y| {
-        switch (sprockets) {
-            .none => {},
-            .dense => {
-                var hole = strip_x + gui.px(6);
-                while (hole < right) : (hole += gui.px(12)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(1.6), theme.imU32(theme.sprocket), 8);
-            },
-            .per_frame => {
-                var hole = strip_x + gui.px(6);
-                while (hole < right) : (hole += width + gui.px(thumb_gap)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(2), theme.imU32(theme.sprocket), 8);
-            },
-        }
+    // The film's holes: rows along both edges, or a few per frame along the top edge.
+    const holes: formats.Holes = if (total == 0) .none else format.size.holes();
+    const edges = [_]f32{ strip_top + gui.px(sprocket_band / 2), thumbs_top + height + gui.px(3) + number_height + gui.px(thumb_gap + sprocket_band / 2) };
+    const ink = theme.imU32(theme.sprocket);
+    switch (holes) {
+        .none => {},
+        .rows => for (edges) |y| {
+            var hole = strip_x + gui.px(6);
+            while (hole < right) : (hole += gui.px(12)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(1.6), ink, 8);
+        },
+        .per_frame => |count| {
+            var frame_x = strip_x;
+            while (frame_x < right) : (frame_x += width + gui.px(thumb_gap)) {
+                for (0..count) |k| c.ImDrawList_AddCircleFilled(list, gui.vec2(frame_x + gui.px(6) + @as(f32, @floatFromInt(k)) * gui.px(7), edges[0]), gui.px(2), ink, 8);
+            }
+        },
     }
 
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
