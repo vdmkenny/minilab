@@ -1,4 +1,4 @@
-//! negscan's core: everything that works without a window. The app and the CLI use it.
+//! minilab's core: everything that works without a window. The app and the CLI use it.
 
 const std = @import("std");
 

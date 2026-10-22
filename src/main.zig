@@ -1,39 +1,39 @@
-//! negscan: with no arguments, the app; with a command, the command line.
+//! minilab: with no arguments, the app; with a command, the command line.
 
 const std = @import("std");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const app = @import("app/app.zig");
 pub const version = @import("version.zig");
 
 const usage =
     \\usage (any command takes --verbose, for debug messages):
-    \\  negscan                          open the app
-    \\  negscan --version                which version this is
-    \\  negscan --help                   this list
-    \\  negscan open [<scan.ppm>...]     open the app, with these scans on their own
+    \\  minilab                          open the app
+    \\  minilab --version                which version this is
+    \\  minilab --help                   this list
+    \\  minilab open [<scan.ppm>...]     open the app, with these scans on their own
     \\      [--library <folder>]         the folder of rolls (default ~/Pictures/Rolls)
     \\      [--roll <name>]              open this roll of the library in Develop
     \\      [--workspace <name>]         rolls, scan, develop, export or looks
     \\      [--shortcuts]                show the keyboard shortcuts
     \\      [--screenshot <file.png>]    draw without a window and save the screen
-    \\  negscan import <roll name> <scan>...
+    \\  minilab import <roll name> <scan>...
     \\      [--library <folder>] [--stock <name>] [--film colour|bw|slide]
     \\      [--flat <file>]              add scans to a roll, making the roll if it's new: PPM or
     \\                                   PGM, TIFF (16-bit linear) or camera RAW; a strip becomes
     \\                                   a frame per frame on it. --flat keeps a shot of the
     \\                                   light with no film as the roll's flat field and divides
     \\                                   the frames by it
-    \\  negscan develop-roll <out folder> <scan>... [--look neutral|frontier|<file.cube>]
+    \\  minilab develop-roll <out folder> <scan>... [--look neutral|frontier|<file.cube>]
     \\      [--film colour|bw] [--base r,g,b]
     \\                                   develop scans of one 35mm roll together on one film base
-    \\  negscan scan --list              list the scanners
-    \\  negscan scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
+    \\  minilab scan --list              list the scanners
+    \\  minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
     \\      [--flatbed] [--film positive|negative]
     \\                                   one scan, in mm from the scanner's origin, raw (Positive
     \\                                   Film) by default; 300 dpi unless --dpi says otherwise
-    \\  negscan detect <scan> --dpi <n> [--film colour|bw|slide]
+    \\  minilab detect <scan> --dpi <n> [--film colour|bw|slide]
     \\                                   list the 135 frames found on a strip scan, in mm
-    \\  negscan develop <scan> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>]
+    \\  minilab develop <scan> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>]
     \\      [--film colour|bw]
     \\      [--depth 8|16] [--whole]     a scan of one 35mm frame, or of a strip, whose frames go
     \\                                   to out-1.tif, out-2.tif and so on; --whole keeps all of
@@ -43,10 +43,10 @@ const usage =
     \\
 ;
 
-/// The exit status for a command line negscan doesn't understand.
+/// The exit status for a command line minilab doesn't understand.
 const usage_status = 2;
 
-/// Prints the usage and ends the program, for a command line negscan doesn't understand.
+/// Prints the usage and ends the program, for a command line minilab doesn't understand.
 fn exitWithUsage() noreturn {
     std.debug.print("{s}", .{usage});
     std.process.exit(usage_status);
@@ -58,7 +58,7 @@ const FilmName = enum {
     bw,
     slide,
 
-    fn kind(name: FilmName) negscan.develop.FilmKind {
+    fn kind(name: FilmName) minilab.develop.FilmKind {
         return switch (name) {
             .colour => .colour_negative,
             .bw => .bw_negative,
@@ -71,7 +71,7 @@ const FilmName = enum {
 const negative_films: std.EnumSet(FilmName) = .initMany(&.{ .colour, .bw });
 
 /// The film kind `--film <value>` names, when it is one of the films the command `takes`.
-fn parseFilm(value: []const u8, takes: std.EnumSet(FilmName)) error{Usage}!negscan.develop.FilmKind {
+fn parseFilm(value: []const u8, takes: std.EnumSet(FilmName)) error{Usage}!minilab.develop.FilmKind {
     const name = std.meta.stringToEnum(FilmName, value) orelse return error.Usage;
     if (!takes.contains(name)) return error.Usage;
     return name.kind();
@@ -97,7 +97,7 @@ const Options = struct {
     output: []const u8,
     /// "neutral", "frontier", or a .cube file's path.
     look: []const u8 = "neutral",
-    kind: negscan.develop.FilmKind = .colour_negative,
+    kind: minilab.develop.FilmKind = .colour_negative,
     depth: Depth = .sixteen,
     /// Develop all of the scan rather than the frame found on it.
     whole: bool = false,
@@ -107,28 +107,28 @@ const Options = struct {
 
 /// The look a command names: "neutral", "frontier", or a .cube file's path. `catalog` holds
 /// what it reads.
-fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *negscan.look.Catalog, name: []const u8) !negscan.look.Resolved {
+fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog, name: []const u8) !minilab.look.Resolved {
     if (std.mem.eql(u8, name, "neutral")) return .neutral;
     if (std.mem.eql(u8, name, "frontier")) return catalog.resolve(gpa, io, .frontier);
     if (!std.ascii.endsWithIgnoreCase(name, ".cube")) return error.UnknownLook;
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(64 << 20));
     defer gpa.free(bytes);
-    const lut = try gpa.create(negscan.cube_lut.Lut);
-    lut.* = try negscan.cube_lut.Lut.parse(gpa, bytes);
+    const lut = try gpa.create(minilab.cube_lut.Lut);
+    lut.* = try minilab.cube_lut.Lut.parse(gpa, bytes);
     return .{ .lut = lut };
 }
 
-fn freeLook(gpa: std.mem.Allocator, look: negscan.look.Resolved, name: []const u8) void {
+fn freeLook(gpa: std.mem.Allocator, look: minilab.look.Resolved, name: []const u8) void {
     if (look != .lut or std.mem.eql(u8, name, "frontier")) return;
-    const lut: *negscan.cube_lut.Lut = @constCast(look.lut);
+    const lut: *minilab.cube_lut.Lut = @constCast(look.lut);
     lut.deinit(gpa);
     gpa.destroy(lut);
 }
 
-/// `negscan scan`: lists the scanners, or makes one scan into a 16-bit PPM, raw where the
+/// `minilab scan`: lists the scanners, or makes one scan into a 16-bit PPM, raw where the
 /// scanner has a profile.
 fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !void {
-    const scan = negscan.scan;
+    const scan = minilab.scan;
     var list = false;
     var output: ?[]const u8 = null;
     var wanted: ?[]const u8 = null;
@@ -164,7 +164,7 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     if (!list and output == null) return error.Usage;
 
     var library = scan.Library.load(gpa) catch |err| {
-        std.log.err("no scanner library: {t}. On macOS and Linux negscan uses SANE, on Windows TWAIN.", .{err});
+        std.log.err("no scanner library: {t}. On macOS and Linux minilab uses SANE, on Windows TWAIN.", .{err});
         std.process.exit(1);
     };
     defer library.unload();
@@ -179,7 +179,7 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         const name = wanted orelse break d;
         if (std.mem.eql(u8, d.id, name) or std.mem.indexOf(u8, d.model, name) != null) break d;
     } else {
-        std.log.err("no scanner {s}; `negscan scan --list` shows them", .{wanted orelse "at all"});
+        std.log.err("no scanner {s}; `minilab scan --list` shows them", .{wanted orelse "at all"});
         std.process.exit(1);
     };
     var scanner = try library.open(gpa, device);
@@ -191,13 +191,13 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var progress: scan.Progress = .{};
     var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = area }, &progress);
     defer image.deinit(gpa);
-    const ppm = try negscan.pnm.write(gpa, u16, .{ .width = image.width, .height = image.height, .pixels = image.pixels });
+    const ppm = try minilab.pnm.write(gpa, u16, .{ .width = image.width, .height = image.height, .pixels = image.pixels });
     defer gpa.free(ppm);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output.?, .data = ppm });
     std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.width, image.height, image.depth, image.area.width, image.area.height, image.area.x, image.area.y });
 }
 
-/// `negscan scan`'s resolution when none is given: a quick preview.
+/// `minilab scan`'s resolution when none is given: a quick preview.
 const default_scan_dpi = 300;
 
 pub const std_options: std.Options = .{ .log_level = .debug, .logFn = log };
@@ -219,7 +219,7 @@ pub fn main(init: std.process.Init) !void {
         if (std.mem.eql(u8, arg, "--verbose")) verbose = true else try kept.append(arena, arg);
     }
     const args = kept.items;
-    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) return printOut(init.io, "negscan " ++ version.string ++ "\n");
+    if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) return printOut(init.io, "minilab " ++ version.string ++ "\n");
     if (args.len == 2 and (std.mem.eql(u8, args[1], "--help") or std.mem.eql(u8, args[1], "-h"))) return printOut(init.io, usage);
     const library = try defaultLibrary(arena, init.environ_map);
     const home = homeFolder(init.environ_map);
@@ -306,7 +306,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var paths: std.ArrayList([]const u8) = .empty;
     defer paths.deinit(gpa);
     var look_name: []const u8 = "neutral";
-    var kind: negscan.develop.FilmKind = .colour_negative;
+    var kind: minilab.develop.FilmKind = .colour_negative;
     var given_base: ?[3]f32 = null;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
@@ -319,7 +319,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
             kind = try parseFilm(args[i], negative_films);
         } else if (std.mem.eql(u8, arg, "--base") and i + 1 < args.len) {
             i += 1;
-            given_base = try parseNumbers(negscan.image.channel_count, args[i]);
+            given_base = try parseNumbers(minilab.image.channel_count, args[i]);
         } else try paths.append(gpa, arg);
     }
     if (paths.items.len < 2) return error.Usage;
@@ -335,14 +335,14 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     }
     var bases: [3]std.ArrayList(f32) = .{ .empty, .empty, .empty };
     defer for (&bases) |*b| b.deinit(gpa);
-    const format = negscan.formats.Standard.default.format();
+    const format = minilab.formats.Standard.default.format();
     for (inputs) |path| {
-        var full = (try negscan.input.read(gpa, io, path)).scan;
+        var full = (try minilab.input.read(gpa, io, path)).scan;
         defer full.deinit(gpa);
-        var reduced = try negscan.image.downscale(gpa, full, negscan.framing.detection_longest);
+        var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
         defer reduced.deinit(gpa);
         const stem = std.fs.path.stem(path);
-        const found = negscan.framing.findAll(gpa, reduced, full.width, full.height, null, format, kind) catch |err| {
+        const found = minilab.framing.findAll(gpa, reduced, full.width, full.height, null, format, kind) catch |err| {
             std.log.warn("{s}: no frame found ({t}); using all of the scan", .{ path, err });
             try frames.ensureUnusedCapacity(gpa, 1);
             frames.appendAssumeCapacity(try .of(gpa, full, .whole(full.width, full.height), try gpa.dupe(u8, stem)));
@@ -350,7 +350,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         };
         defer gpa.free(found);
         for (found, 1..) |f, number| {
-            if (try negscan.framing.measureBase(gpa, full, f.gaps)) |b| {
+            if (try minilab.framing.measureBase(gpa, full, f.gaps)) |b| {
                 for (&bases, b) |*list, v| try list.append(gpa, v);
             }
             const name = if (found.len == 1) try gpa.dupe(u8, stem) else try std.fmt.allocPrint(gpa, "{s}-{d}", .{ stem, number });
@@ -370,15 +370,15 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     _ = &base;
     std.log.info("roll film base: {d:.4} {d:.4} {d:.4}", .{ base[0], base[1], base[2] });
 
-    var catalog: negscan.look.Catalog = try .init(gpa, null);
+    var catalog: minilab.look.Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
     const look = try lookNamed(gpa, io, &catalog, look_name);
     defer freeLook(gpa, look, look_name);
     const suffix = std.fs.path.stem(look_name);
     for (frames.items) |frame| {
-        var developed = try negscan.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base);
+        var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base);
         defer developed.deinit(gpa);
-        var encoded = try negscan.encode.toSrgb16(gpa, developed);
+        var encoded = try minilab.encode.toSrgb16(gpa, developed);
         defer encoded.deinit(gpa);
         try writeFrame(gpa, io, out_dir, frame.stem, suffix, u16, encoded);
     }
@@ -386,11 +386,11 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
 
 /// A frame `develop-roll` develops: its part of the scan, and its file's name before the look's.
 const RollFrame = struct {
-    scan: negscan.image.Scan,
+    scan: minilab.image.Scan,
     stem: []const u8,
 
     /// `area` of `full`, as the frame `stem`, which it takes; it frees `stem` if it fails.
-    fn of(gpa: std.mem.Allocator, full: negscan.image.Scan, area: negscan.image.Area, stem: []const u8) !RollFrame {
+    fn of(gpa: std.mem.Allocator, full: minilab.image.Scan, area: minilab.image.Area, stem: []const u8) !RollFrame {
         errdefer gpa.free(stem);
         return .{ .scan = try full.crop(gpa, area), .stem = stem };
     }
@@ -401,7 +401,7 @@ const RollFrame = struct {
     }
 };
 
-fn writeFrame(gpa: std.mem.Allocator, io: std.Io, out_dir: []const u8, stem: []const u8, suffix: []const u8, comptime Sample: type, encoded: negscan.image.Image([3]Sample)) !void {
+fn writeFrame(gpa: std.mem.Allocator, io: std.Io, out_dir: []const u8, stem: []const u8, suffix: []const u8, comptime Sample: type, encoded: minilab.image.Image([3]Sample)) !void {
     const name = try std.fmt.allocPrint(gpa, "{s}-{s}.tif", .{ stem, suffix });
     defer gpa.free(name);
     const path = try std.fs.path.join(gpa, &.{ out_dir, name });
@@ -417,7 +417,7 @@ fn writeFrame(gpa: std.mem.Allocator, io: std.Io, out_dir: []const u8, stem: []c
 fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !void {
     var path: ?[]const u8 = null;
     var dpi: ?f32 = null;
-    var kind: negscan.develop.FilmKind = .colour_negative;
+    var kind: minilab.develop.FilmKind = .colour_negative;
     var i: usize = 0;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--dpi") and i + 1 < args.len) {
@@ -430,12 +430,12 @@ fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) 
     }
     const scan_path = path orelse return error.Usage;
     const resolution = dpi orelse return error.Usage;
-    var scan = (try negscan.input.read(gpa, io, scan_path)).scan;
+    var scan = (try minilab.input.read(gpa, io, scan_path)).scan;
     defer scan.deinit(gpa);
-    const format = negscan.formats.Standard.default.format();
-    var found = try negscan.frames.detect.detect(gpa, scan, resolution, format, if (kind.isNegative()) .negative else .positive, .{});
+    const format = minilab.formats.Standard.default.format();
+    var found = try minilab.frames.detect.detect(gpa, scan, resolution, format, if (kind.isNegative()) .negative else .positive, .{});
     defer found.deinit(gpa);
-    const mm = negscan.formats.mm_per_inch / resolution;
+    const mm = minilab.formats.mm_per_inch / resolution;
     std.debug.print("axis {t}, skew {d:.2}°, opening {d:.1} mm\n", .{ found.axis, found.rotation_degrees, found.opening_mm });
     for (found.frames) |f| {
         const a = f.area;
@@ -455,7 +455,7 @@ const ImportOptions = struct {
     roll: []const u8,
     scans: []const []const u8,
     stock: ?[]const u8 = null,
-    kind: negscan.develop.FilmKind = .colour_negative,
+    kind: minilab.develop.FilmKind = .colour_negative,
     /// A shot of the light source with no film, for the roll's flat field.
     flat: ?[]const u8 = null,
 };
@@ -488,13 +488,13 @@ fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]
 fn importScans(gpa: std.mem.Allocator, io: std.Io, options: ImportOptions) !void {
     const path = try std.fs.path.join(gpa, &.{ options.library, options.roll });
     defer gpa.free(path);
-    var roll = negscan.roll.Roll.open(gpa, io, path) catch |err| switch (err) {
-        error.FileNotFound => try negscan.roll.Roll.create(gpa, io, options.library, .{ .name = options.roll, .kind = options.kind, .stock = options.stock }),
+    var roll = minilab.roll.Roll.open(gpa, io, path) catch |err| switch (err) {
+        error.FileNotFound => try minilab.roll.Roll.create(gpa, io, options.library, .{ .name = options.roll, .kind = options.kind, .stock = options.stock }),
         else => return err,
     };
     defer roll.close();
     if (options.flat) |flat_path| {
-        var shot = try negscan.input.read(gpa, io, flat_path);
+        var shot = try minilab.input.read(gpa, io, flat_path);
         defer shot.deinit(gpa);
         try roll.setFlatField(gpa, io, shot.scan);
         std.debug.print("{s} → {s} flat field\n", .{ flat_path, options.roll });
@@ -531,7 +531,7 @@ fn parse(args: []const [:0]const u8) !Options {
         } else if (std.mem.eql(u8, arg, "--base")) {
             i += 1;
             if (i == args.len) return error.MissingValue;
-            options.base = try parseNumbers(negscan.image.channel_count, args[i]);
+            options.base = try parseNumbers(minilab.image.channel_count, args[i]);
         } else if (std.mem.eql(u8, arg, "--depth")) {
             i += 1;
             if (i == args.len) return error.MissingValue;
@@ -558,27 +558,27 @@ fn formatOf(path: []const u8) !Format {
 /// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame of
 /// a strip, as `<out>-1.tif`, `<out>-2.tif` and so on.
 fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
-    var full = (try negscan.input.read(gpa, io, options.input)).scan;
+    var full = (try minilab.input.read(gpa, io, options.input)).scan;
     defer full.deinit(gpa);
     const format = try formatOf(options.output);
 
     // The frames on the scan, as the app finds them, unless all of it is asked for.
-    var reduced = try negscan.image.downscale(gpa, full, negscan.framing.detection_longest);
+    var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
     defer reduced.deinit(gpa);
-    const found: []const negscan.framing.Found = if (options.whole) &.{} else negscan.framing.findAll(gpa, reduced, full.width, full.height, null, negscan.formats.Standard.default.format(), options.kind) catch |err| found: {
+    const found: []const minilab.framing.Found = if (options.whole) &.{} else minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), options.kind) catch |err| found: {
         std.log.warn("no frame found ({t}); developing all of the scan", .{err});
         break :found &.{};
     };
     defer gpa.free(found);
 
-    var catalog: negscan.look.Catalog = try .init(gpa, null);
+    var catalog: minilab.look.Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
     const look = try lookNamed(gpa, io, &catalog, options.look);
     defer freeLook(gpa, look, options.look);
     if (found.len == 0) return developArea(gpa, io, options, format, look, full, .whole(full.width, full.height), options.base, options.output);
     for (found, 1..) |f, number| {
         // The film base from the clear film between frames, when the gaps are on the scan.
-        const base = options.base orelse try negscan.framing.measureBase(gpa, full, f.gaps);
+        const base = options.base orelse try minilab.framing.measureBase(gpa, full, f.gaps);
         const output = if (found.len == 1) options.output else try numbered(gpa, options.output, number);
         defer if (found.len > 1) gpa.free(output);
         try developArea(gpa, io, options, format, look, full, f.frame, base, output);
@@ -587,21 +587,21 @@ fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
 }
 
 /// Develops `area` of `full` on the film base `base`, and writes it to `output`.
-fn developArea(gpa: std.mem.Allocator, io: std.Io, options: Options, format: Format, look: negscan.look.Resolved, full: negscan.image.Scan, area: negscan.image.Area, base: ?[3]f32, output: []const u8) !void {
+fn developArea(gpa: std.mem.Allocator, io: std.Io, options: Options, format: Format, look: minilab.look.Resolved, full: minilab.image.Scan, area: minilab.image.Area, base: ?[3]f32, output: []const u8) !void {
     if (base) |b| std.log.info("film base: {d:.4} {d:.4} {d:.4}", .{ b[0], b[1], b[2] });
     var scan = try full.crop(gpa, area);
     defer scan.deinit(gpa);
-    var developed = try negscan.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base);
+    var developed = try minilab.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base);
     defer developed.deinit(gpa);
 
     const file = switch (options.depth) {
         .eight => blk: {
-            var encoded = try negscan.encode.toSrgb8(gpa, developed);
+            var encoded = try minilab.encode.toSrgb8(gpa, developed);
             defer encoded.deinit(gpa);
             break :blk try write(gpa, format, u8, encoded);
         },
         .sixteen => blk: {
-            var encoded = try negscan.encode.toSrgb16(gpa, developed);
+            var encoded = try minilab.encode.toSrgb16(gpa, developed);
             defer encoded.deinit(gpa);
             break :blk try write(gpa, format, u16, encoded);
         },
@@ -616,23 +616,23 @@ fn numbered(gpa: std.mem.Allocator, path: []const u8, number: usize) ![]u8 {
     return std.fmt.allocPrint(gpa, "{s}-{d}{s}", .{ path[0 .. path.len - extension.len], number, extension });
 }
 
-fn write(gpa: std.mem.Allocator, format: Format, comptime Sample: type, encoded: negscan.image.Image([3]Sample)) ![]u8 {
+fn write(gpa: std.mem.Allocator, format: Format, comptime Sample: type, encoded: minilab.image.Image([3]Sample)) ![]u8 {
     return switch (format) {
         .tiff => srgbTiff(gpa, Sample, encoded),
-        .ppm => negscan.pnm.write(gpa, Sample, encoded),
+        .ppm => minilab.pnm.write(gpa, Sample, encoded),
     };
 }
 
 /// `encoded`, which is sRGB, as a TIFF with sRGB's ICC profile.
-fn srgbTiff(gpa: std.mem.Allocator, comptime Sample: type, encoded: negscan.image.Image([3]Sample)) ![]u8 {
-    const profile = try negscan.codecs.icc.profileBytes(gpa, .srgb);
+fn srgbTiff(gpa: std.mem.Allocator, comptime Sample: type, encoded: minilab.image.Image([3]Sample)) ![]u8 {
+    const profile = try minilab.codecs.icc.profileBytes(gpa, .srgb);
     defer gpa.free(profile);
-    return negscan.codecs.tiff.write(gpa, Sample, encoded, .{ .icc_profile = profile });
+    return minilab.codecs.tiff.write(gpa, Sample, encoded, .{ .icc_profile = profile });
 }
 
 test "--film names one of the films the command takes" {
-    try std.testing.expectEqual(negscan.develop.FilmKind.colour_positive, try parseFilm("slide", .full));
-    try std.testing.expectEqual(negscan.develop.FilmKind.bw_negative, try parseFilm("bw", negative_films));
+    try std.testing.expectEqual(minilab.develop.FilmKind.colour_positive, try parseFilm("slide", .full));
+    try std.testing.expectEqual(minilab.develop.FilmKind.bw_negative, try parseFilm("bw", negative_films));
     try std.testing.expectError(error.Usage, parseFilm("slide", negative_films));
     try std.testing.expectError(error.Usage, parseFilm("sepia", .full));
 }
@@ -647,14 +647,14 @@ test "comma-separated numbers" {
 
 test "a developed TIFF carries sRGB's profile" {
     const gpa = std.testing.allocator;
-    var encoded: negscan.image.Encoded8 = try .init(gpa, 2, 1);
+    var encoded: minilab.image.Encoded8 = try .init(gpa, 2, 1);
     defer encoded.deinit(gpa);
     @memset(encoded.pixels, .{ 10, 20, 30 });
     const file = try srgbTiff(gpa, u8, encoded);
     defer gpa.free(file);
-    var decoded = try negscan.codecs.tiff.read(gpa, file);
+    var decoded = try minilab.codecs.tiff.read(gpa, file);
     defer decoded.deinit(gpa);
-    const profile = try negscan.codecs.icc.profileBytes(gpa, .srgb);
+    const profile = try minilab.codecs.icc.profileBytes(gpa, .srgb);
     defer gpa.free(profile);
     try std.testing.expectEqualSlices(u8, profile, decoded.icc_profile.?);
 }

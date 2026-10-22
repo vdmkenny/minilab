@@ -76,7 +76,7 @@ jobs:
         env:
           VERSION: ${{ needs.release-please.outputs.tag || github.ref_name }}
         run: |
-          name="negscan-$VERSION-${{ matrix.name }}"
+          name="minilab-$VERSION-${{ matrix.name }}"
           mkdir -p "$name" dist
           for file in README.md LICENSE CHANGELOG.md; do
             if [ -f "$file" ]; then cp "$file" "$name"/; fi
@@ -86,11 +86,11 @@ jobs:
           find zig-out -maxdepth 1 -type f -exec cp {} "$name"/ \;
           case "${{ matrix.target }}" in
             *windows*)
-              cp zig-out/bin/negscan.exe "$name"/
+              cp zig-out/bin/minilab.exe "$name"/
               7z a -tzip "dist/$name.zip" "$name" > /dev/null
               ;;
             *)
-              cp zig-out/bin/negscan "$name"/
+              cp zig-out/bin/minilab "$name"/
               tar -czf "dist/$name.tar.gz" "$name"
               ;;
           esac
@@ -123,7 +123,7 @@ jobs:
         working-directory: dist
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
-        run: sha256sum -- *.tar.gz *.zip > "negscan-$TAG-sha256sums.txt"
+        run: sha256sum -- *.tar.gz *.zip > "minilab-$TAG-sha256sums.txt"
       # Each change a contributor made gets their handle in the notes (`release-credits.sh`).
       - name: Attach the builds to the release, and credit the contributors
         shell: bash
@@ -133,7 +133,7 @@ jobs:
         run: |
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | scripts/release-credits.sh)"
-          note="Scanning needs SANE on macOS and Linux, or the scanner maker's TWAIN driver on Windows: see the README. The macOS builds are not signed, so macOS blocks them at first; run \`xattr -d com.apple.quarantine negscan\` once to allow them. To check a download, compare it with \`negscan-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          note="Scanning needs SANE on macOS and Linux, or the scanner maker's TWAIN driver on Windows: see the README. The macOS builds are not signed, so macOS blocks them at first; run \`xattr -d com.apple.quarantine minilab\` once to allow them. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
 
           $changelog"

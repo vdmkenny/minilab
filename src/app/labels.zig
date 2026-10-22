@@ -1,11 +1,11 @@
 //! How formats, films and stocks read in the interface.
 
 const std = @import("std");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 
-const formats = negscan.formats;
-const develop = negscan.develop;
+const formats = minilab.formats;
+const develop = minilab.develop;
 
 /// "Full frame, 36 × 24": the format's name and its size along × across the film in mm. Sheet
 /// film names carry their size already.
@@ -76,7 +76,7 @@ pub const film_kind_labels = blk: {
 pub const StockChoice = struct {
     name: []const u8,
     kind: develop.FilmKind,
-    preset: ?*const negscan.stocks.Stock = null,
+    preset: ?*const minilab.stocks.Stock = null,
 };
 
 /// Common stocks whose makers publish no numbers for a preset: still names a roll can have.
@@ -107,7 +107,7 @@ const unmeasured = [_]StockChoice{
 /// is left out of the rest.
 pub const stock_choices = blk: {
     @setEvalBranchQuota(1_000_000);
-    const presets = negscan.stocks.stocks;
+    const presets = minilab.stocks.stocks;
     var all: [presets.len + unmeasured.len]StockChoice = undefined;
     for (&presets, 0..) |*preset, i| all[i] = .{ .name = preset.name, .kind = @field(develop.FilmKind, @tagName(preset.kind)), .preset = preset };
     var n = presets.len;

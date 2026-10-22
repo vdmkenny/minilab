@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -12,9 +12,9 @@ const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
-const roll = negscan.roll;
-const develop = negscan.develop;
-const formats = negscan.formats;
+const roll = minilab.roll;
+const develop = minilab.develop;
+const formats = minilab.formats;
 
 /// Sizes in the design's pixels.
 const page_padding_x = 20;
@@ -33,7 +33,7 @@ const path_field = 1024;
 
 /// What the flat field's button opens.
 const flat_files = [_]c.SDL_DialogFileFilter{
-    .{ .name = "Camera RAW and TIFF", .pattern = negscan.input.extensions },
+    .{ .name = "Camera RAW and TIFF", .pattern = minilab.input.extensions },
 };
 
 pub const State = struct {
@@ -453,7 +453,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
 
 /// Gives `r` the shot in the file at `path` as its flat field.
 fn setFlatField(gpa: std.mem.Allocator, io: std.Io, r: *roll.Roll, path: []const u8) !void {
-    var shot = try negscan.input.read(gpa, io, path);
+    var shot = try minilab.input.read(gpa, io, path);
     defer shot.deinit(gpa);
     try r.setFlatField(gpa, io, shot.scan);
 }

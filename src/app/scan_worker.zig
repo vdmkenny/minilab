@@ -12,13 +12,13 @@
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 /// The scanner interface. It's imported here and nowhere else in the app, so that moving it
-/// into the core (as `negscan.scan`) changes this one line.
-pub const scan = negscan.scan;
+/// into the core (as `minilab.scan`) changes this one line.
+pub const scan = minilab.scan;
 
-const image = negscan.image;
-const frames = negscan.frames;
+const image = minilab.image;
+const frames = minilab.frames;
 
 /// Full-resolution scans are reduced to about this resolution to find their frame's edges again.
 const refine_dpi = 300;
@@ -349,7 +349,7 @@ pub const Worker = struct {
 /// scan where the frame was detected rather than placed by hand.
 fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
     const whole: image.Scan = .{ .width = picture.width, .height = picture.height, .pixels = picture.pixels };
-    const px_per_mm = [2]f32{ picture.dpi[0] / negscan.formats.mm_per_inch, picture.dpi[1] / negscan.formats.mm_per_inch };
+    const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
     // Where the preview says the crop is, in this scan's pixels.
     const planned = toPixels(job.crop, picture.area, px_per_mm, picture.width, picture.height);
     var crop = planned;
@@ -362,7 +362,7 @@ fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
     }
     return .{
         .index = job.index,
-        .ppm = try negscan.pnm.write(gpa, u16, whole),
+        .ppm = try minilab.pnm.write(gpa, u16, whole),
         .dpi = picture.dpi[0],
         .crop = crop,
         .refined = refined,
@@ -504,7 +504,7 @@ test "the scan thread's jobs preview and scan frames on SANE's test backend" {
         switch (event) {
             .frame_done => |scanned| {
                 done += 1;
-                var back = try negscan.pnm.read(gpa, scanned.ppm);
+                var back = try minilab.pnm.read(gpa, scanned.ppm);
                 defer back.deinit(gpa);
                 // The test backend's picture is blank, so the crop stays where the preview put it.
                 try std.testing.expect(!scanned.refined);
@@ -520,4 +520,4 @@ test "the scan thread's jobs preview and scan frames on SANE's test backend" {
     try std.testing.expectEqual(@as(usize, 2), done);
 }
 
-const formats_for_test = negscan.formats.Standard.@"135_full_frame";
+const formats_for_test = minilab.formats.Standard.@"135_full_frame";

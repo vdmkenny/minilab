@@ -49,7 +49,7 @@ const header_height = 44;
 const Notice = context.Notice;
 
 pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
-    var window: Window = try .open("negscan", start_width, start_height, null, options.screenshot != null);
+    var window: Window = try .open("minilab", start_width, start_height, null, options.screenshot != null);
     defer window.close();
     gui.scale = window.scale;
     fonts.load(window.scale);
@@ -128,7 +128,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_SetNextWindowPos(viewport.*.WorkPos, 0);
         c.ImGui_SetNextWindowSize(viewport.*.WorkSize, 0);
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(0, 0));
-        _ = c.ImGui_Begin("negscan", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
+        _ = c.ImGui_Begin("minilab", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
         c.ImGui_PopStyleVar();
         if (panels != .viewer) drawHeader(&workspace, &notice, &library, &develop, scan_view.status(&scan));
         // An export finishing says so wherever the user is.
@@ -226,8 +226,8 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     // The mark: a frame of film with its perforations, then the name.
     drawMark(list, gui.vec2(origin.x + gui.px(16), middle - gui.px(10)));
     fonts.pushSized(.semibold, 14);
-    const name_size = c.ImGui_CalcTextSize("negscan");
-    c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "negscan");
+    const name_size = c.ImGui_CalcTextSize("minilab");
+    c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
     fonts.pop();
 
     // The workspaces, as tabs.

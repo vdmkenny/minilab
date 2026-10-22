@@ -8,7 +8,7 @@
 //! to the bytes the codecs make.
 //!
 //! EXIF has no field for the film stock or the develop settings; those are in the XMP only, in
-//! negscan's own namespace.
+//! minilab's own namespace.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -21,7 +21,7 @@ pub const Metadata = struct {
     lens: ?[]const u8 = null,
     stock: ?[]const u8 = null,
     /// When the roll was shot, as the roll says it. Dates such as 2026, 2026-10 or 2026-10-22 are
-    /// written as dates; anything else as text in negscan's namespace.
+    /// written as dates; anything else as text in minilab's namespace.
     shot: ?[]const u8 = null,
     copyright: ?[]const u8 = null,
     /// How the frame was developed.
@@ -59,8 +59,8 @@ pub fn spaceName(space: icc.Space) []const u8 {
     };
 }
 
-/// negscan's XMP namespace, for what no standard schema has a property for.
-pub const namespace = "urn:negscan:xmp:1.0/";
+/// minilab's XMP namespace, for what no standard schema has a property for.
+pub const namespace = "urn:minilab:xmp:1.0/";
 
 // XMP ------------------------------------------------------------------------------------------
 
@@ -77,7 +77,7 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
     // The packet header's id is fixed by the XMP specification; the byte-order mark tells
     // scanners the packet is UTF-8.
     try w.writeAll("<?xpacket begin=\"\u{FEFF}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
-    try w.writeAll("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"negscan\">\n");
+    try w.writeAll("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"minilab\">\n");
     try w.writeAll(" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
     try w.writeAll("  <rdf:Description rdf:about=\"\"\n");
     try w.writeAll("    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n");
@@ -87,8 +87,8 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
     try w.writeAll("    xmlns:exifEX=\"http://cipa.jp/exif/1.0/\"\n");
     try w.writeAll("    xmlns:aux=\"http://ns.adobe.com/exif/1.0/aux/\"\n");
     try w.writeAll("    xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\"\n");
-    try w.writeAll("    xmlns:negscan=\"" ++ namespace ++ "\"\n");
-    try w.writeAll("    xmp:CreatorTool=\"negscan\"\n");
+    try w.writeAll("    xmlns:minilab=\"" ++ namespace ++ "\"\n");
+    try w.writeAll("    xmp:CreatorTool=\"minilab\"\n");
     try w.print("    photoshop:ICCProfile=\"{s}\"\n", .{spaceName(m.space)});
     if (m.width > 0) try w.print("    tiff:ImageWidth=\"{d}\"\n    tiff:ImageLength=\"{d}\"\n", .{ m.width, m.height });
     if (m.dpi) |dpi| {
@@ -104,9 +104,9 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
         if (isoDate(v) != null) {
             try attribute(w, "exif:DateTimeOriginal", v);
             try attribute(w, "photoshop:DateCreated", v);
-        } else try attribute(w, "negscan:Shot", v);
+        } else try attribute(w, "minilab:Shot", v);
     }
-    if (m.stock) |v| try attribute(w, "negscan:FilmStock", v);
+    if (m.stock) |v| try attribute(w, "minilab:FilmStock", v);
     if (m.develop) |d| try writeDevelop(w, d);
     try w.writeAll("  >\n");
     if (m.copyright) |v| {
@@ -118,33 +118,33 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
 }
 
 fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
-    try attribute(w, "negscan:Look", d.look.label());
-    try w.print("    negscan:FilmType=\"{t}\"\n", .{d.kind});
-    if (d.scanner) |v| try attribute(w, "negscan:Scanner", v);
-    if (d.crop) |a| try w.print("    negscan:Crop=\"{d} {d} {d} {d}\"\n", .{ a.x, a.y, a.width, a.height });
-    try w.print("    negscan:QuarterTurns=\"{d}\"\n", .{d.quarter_turns});
+    try attribute(w, "minilab:Look", d.look.label());
+    try w.print("    minilab:FilmType=\"{t}\"\n", .{d.kind});
+    if (d.scanner) |v| try attribute(w, "minilab:Scanner", v);
+    if (d.crop) |a| try w.print("    minilab:Crop=\"{d} {d} {d} {d}\"\n", .{ a.x, a.y, a.width, a.height });
+    try w.print("    minilab:QuarterTurns=\"{d}\"\n", .{d.quarter_turns});
     const s = d.settings orelse {
-        try w.writeAll("    negscan:Settings=\"automatic\"\n");
+        try w.writeAll("    minilab:Settings=\"automatic\"\n");
         return;
     };
-    try w.writeAll("    negscan:Settings=\"saved\"\n");
-    try w.print("    negscan:FilmBase=\"{d:.5} {d:.5} {d:.5}\"\n", .{ s.base[0], s.base[1], s.base[2] });
-    try w.print("    negscan:BaseSource=\"{t}\"\n", .{s.base_source});
-    try w.print("    negscan:Tone=\"{t}\"\n", .{s.tone});
-    try w.print("    negscan:Saturation=\"{d:.2}\"\n", .{s.saturation});
-    try w.print("    negscan:WhiteBalance=\"{t}\"\n", .{s.white_balance});
-    try w.print("    negscan:DensityRange=\"{d:.4}\"\n", .{s.density_range});
-    try w.print("    negscan:Offset=\"{d:.4}\"\n", .{s.offset});
-    try w.print("    negscan:Contrast=\"{d:.4}\"\n", .{s.contrast});
-    try w.print("    negscan:Black=\"{d:.4}\"\n", .{s.black});
-    try w.print("    negscan:RollOff=\"{d:.4}\"\n", .{s.roll_off});
-    try w.print("    negscan:Exposure=\"{d:.4}\"\n", .{s.exposure});
-    try w.print("    negscan:HighlightBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.highlight_balance[0], s.highlight_balance[1], s.highlight_balance[2] });
-    try w.print("    negscan:ShadowBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.shadow_balance[0], s.shadow_balance[1], s.shadow_balance[2] });
+    try w.writeAll("    minilab:Settings=\"saved\"\n");
+    try w.print("    minilab:FilmBase=\"{d:.5} {d:.5} {d:.5}\"\n", .{ s.base[0], s.base[1], s.base[2] });
+    try w.print("    minilab:BaseSource=\"{t}\"\n", .{s.base_source});
+    try w.print("    minilab:Tone=\"{t}\"\n", .{s.tone});
+    try w.print("    minilab:Saturation=\"{d:.2}\"\n", .{s.saturation});
+    try w.print("    minilab:WhiteBalance=\"{t}\"\n", .{s.white_balance});
+    try w.print("    minilab:DensityRange=\"{d:.4}\"\n", .{s.density_range});
+    try w.print("    minilab:Offset=\"{d:.4}\"\n", .{s.offset});
+    try w.print("    minilab:Contrast=\"{d:.4}\"\n", .{s.contrast});
+    try w.print("    minilab:Black=\"{d:.4}\"\n", .{s.black});
+    try w.print("    minilab:RollOff=\"{d:.4}\"\n", .{s.roll_off});
+    try w.print("    minilab:Exposure=\"{d:.4}\"\n", .{s.exposure});
+    try w.print("    minilab:HighlightBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.highlight_balance[0], s.highlight_balance[1], s.highlight_balance[2] });
+    try w.print("    minilab:ShadowBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.shadow_balance[0], s.shadow_balance[1], s.shadow_balance[2] });
     // Highlights, midtones, shadows, as `develop.Range` orders them.
-    try w.print("    negscan:Temperature=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.temperature[0], s.temperature[1], s.temperature[2] });
-    try w.print("    negscan:Tint=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.tint[0], s.tint[1], s.tint[2] });
-    try w.writeAll("    negscan:Matrix=\"");
+    try w.print("    minilab:Temperature=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.temperature[0], s.temperature[1], s.temperature[2] });
+    try w.print("    minilab:Tint=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.tint[0], s.tint[1], s.tint[2] });
+    try w.writeAll("    minilab:Matrix=\"");
     for (s.matrix, 0..) |row, i| {
         for (row, 0..) |v, j| try w.print("{s}{d:.4}", .{ if (i + j == 0) "" else " ", v });
     }
@@ -306,7 +306,7 @@ fn mainEntries(e: *Entries, m: Metadata, software: bool) !void {
         try e.fraction(Tag.y_resolution, rational(dpi));
         try e.short(Tag.resolution_unit, resolution_in_inches);
     }
-    if (software) try e.ascii(Tag.software, "negscan");
+    if (software) try e.ascii(Tag.software, "minilab");
     if (m.copyright) |text| try e.ascii(Tag.copyright, text);
     try e.long(Tag.exif_ifd, 0);
 }
@@ -536,9 +536,9 @@ test "XMP escapes what the roll says and gives dates as dates" {
     defer gpa.free(packet);
     try std.testing.expect(std.mem.indexOf(u8, packet, "© Ana &amp; Bo &lt;studio&gt;</rdf:li>") != null);
     try std.testing.expect(std.mem.indexOf(u8, packet, "photoshop:DateCreated=\"2026-10-22\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, packet, "negscan:FilmStock=\"Kodak Portra 400\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, packet, "minilab:FilmStock=\"Kodak Portra 400\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, packet, "photoshop:ICCProfile=\"Display P3\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, packet, "negscan:Settings=\"saved\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, packet, "minilab:Settings=\"saved\"") != null);
     try std.testing.expect(std.mem.endsWith(u8, packet, "<?xpacket end=\"w\"?>\n"));
 
     var vague = example;
@@ -546,7 +546,7 @@ test "XMP escapes what the roll says and gives dates as dates" {
     const other = try xmp(gpa, vague);
     defer gpa.free(other);
     try std.testing.expect(std.mem.indexOf(u8, other, "DateCreated") == null);
-    try std.testing.expect(std.mem.indexOf(u8, other, "negscan:Shot=\"summer\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, other, "minilab:Shot=\"summer\"") != null);
 }
 
 test "only ISO dates count as dates" {
@@ -606,7 +606,7 @@ test "a JPEG gains EXIF, XMP and its density, and still decodes" {
     const block = exif_at + 4 + exif_header.len;
     try std.testing.expectEqualStrings(exif_header, tagged[exif_at + 4 ..][0..exif_header.len]);
     const main = std.mem.readInt(u32, tagged[block + 4 ..][0..4], .little);
-    try std.testing.expectEqualStrings("negscan\x00", find(tagged, block, main, Tag.software).?.value);
+    try std.testing.expectEqualStrings("minilab\x00", find(tagged, block, main, Tag.software).?.value);
     try std.testing.expect(std.mem.indexOf(u8, tagged, xmp_header) != null);
 
     var decoded = try jpeg_codec.read(gpa, tagged);

@@ -9,7 +9,7 @@ add how the maintainer works with an agent.
   `make run`. Build into a folder of its own (`zig build --prefix <folder>`) when the maintainer is
   running a copy, and never stop their copy. Once they are happy with it, run the checks and
   commit.
-- **Checking a screen.** `negscan open ... --screenshot <file.png>` draws without a window and
+- **Checking a screen.** `minilab open ... --screenshot <file.png>` draws without a window and
   saves the frame, for checking a screen against the design without showing a window on the
   maintainer's screen. Use a copy of their library, so nothing they're using changes.
 - **Scanners.** Don't scan or move a scanner unless the maintainer asks; a scan on their hardware

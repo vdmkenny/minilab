@@ -1,5 +1,5 @@
 /*
- * negscan's JPEG compression and decompression through libjpeg (see jpeg_shim.h). The pattern is
+ * minilab's JPEG compression and decompression through libjpeg (see jpeg_shim.h). The pattern is
  * libjpeg's own (`example.c`): the error manager's `error_exit` formats the message and jumps back
  * to the `setjmp` in the function that started the work, which cleans up and returns.
  */
@@ -48,7 +48,7 @@ static void set_up_errors(struct error_manager *errors, char *message)
     message[0] = '\0';
 }
 
-enum negscan_jpeg_result negscan_jpeg_compress(const struct negscan_jpeg_compression *image,
+enum minilab_jpeg_result minilab_jpeg_compress(const struct minilab_jpeg_compression *image,
                                                unsigned char **jpeg, unsigned long *jpeg_size,
                                                char *message)
 {
@@ -65,7 +65,7 @@ enum negscan_jpeg_result negscan_jpeg_compress(const struct negscan_jpeg_compres
         free(*jpeg);
         *jpeg = NULL;
         *jpeg_size = 0;
-        return NEGSCAN_JPEG_FAILED;
+        return MINILAB_JPEG_FAILED;
     }
 
     jpeg_create_compress(&cinfo);
@@ -92,11 +92,11 @@ enum negscan_jpeg_result negscan_jpeg_compress(const struct negscan_jpeg_compres
     }
     jpeg_finish_compress(&cinfo);
     jpeg_destroy_compress(&cinfo);
-    return NEGSCAN_JPEG_OK;
+    return MINILAB_JPEG_OK;
 }
 
-enum negscan_jpeg_result negscan_jpeg_decompress(const unsigned char *jpeg, unsigned long jpeg_size,
-                                                 struct negscan_jpeg_image *image, char *message)
+enum minilab_jpeg_result minilab_jpeg_decompress(const unsigned char *jpeg, unsigned long jpeg_size,
+                                                 struct minilab_jpeg_image *image, char *message)
 {
     struct jpeg_decompress_struct cinfo;
     struct error_manager errors;
@@ -116,7 +116,7 @@ enum negscan_jpeg_result negscan_jpeg_decompress(const unsigned char *jpeg, unsi
         free(image->icc_profile);
         image->icc_profile = NULL;
         image->icc_profile_size = 0;
-        return NEGSCAN_JPEG_FAILED;
+        return MINILAB_JPEG_FAILED;
     }
 
     jpeg_create_decompress(&cinfo);
@@ -137,7 +137,7 @@ enum negscan_jpeg_result negscan_jpeg_decompress(const unsigned char *jpeg, unsi
         free(image->icc_profile);
         image->icc_profile = NULL;
         image->icc_profile_size = 0;
-        return NEGSCAN_JPEG_OUT_OF_MEMORY;
+        return MINILAB_JPEG_OUT_OF_MEMORY;
     }
     image->width = cinfo.output_width;
     image->height = cinfo.output_height;
@@ -147,10 +147,10 @@ enum negscan_jpeg_result negscan_jpeg_decompress(const unsigned char *jpeg, unsi
     }
     jpeg_finish_decompress(&cinfo);
     jpeg_destroy_decompress(&cinfo);
-    return NEGSCAN_JPEG_OK;
+    return MINILAB_JPEG_OK;
 }
 
-void negscan_jpeg_free(void *memory)
+void minilab_jpeg_free(void *memory)
 {
     free(memory);
 }

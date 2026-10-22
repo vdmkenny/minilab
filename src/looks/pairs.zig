@@ -12,15 +12,15 @@
 //! onto them.
 
 const std = @import("std");
-const negscan = @import("../root.zig");
+const minilab = @import("../root.zig");
 const register = @import("register.zig");
 const fit = @import("fit.zig");
 const colour = @import("colour.zig");
 const model = @import("model.zig");
 const draft = @import("draft.zig");
 
-const image = negscan.image;
-const develop = negscan.develop;
+const image = minilab.image;
+const develop = minilab.develop;
 
 /// The working copies' longer sides, in pixels.
 pub const working_longest = 768;
@@ -170,7 +170,7 @@ pub const Developed = struct {
 /// Reads the raw scan at `path` and develops it reduced to `longest` pixels: the frame on it,
 /// when `find_frame` and frame detection finds one, or all of it.
 pub fn developScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8, longest: usize, placement: ?draft.Placement) !Developed {
-    var raw = (try negscan.input.read(gpa, io, path)).scan;
+    var raw = (try minilab.input.read(gpa, io, path)).scan;
     defer raw.deinit(gpa);
     // A frame of a roll: where the roll has it.
     if (placement) |p| {
@@ -183,11 +183,11 @@ pub fn developScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8, longest
     var frame: image.Area = .whole(raw.width, raw.height);
     var gap_base: ?[3]f32 = null;
     {
-        var reduced = try image.downscale(gpa, raw, negscan.framing.detection_longest);
+        var reduced = try image.downscale(gpa, raw, minilab.framing.detection_longest);
         defer reduced.deinit(gpa);
-        if (negscan.framing.findWithGaps(gpa, reduced, raw.width, raw.height, null, negscan.formats.Standard.default.format(), .colour_negative)) |found| {
+        if (minilab.framing.findWithGaps(gpa, reduced, raw.width, raw.height, null, minilab.formats.Standard.default.format(), .colour_negative)) |found| {
             frame = found.frame;
-            gap_base = negscan.framing.measureBase(gpa, raw, found.gaps) catch null;
+            gap_base = minilab.framing.measureBase(gpa, raw, found.gaps) catch null;
         } else |_| {}
     }
     const cropped = frame.width != raw.width or frame.height != raw.height;
@@ -254,15 +254,15 @@ pub fn readReference(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Redu
     defer gpa.free(bytes);
     const extension = std.fs.path.extension(path);
     if (std.ascii.eqlIgnoreCase(extension, ".jpg") or std.ascii.eqlIgnoreCase(extension, ".jpeg")) {
-        var decoded = try negscan.codecs.jpeg.read(gpa, bytes);
+        var decoded = try minilab.codecs.jpeg.read(gpa, bytes);
         defer decoded.deinit(gpa);
         return reduce(u8, gpa, decoded.image.pixels, decoded.image.width, decoded.image.height);
     }
     var scan = if (std.ascii.eqlIgnoreCase(extension, ".tif") or std.ascii.eqlIgnoreCase(extension, ".tiff")) blk: {
-        const decoded = try negscan.codecs.tiff.read(gpa, bytes);
+        const decoded = try minilab.codecs.tiff.read(gpa, bytes);
         if (decoded.icc_profile) |p| gpa.free(p);
         break :blk decoded.scan;
-    } else try negscan.pnm.read(gpa, bytes);
+    } else try minilab.pnm.read(gpa, bytes);
     defer scan.deinit(gpa);
     return reduce(u16, gpa, scan.pixels, scan.width, scan.height);
 }
@@ -539,7 +539,7 @@ test "a reference made from our own scan lines up and samples match" {
             scan.pixels[y * scan.width + x] = .{ @intFromFloat(t * 60000), @intFromFloat(t * 40000), @intFromFloat(t * 25000) };
         }
     }
-    const bytes = try negscan.pnm.write(gpa, u16, scan);
+    const bytes = try minilab.pnm.write(gpa, u16, scan);
     defer gpa.free(bytes);
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -556,7 +556,7 @@ test "a reference made from our own scan lines up and samples match" {
     var encoded: image.Encoded8 = try .init(gpa, developed.neutral.width, developed.neutral.height);
     defer encoded.deinit(gpa);
     for (encoded.pixels, developed.neutral.pixels) |*e, n| e.* = n[0..3].*;
-    const reference_bytes = try negscan.pnm.write(gpa, u8, encoded);
+    const reference_bytes = try minilab.pnm.write(gpa, u8, encoded);
     defer gpa.free(reference_bytes);
     try tmp.dir.writeFile(io, .{ .sub_path = "theirs.ppm", .data = reference_bytes });
     const theirs_path = try std.fs.path.join(gpa, &.{ dir, "theirs.ppm" });

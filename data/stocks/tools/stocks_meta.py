@@ -14,7 +14,7 @@ STOCKS = [
         "iso": 50,
         "reading": "kodak_vision3_50d",
         "const": "kodak_vision3_50d",
-        "source": "Kodak H-1-5203 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.02 D)",
+        "source": "Kodak H-1-5203 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.02 D)",
     },
     {
         "name": "Kodak Vision3 250D 5207",
@@ -23,7 +23,7 @@ STOCKS = [
         "iso": 250,
         "reading": "kodak_vision3_250d",
         "const": "kodak_vision3_250d",
-        "source": "Kodak H-1-5207 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
+        "source": "Kodak H-1-5207 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
     },
     {
         "name": "Kodak Vision3 200T 5213",
@@ -32,7 +32,7 @@ STOCKS = [
         "iso": 200,
         "reading": "kodak_vision3_200t",
         "const": "kodak_vision3_200t",
-        "source": "Kodak H-1-5213 (July 2015 edition), Status M, ECN-2, 3200 K tungsten 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.004 D)",
+        "source": "Kodak H-1-5213 (July 2015 edition), Status M, ECN-2, 3200 K tungsten 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.004 D)",
     },
     {
         "name": "Kodak Vision3 500T 5219",
@@ -41,7 +41,7 @@ STOCKS = [
         "iso": 500,
         "reading": "kodak_vision3_500t",
         "const": "kodak_vision3_500t",
-        "source": "Kodak H-1-5219 (July 2015 edition), Status M (the chart says \"Densitometry: ECN-2\", Kodak's slip), ECN-2, 3200 K tungsten 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
+        "source": "Kodak H-1-5219 (July 2015 edition), Status M (the chart says \"Densitometry: ECN-2\", Kodak's slip), ECN-2, 3200 K tungsten 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
     },
     {
         "name": "CineStill 800T",
@@ -60,7 +60,7 @@ STOCKS = [
         "iso": 200,
         "reading": "fujifilm_c200",
         "const": "fujifilm_c200",
-        "source": "Fujifilm AF3-0249E (May 2017), Status M, CN-16, daylight 1/125 s; curves read for negscan from the 600 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); log H in lux-seconds",
+        "source": "Fujifilm AF3-0249E (May 2017), Status M, CN-16, daylight 1/125 s; curves read for minilab from the 600 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); log H in lux-seconds",
     },
     {
         "name": "Fujifilm Pro 400H",
@@ -69,7 +69,7 @@ STOCKS = [
         "iso": 400,
         "reading": "fujifilm_pro_400h",
         "const": "fujifilm_pro_400h",
-        "source": "Fujifilm AF3-176E (January 2005), Status M, C-41, daylight 1/125 s; curves read for negscan from the vector drawing in the PDF (its gridlines are uneven by up to 0.013 log H); log H in lux-seconds",
+        "source": "Fujifilm AF3-176E (January 2005), Status M, C-41, daylight 1/125 s; curves read for minilab from the vector drawing in the PDF (its gridlines are uneven by up to 0.013 log H); log H in lux-seconds",
     },
     {
         "name": "Fujifilm Superia 200",
@@ -80,7 +80,7 @@ STOCKS = [
         "const": "fujifilm_superia_200",
         "after": "Fujifilm Superia X-TRA 400",
         "after_const": "fujifilm_superia_xtra_400",
-        "source": "Fujifilm AF3-026E (October 1998), Status M, CN-16, daylight 1/125 s; curves read for negscan from the 600 ppi scanned chart image in the PDF (reads at 600 and 300 dpi agree within 0.003 D); log H in lux-seconds. The green curve still rises at 0.105 per log H where it starts, so base density is unknown",
+        "source": "Fujifilm AF3-026E (October 1998), Status M, CN-16, daylight 1/125 s; curves read for minilab from the 600 ppi scanned chart image in the PDF (reads at 600 and 300 dpi agree within 0.003 D); log H in lux-seconds. The green curve still rises at 0.105 per log H where it starts, so base density is unknown",
     },
     {
         "name": "Kodak Pro Image 100",
@@ -91,7 +91,7 @@ STOCKS = [
         "const": "kodak_pro_image_100",
         "after": "Kodak UltraMax 400",
         "after_const": "kodak_ultramax_400",
-        "source": "Kodak E-4L (July 1997), Status M, C-41, daylight; curves read for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        "source": "Kodak E-4L (July 1997), Status M, C-41, daylight; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     {
         "name": "Harman Phoenix 200",
@@ -102,7 +102,7 @@ STOCKS = [
         "const": "harman_phoenix_200",
         "after": "Fujifilm Fujicolor 100",
         "after_const": "fujifilm_fujicolor_100",
-        "source": "HARMAN Phoenix 200 datasheet (September 2024), standard C-41 chemicals; the densitometry is not stated; curves read for negscan from the 216 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D). Blue and red are drawn over each other up to relative log H 0.9 and share one reading there; log H relative (\"relative log exposure\")",
+        "source": "HARMAN Phoenix 200 datasheet (September 2024), standard C-41 chemicals; the densitometry is not stated; curves read for minilab from the 216 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D). Blue and red are drawn over each other up to relative log H 0.9 and share one reading there; log H relative (\"relative log exposure\")",
     },
     # Colour positive (slide).
     {
@@ -112,7 +112,7 @@ STOCKS = [
         "iso": 64,
         "reading": "kodak_kodachrome_64",
         "const": "kodak_kodachrome_64",
-        "source": "Kodak E-88 (June 2009), Status A, daylight 1/50 s, K-14; curves read for negscan from the vector drawing in the PDF; log H in lux-seconds. The plotted curves level off at neither end, so D-min and D-max are unknown",
+        "source": "Kodak E-88 (June 2009), Status A, daylight 1/50 s, K-14; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds. The plotted curves level off at neither end, so D-min and D-max are unknown",
     },
     {
         "name": "Fujifilm Provia 100F",
@@ -121,7 +121,7 @@ STOCKS = [
         "iso": 100,
         "reading": "fujifilm_provia_100f",
         "const": "fujifilm_provia_100f",
-        "source": "Fujifilm AF3-036E (October 2000), Fuji FAD-30S (Status A), daylight 1/50 s, E-6; curves read for negscan from the 300 ppi chart image in the PDF. Green and blue are drawn under red and take its reading where they coincide with it (reads at 600 and 300 dpi agree within 0.06 D, on the steep part where green is partly covered); log H in lux-seconds",
+        "source": "Fujifilm AF3-036E (October 2000), Fuji FAD-30S (Status A), daylight 1/50 s, E-6; curves read for minilab from the 300 ppi chart image in the PDF. Green and blue are drawn under red and take its reading where they coincide with it (reads at 600 and 300 dpi agree within 0.06 D, on the steep part where green is partly covered); log H in lux-seconds",
     },
     {
         "name": "Fujifilm Velvia 100",
@@ -130,7 +130,7 @@ STOCKS = [
         "iso": 100,
         "reading": "fujifilm_velvia_100",
         "const": "fujifilm_velvia_100",
-        "source": "Fujifilm AF3-202E (February 2005), Status A, daylight, E-6; curves read for negscan from the vector drawing in the PDF (its gridlines are uneven by up to 0.008 log H); log H in lux-seconds",
+        "source": "Fujifilm AF3-202E (February 2005), Status A, daylight, E-6; curves read for minilab from the vector drawing in the PDF (its gridlines are uneven by up to 0.008 log H); log H in lux-seconds",
     },
     {
         "name": "Fujichrome Velvia 50",
@@ -141,7 +141,7 @@ STOCKS = [
         "const": "fujichrome_velvia_50",
         "after": "Fujifilm Velvia 100",
         "after_const": "fujifilm_velvia_100",
-        "source": "Fujifilm AF3-0221E2 (March 2007), Status A, daylight, E-6/CR-56; curves read for negscan from the 600 ppi chart image in the PDF. From log H -1.6 on the three curves are drawn over each other, within about a line width, and there all three take the centre of the band they form (reads at 600 and 300 dpi agree within 0.07 D); log H in lux-seconds",
+        "source": "Fujifilm AF3-0221E2 (March 2007), Status A, daylight, E-6/CR-56; curves read for minilab from the 600 ppi chart image in the PDF. From log H -1.6 on the three curves are drawn over each other, within about a line width, and there all three take the centre of the band they form (reads at 600 and 300 dpi agree within 0.07 D); log H in lux-seconds",
     },
     # Black-and-white negative.
     {
@@ -153,7 +153,7 @@ STOCKS = [
         "const": "kodak_t_max_p3200",
         "after": "Kodak T-Max 400",
         "after_const": "kodak_t_max_400",
-        "source": "Kodak Alaris F-4001 (March 2018), diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 12 min, 20 °C (the table's starting point for EI 3200); curve read for negscan from the vector drawing in the PDF; log H in lux-seconds. The curve leaves the chart at density 3.0. The July 2018 and April 2019 editions print an older set of curves (8, 9, 11 and 13 min), none at a table time",
+        "source": "Kodak Alaris F-4001 (March 2018), diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 12 min, 20 °C (the table's starting point for EI 3200); curve read for minilab from the vector drawing in the PDF; log H in lux-seconds. The curve leaves the chart at density 3.0. The July 2018 and April 2019 editions print an older set of curves (8, 9, 11 and 13 min), none at a table time",
     },
     {
         "name": "Ilford Ortho Plus",
@@ -162,7 +162,7 @@ STOCKS = [
         "iso": 80,
         "reading": "ilford_ortho_plus",
         "const": "ilford_ortho_plus",
-        "source": "Harman/Ilford Ortho Plus datasheet (October 2019), ID-11 stock, 8 min, 20 °C, intermittent agitation: the curve the chart labels G-bar 0.62, the low end of the 0.62 to 0.70 Ilford calls normal for camera use. The densitometry is not stated; curve read for negscan from the 199 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); the 8 and 10 min curves run together in the toe and share one reading there; log H relative (\"relative log exposure\")",
+        "source": "Harman/Ilford Ortho Plus datasheet (October 2019), ID-11 stock, 8 min, 20 °C, intermittent agitation: the curve the chart labels G-bar 0.62, the low end of the 0.62 to 0.70 Ilford calls normal for camera use. The densitometry is not stated; curve read for minilab from the 199 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); the 8 and 10 min curves run together in the toe and share one reading there; log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford HP5 Plus",
@@ -173,7 +173,7 @@ STOCKS = [
         "const": "ilford_hp5_plus",
         "after": "Ilford Ortho Plus",
         "after_const": "foma_fomapan_400",
-        "source": "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.005 D); log H relative (\"relative log exposure\")",
+        "source": "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.005 D); log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford FP4 Plus",
@@ -184,7 +184,7 @@ STOCKS = [
         "const": "ilford_fp4_plus",
         "after": "Ilford HP5 Plus",
         "after_const": "ilford_hp5_plus",
-        "source": "Ilford FP4 Plus datasheet (July 2010 edition), rollfilm, ILFOTEC HC 1+31, 8 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        "source": "Ilford FP4 Plus datasheet (July 2010 edition), rollfilm, ILFOTEC HC 1+31, 8 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford Pan F Plus",
@@ -195,7 +195,7 @@ STOCKS = [
         "const": "ilford_pan_f_plus",
         "after": "Ilford FP4 Plus",
         "after_const": "ilford_fp4_plus",
-        "source": "Ilford Pan F Plus datasheet (June 2010 edition), rollfilm, ILFOTEC HC 1+31, 4 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        "source": "Ilford Pan F Plus datasheet (June 2010 edition), rollfilm, ILFOTEC HC 1+31, 4 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford Delta 100 Professional",
@@ -206,7 +206,7 @@ STOCKS = [
         "const": "ilford_delta_100",
         "after": "Ilford Pan F Plus",
         "after_const": "ilford_pan_f_plus",
-        "source": "Ilford Delta 100 Professional datasheet (April 2023), rollfilm, ID-11 stock, 8.5 min, 20 °C (the table's time for EI 100), intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the 168 ppi chart image in the PDF (its gridlines are uneven by up to 0.016 log H; reads at 600 and 300 dpi agree within 0.01 D); log H relative (\"relative log exposure\")",
+        "source": "Ilford Delta 100 Professional datasheet (April 2023), rollfilm, ID-11 stock, 8.5 min, 20 °C (the table's time for EI 100), intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the 168 ppi chart image in the PDF (its gridlines are uneven by up to 0.016 log H; reads at 600 and 300 dpi agree within 0.01 D); log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford Delta 3200 Professional",
@@ -217,7 +217,7 @@ STOCKS = [
         "const": "ilford_delta_3200",
         "after": "Ilford Delta 100 Professional",
         "after_const": "ilford_delta_100",
-        "source": "Ilford Delta 3200 Professional datasheet (May 2010 edition), MICROPHEN stock, 9 min, 20 °C (the table's time for EI 3200; the chart also shows 7, 12 and 16 min), intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        "source": "Ilford Delta 3200 Professional datasheet (May 2010 edition), MICROPHEN stock, 9 min, 20 °C (the table's time for EI 3200; the chart also shows 7, 12 and 16 min), intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford XP2 Super",
@@ -228,7 +228,7 @@ STOCKS = [
         "const": "ilford_xp2_super",
         "after": "Ilford Delta 3200 Professional",
         "after_const": "ilford_delta_3200",
-        "source": "Ilford XP2 Super datasheet (June 2010 edition), chromogenic, standard C-41 chemicals; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        "source": "Ilford XP2 Super datasheet (June 2010 edition), chromogenic, standard C-41 chemicals; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     {
         "name": "Ilford SFX 200",
@@ -239,7 +239,7 @@ STOCKS = [
         "const": "ilford_sfx_200",
         "after": "Ilford XP2 Super",
         "after_const": "ilford_xp2_super",
-        "source": "Ilford SFX 200 datasheet (November 2018), ID-11 stock, 10 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the 185 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D); log H relative (\"relative log exposure\")",
+        "source": "Ilford SFX 200 datasheet (November 2018), ID-11 stock, 10 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the 185 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D); log H relative (\"relative log exposure\")",
     },
     {
         "name": "Fujifilm Acros 100 II",
@@ -250,6 +250,6 @@ STOCKS = [
         "const": "fujifilm_acros_100_ii",
         "after": "Ilford SFX 200",
         "after_const": "ilford_sfx_200",
-        "source": "Fujifilm AF3-0258E (February 2020), Microfine, small tank, 10 min, 20 °C (the table's time for EI 100; the chart also shows 5, 15 and 20 min); the densitometry is not stated; curve read for negscan from the chart image in the PDF (reads at 600 and 300 dpi agree within 0.04 D); the four curves run together in the toe and share one reading there; log H in lux-seconds",
+        "source": "Fujifilm AF3-0258E (February 2020), Microfine, small tank, 10 min, 20 °C (the table's time for EI 100; the chart also shows 5, 15 and 20 min); the densitometry is not stated; curve read for minilab from the chart image in the PDF (reads at 600 and 300 dpi agree within 0.04 D); the four curves run together in the toe and share one reading there; log H in lux-seconds",
     },
 ]

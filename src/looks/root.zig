@@ -8,7 +8,7 @@
 //! - `pairs`: reading a pair's images; `draft`: a look being made; `work`: doing it off the page.
 //! - `colour`, `curve`, `cube`, `linear`: the parts.
 //!
-//! Everything but `pairs` and `work` uses the standard library alone; those two use negscan's
+//! Everything but `pairs` and `work` uses the standard library alone; those two use minilab's
 //! codecs and Develop.
 
 const std = @import("std");

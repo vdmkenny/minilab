@@ -1,4 +1,4 @@
-//! The version negscan reports: the release Release Please keeps in `build.zig.zon`, and for a
+//! The version minilab reports: the release Release Please keeps in `build.zig.zon`, and for a
 //! build past it, how many commits past and which, from `git describe` (`build.zig`).
 
 const std = @import("std");

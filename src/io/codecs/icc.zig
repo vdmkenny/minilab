@@ -1,6 +1,6 @@
-//! Colour profiles through LittleCMS 2: the output spaces negscan offers, built from their
+//! Colour profiles through LittleCMS 2: the output spaces minilab offers, built from their
 //! definitions, each one's ICC profile as bytes to embed in a TIFF or a JPEG, and the transform
-//! from negscan's working space, linear Rec. 2020, to any of them.
+//! from minilab's working space, linear Rec. 2020, to any of them.
 //!
 //! The profiles are ICC version 2.4 matrix-shaper profiles, which every colour-managed program
 //! reads; LittleCMS stores their curves as tables where version 2 has no parametric form.
@@ -9,7 +9,7 @@ const std = @import("std");
 const c = @import("codecs");
 const image = @import("../../core/image.zig");
 
-/// The colour spaces negscan writes.
+/// The colour spaces minilab writes.
 pub const Space = enum {
     srgb,
     display_p3,
@@ -167,7 +167,7 @@ pub fn profileBytes(gpa: std.mem.Allocator, space: Space) Error![]u8 {
 /// The most pixels LittleCMS converts in one call, as it counts them in 32 bits.
 const max_pixels_per_call = std.math.maxInt(c.cmsUInt32Number);
 
-/// A transform from linear Rec. 2020, negscan's working space, to a space's encoding, for pixels
+/// A transform from linear Rec. 2020, minilab's working space, to a space's encoding, for pixels
 /// of `Sample`s: `f32`, where 0 to 1 is the space's range and values beyond it are kept, or `u16`
 /// or `u8`, which clip. It holds no cache, so threads can share it.
 pub fn Transform(comptime Sample: type) type {

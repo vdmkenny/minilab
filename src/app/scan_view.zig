@@ -7,7 +7,7 @@
 //! 1. Pick the scanner and the settings: film type, which sets the scanner's own film mode, and
 //!    resolution. The transparency unit is used whenever the scanner has one.
 //! 2. Preview: the scanner's whole film area at its lowest resolution of at least 300 dpi.
-//! 3. Detect frames on the preview (`negscan.frames.detect`) for the open roll's format. Frames use
+//! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. Frames use
 //!    the holder opening's full height by default, since holders hide the film's edges.
 //! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, add, split and
 //!    delete them. Frames edited by hand stay when frames are detected again.
@@ -21,7 +21,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -33,16 +33,16 @@ const scan_worker = @import("scan_worker.zig");
 const scan = scan_worker.scan;
 const Worker = scan_worker.Worker;
 
-const image = negscan.image;
-const frames = negscan.frames;
-const formats = negscan.formats;
-const roll = negscan.roll;
+const image = minilab.image;
+const frames = minilab.frames;
+const formats = minilab.formats;
+const roll = minilab.roll;
 
 /// Sizes in the design's pixels.
 const scanner_width = 300;
 /// The scanner's film mode, for every film: Positive Film, so that the scan is raw. A scanner's
 /// Negative Film mode takes the orange mask out and inverts, so the film base can't be measured any
-/// more (on the V200 it also clips blue on B&W film); negscan inverts instead.
+/// more (on the V200 it also clips blue on B&W film); minilab inverts instead.
 const scanner_film: scan.Film = .positive;
 
 const queue_width = 280;
@@ -120,7 +120,7 @@ const FilmType = enum {
     fn why(film: FilmType) []const u8 {
         return switch (film) {
             .colour_negative => "Raw: the orange mask stays in, and the film base is measured beside each frame.",
-            .bw_negative => "Raw: negscan inverts it.",
+            .bw_negative => "Raw: minilab inverts it.",
             .positive => "No inversion in the scanner.",
         };
     }
@@ -132,7 +132,7 @@ const FilmType = enum {
         };
     }
 
-    fn of(kind: negscan.develop.FilmKind) FilmType {
+    fn of(kind: minilab.develop.FilmKind) FilmType {
         return switch (kind) {
             .colour_negative => .colour_negative,
             .bw_negative => .bw_negative,
@@ -661,7 +661,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
             .unavailable => if (builtin.os.tag == .windows)
                 "No TWAIN data source manager (TWAINDSM.dll) is installed. Scanners' TWAIN drivers come with it."
             else
-                "SANE isn't installed. negscan scans through the system's SANE library (libsane), with the backend for your scanner enabled.",
+                "SANE isn't installed. minilab scans through the system's SANE library (libsane), with the backend for your scanner enabled.",
             else => "No scanner found. Check it's plugged in and switched on, then look again.",
         };
         y += paragraphAt(list, x, y, width, theme.text_tertiary, why) + gui.px(scanner_gap);
@@ -1631,7 +1631,7 @@ fn uploadPreview(state: *State, ctx: context.Context) void {
     if (preview.texture != null) return;
     const pixels = ctx.gpa.alloc([4]u8, preview.scan.pixels.len) catch return;
     defer ctx.gpa.free(pixels);
-    negscan.light_table.toScreen(preview.scan.pixels, negscan.light_table.gainForScan(preview.scan), pixels);
+    minilab.light_table.toScreen(preview.scan.pixels, minilab.light_table.gainForScan(preview.scan), pixels);
     preview.texture = Texture.upload(ctx.gpu, @intCast(preview.scan.width), @intCast(preview.scan.height), pixels) catch null;
 }
 
@@ -1644,7 +1644,7 @@ fn savePreview(state: *State, ctx: context.Context) void {
     const preview = state.preview orelse return;
     const path = rollFile(state, ctx, preview_file) orelse return;
     defer ctx.gpa.free(path);
-    const bytes = negscan.pnm.write(ctx.gpa, u16, preview.scan) catch return;
+    const bytes = minilab.pnm.write(ctx.gpa, u16, preview.scan) catch return;
     defer ctx.gpa.free(bytes);
     std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = path, .data = bytes }) catch |err| std.log.err("can't save the preview: {t}", .{err});
 }
@@ -1681,7 +1681,7 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
     defer parsed.deinit();
     const bytes = try cwd.readFileAlloc(ctx.io, image_path, gpa, .limited(max_preview_bytes));
     defer gpa.free(bytes);
-    const picture = try negscan.pnm.read(gpa, bytes);
+    const picture = try minilab.pnm.read(gpa, bytes);
     const saved = parsed.value;
     state.preview = .{
         .scan = picture,

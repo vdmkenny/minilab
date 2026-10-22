@@ -1,5 +1,5 @@
 //! SANE, the scanner library of macOS and Linux, loaded at run time from the system's libsane,
-//! so that negscan neither links nor needs it. The system's SANE configuration decides which
+//! so that minilab neither links nor needs it. The system's SANE configuration decides which
 //! backends load: the V200 needs our epkowa build enabled there (docs/install.md).
 //!
 //! The declarations follow `sane.h` (SANE standard 1.0, public domain). Options are found by

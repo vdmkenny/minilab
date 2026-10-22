@@ -1,6 +1,6 @@
 # Frontier: the colour rendering of the Fujifilm Frontier's monitor colour cube at its standard
 # saturation (1.2), over a Neutral development. Input and output are sRGB-encoded; neutrals
-# and Oklab lightness are left as they are. Made by negscan from the cube's numbers.
+# and Oklab lightness are left as they are. Made by minilab from the cube's numbers.
 TITLE "Frontier"
 LUT_3D_SIZE 33
 DOMAIN_MIN 0.0 0.0 0.0

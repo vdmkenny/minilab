@@ -284,7 +284,7 @@ fn run(job: *Job) void {
 
 /// A made-up negative of a scene of soft blobs, `seed` choosing them: 16-bit transmission, as a
 /// scanner gives it, with a film base that's orange like a colour negative's.
-fn testNegative(gpa: std.mem.Allocator, seed: u64, width: usize, height: usize) !negscan.image.Scan {
+fn testNegative(gpa: std.mem.Allocator, seed: u64, width: usize, height: usize) !minilab.image.Scan {
     var prng = std.Random.DefaultPrng.init(seed);
     const random = prng.random();
     var blobs: [16][6]f32 = undefined;
@@ -296,7 +296,7 @@ fn testNegative(gpa: std.mem.Allocator, seed: u64, width: usize, height: usize) 
     }
     // A gentle slope across the frame, its own way for each scene.
     const slope = [2]f32{ random.float(f32) - 0.5, random.float(f32) - 0.5 };
-    var scan: negscan.image.Scan = try .init(gpa, width, height);
+    var scan: minilab.image.Scan = try .init(gpa, width, height);
     const base = [3]f32{ 0.8, 0.5, 0.3 };
     for (0..height) |y| {
         for (0..width) |x| {
@@ -316,7 +316,7 @@ fn testNegative(gpa: std.mem.Allocator, seed: u64, width: usize, height: usize) 
     return scan;
 }
 
-const negscan = @import("../root.zig");
+const minilab = @import("../root.zig");
 
 test "jobs read, match and fit pairs" {
     const gpa = std.testing.allocator;
@@ -337,13 +337,13 @@ test "jobs read, match and fit pairs" {
     for (0..3) |i| {
         var scan = try testNegative(gpa, i + 1, 360, 240);
         defer scan.deinit(gpa);
-        const bytes = try negscan.pnm.write(gpa, u16, scan);
+        const bytes = try minilab.pnm.write(gpa, u16, scan);
         defer gpa.free(bytes);
         scans[i] = try std.fmt.allocPrint(a, "{s}/scan{d}.ppm", .{ dir, i });
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = scans[i], .data = bytes });
-        var small = try negscan.image.downscale(gpa, scan, 128);
+        var small = try minilab.image.downscale(gpa, scan, 128);
         defer small.deinit(gpa);
-        const small_bytes = try negscan.pnm.write(gpa, u16, small);
+        const small_bytes = try minilab.pnm.write(gpa, u16, small);
         defer gpa.free(small_bytes);
         thumbnails[i] = try std.fmt.allocPrint(a, "{s}/thumb{d}.ppm", .{ dir, i });
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = thumbnails[i], .data = small_bytes });
@@ -352,7 +352,7 @@ test "jobs read, match and fit pairs" {
         defer developed.deinit(gpa);
         const n = developed.neutral;
         const turned = i == 1;
-        var encoded: negscan.image.Encoded8 = try .init(gpa, if (turned) n.height else n.width, if (turned) n.width else n.height);
+        var encoded: minilab.image.Encoded8 = try .init(gpa, if (turned) n.height else n.width, if (turned) n.width else n.height);
         defer encoded.deinit(gpa);
         for (0..n.height) |y| {
             for (0..n.width) |x| {
@@ -362,7 +362,7 @@ test "jobs read, match and fit pairs" {
                 encoded.pixels[at] = p[0..3].*;
             }
         }
-        const jpeg = try negscan.codecs.jpeg.write(gpa, encoded, .{ .quality = 95, .subsampling = .@"4:4:4" });
+        const jpeg = try minilab.codecs.jpeg.write(gpa, encoded, .{ .quality = 95, .subsampling = .@"4:4:4" });
         defer gpa.free(jpeg);
         references[i] = try std.fmt.allocPrint(a, "{s}/reference{d}.jpg", .{ dir, i });
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = references[i], .data = jpeg });

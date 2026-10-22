@@ -1,7 +1,7 @@
 //! A check of frame detection on the V200 scans in `vendor/`, where they are present. It is not
 //! part of the test suite, because the scans are private and large; it prints what detection
 //! finds rather than asserting it. Zig only lets this file reach `../core/` from a root in
-//! `src/`, so run it through one, from the project root or from `negscan/`: a file in `src/`
+//! `src/`, so run it through one, from the project root or from `minilab/`: a file in `src/`
 //! holding `test { _ = @import("frames/check_scans.zig"); }`, run with `zig test -O ReleaseFast`.
 //!
 //! The scans are a B&W negative strip and a colour negative frame:
@@ -40,7 +40,7 @@ const sources = [_]Source{
     .{ .path = "hw-scans/2026-10-22/mac-negative-c8-2400-warm.pnm", .dpi = frame_dpi, .gamma = epson_gamma },
 };
 
-/// Where `vendor/` is, seen from the project root and from `negscan/`.
+/// Where `vendor/` is, seen from the project root and from `minilab/`.
 const vendor_dirs = [_][]const u8{ "vendor", "../vendor" };
 const max_file_bytes = 256 << 20;
 

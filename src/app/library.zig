@@ -2,11 +2,11 @@
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const Texture = @import("../platform/texture.zig").Texture;
 
-const image = negscan.image;
-const roll = negscan.roll;
+const image = minilab.image;
+const roll = minilab.roll;
 
 pub const Key = struct { roll: usize, frame: usize };
 
@@ -22,9 +22,9 @@ pub const Library = struct {
     failed: std.AutoHashMapUnmanaged(Key, void) = .empty,
     /// The looks frames can be developed with: the built-in ones, and the LUTs and fitted looks
     /// in the library's Looks folder.
-    looks: negscan.look.Catalog,
+    looks: minilab.look.Catalog,
     /// The scanners calibrated against the film makers' datasheets, for Stock balance.
-    calibrations: negscan.calibration.Calibrations,
+    calibrations: minilab.calibration.Calibrations,
     /// Thumbnails let go of during a frame. ImGui may still draw them in it, so they are released
     /// once it has been drawn (`releaseRetired`).
     retired: std.ArrayList(Texture) = .empty,
@@ -58,7 +58,7 @@ pub const Library = struct {
     }
 
     /// Forgets the thumbnails of the frames developed with `id`, after the look changed.
-    pub fn lookChanged(library: *Library, gpa: std.mem.Allocator, id: negscan.look.Id) void {
+    pub fn lookChanged(library: *Library, gpa: std.mem.Allocator, id: minilab.look.Id) void {
         library.looks.forget(gpa, id);
         for (library.rolls.items, 0..) |r, i| {
             for (r.frames.items, 0..) |frame, j| {
@@ -167,12 +167,12 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
     defer gpa.free(pixels);
     if (!settings.developed) {
         // Undeveloped frames show the film as it is, on a light table.
-        const gain = if (r.baseFor(key.frame)) |base| negscan.light_table.gainForBase(base) else negscan.light_table.gainForScan(scan);
-        negscan.light_table.toScreen(scan.pixels, gain, pixels);
+        const gain = if (r.baseFor(key.frame)) |base| minilab.light_table.gainForBase(base) else minilab.light_table.gainForScan(scan);
+        minilab.light_table.toScreen(scan.pixels, gain, pixels);
     } else {
-        var rendered = try negscan.look.render(gpa, scan, settings.settings, library.looks.resolve(gpa, io, settings.look));
+        var rendered = try minilab.look.render(gpa, scan, settings.settings, library.looks.resolve(gpa, io, settings.look));
         defer rendered.deinit(gpa);
-        var encoded = try negscan.encode.toSrgb8(gpa, rendered);
+        var encoded = try minilab.encode.toSrgb8(gpa, rendered);
         defer encoded.deinit(gpa);
         rgba(pixels, encoded);
     }

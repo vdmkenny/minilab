@@ -1,5 +1,5 @@
 //! Scanners: one interface over the platform's scanner libraries, SANE on macOS and Linux and
-//! TWAIN on Windows (design section 5). Both are loaded at run time, so negscan starts, and does
+//! TWAIN on Windows (design section 5). Both are loaded at run time, so minilab starts, and does
 //! everything but scan, on a machine that has neither.
 //!
 //! Every call here blocks, often for seconds: listing devices probes USB and the network, and a

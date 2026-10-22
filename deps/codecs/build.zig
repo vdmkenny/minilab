@@ -1,19 +1,19 @@
-//! The image libraries negscan reads and writes with, as one Zig module, "codecs": the C APIs of
+//! The image libraries minilab reads and writes with, as one Zig module, "codecs": the C APIs of
 //! LibTIFF, libjpeg-turbo, LittleCMS 2 and LibRaw, which translate-c makes of `c.h`, with the
-//! libraries linked, so a module that imports it links them too. It also holds negscan's JPEG
+//! libraries linked, so a module that imports it links them too. It also holds minilab's JPEG
 //! shim (`jpeg_shim.c`), which keeps libjpeg's `longjmp` error handling inside C.
 //!
 //! The libraries' licences are named lazy paths of this package, listed in `licences`, so that
-//! negscan's build can install them beside the program.
+//! minilab's build can install them beside the program.
 //!
-//! `zig build test` here runs the tests of negscan's bindings (`src/io/codecs/*.zig`) against the
+//! `zig build test` here runs the tests of minilab's bindings (`src/io/codecs/*.zig`) against the
 //! module, and `zig build` compiles them for the target without running them. The RAW binding's
 //! test reads a camera file only when given one: `zig build test -Draw-sample=<file>`.
 
 const std = @import("std");
 const Translator = @import("translate_c").Translator;
 
-/// The bindings in negscan's `src/io/codecs`, which the tests here compile.
+/// The bindings in minilab's `src/io/codecs`, which the tests here compile.
 const bindings = [_][]const u8{ "tiff.zig", "jpeg.zig", "icc.zig", "raw.zig" };
 
 /// The licence files this package names, each also the name to install it under.
@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("LICENSE-zlib.txt", zlib.builder.dependency("zlib", .{}).path("LICENSE"));
 
     // The bindings import `../../core/image.zig`, and a module's files must lie under its root
-    // file's folder, so the tests compile copies laid out as they are in negscan's `src`.
+    // file's folder, so the tests compile copies laid out as they are in minilab's `src`.
     const tree = b.addWriteFiles();
     _ = tree.addCopyFile(b.path("../../src/core/image.zig"), "core/image.zig");
     for (bindings) |name| _ = tree.addCopyFile(b.path(b.fmt("../../src/io/codecs/{s}", .{name})), b.fmt("io/codecs/{s}", .{name}));
@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
     const run = b.addRunArtifact(tests);
     // The RAW binding's test reads a camera file only when given one.
     if (b.option([]const u8, "raw-sample", "A camera raw file for the RAW binding's test to read")) |sample| {
-        run.setEnvironmentVariable("NEGSCAN_RAW_SAMPLE", sample);
+        run.setEnvironmentVariable("MINILAB_RAW_SAMPLE", sample);
         run.addFileInput(b.graph.cwdRelativePath(sample));
     }
     b.step("test", "Run the bindings' tests").dependOn(&run.step);

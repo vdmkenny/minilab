@@ -1,4 +1,4 @@
-# negscan: design
+# minilab: design
 
 Working name. A film scanning and inversion app:
 
@@ -37,7 +37,7 @@ from its guide. Its presets come in independent layers:
 
 We copy the ideas: base measured from the rebate, roll-level sessions, layered presets, batch
 sync and per-region colour balance. No preset values come from either product: we don't have
-them, and they aren't published. Every built-in preset in negscan says where its numbers come from
+them, and they aren't published. Every built-in preset in minilab says where its numbers come from
 (section 9).
 
 ## 2. Scope
@@ -85,7 +85,7 @@ Out, at least for now:
   detection, scanner sessions and file handling. `zig build test` runs its tests with no scanner
   and no display.
 - **The app** is one executable. With no arguments it opens the GUI. Subcommands
-  (`negscan develop`, `negscan detect`, `negscan scan`) run the core from the command line, for
+  (`minilab develop`, `minilab detect`, `minilab scan`) run the core from the command line, for
   batch work and for the tests.
 - **Dear ImGui as in openreliant-editor.** It is C++, so Dear Bindings' C API wraps it, and the
   translate-c package turns one header (`src/platform/c.h`: SDL3, `dcimgui.h` and its SDL3 and
@@ -108,7 +108,7 @@ Out, at least for now:
 
 ## 4. Workflow
 
-The GUI has five workspaces, mocked up in the "negscan GUI" design canvas:
+The GUI has five workspaces, mocked up in the "minilab GUI" design canvas:
 
 - **Rolls:** a contact sheet per roll, with its filmstrip, date and how many frames are
   developed. Undeveloped frames show the raw scan.
@@ -140,7 +140,7 @@ The steps:
 7. **Export.** TIFF 16-bit or JPEG. HEIC with a gain map comes later (phase 7).
 
 Camera scans and imported files skip steps 2 and 4: import RAWs, linear TIFFs or PNM scans into a
-roll (`negscan import`, or drop them on the roll in the app), detect or draw the frames, and
+roll (`minilab import`, or drop them on the roll in the app), detect or draw the frames, and
 continue from step 5. A file of one frame becomes one frame. A strip, from VueScan or a flatbed,
 becomes one frame per whole frame on it; they share the one stored scan, each with its own crop and
 the film base from the gaps beside it.
@@ -192,11 +192,11 @@ from our own measurements:
 - resolutions 300, 2400 and 4800 dpi (the backend's option list);
 - film type `Positive Film` for every film. `Negative Film` takes the orange mask out in the
   scanner, so the film base can't be measured beside the frames, and it clips blue on B&W film
-  (phase1.md). negscan inverts the raw scan itself.
+  (phase1.md). minilab inverts the raw scan itself.
 - The film type is set before the rest, as scanimage does, in case the backend resets its colour
   settings for a film type.
 
-Checked on the V200 with a colour strip: `negscan scan` with this profile gives the same values as
+Checked on the V200 with a colour strip: `minilab scan` with this profile gives the same values as
 `scanimage` with the same options, within 2% in every channel.
 
 **Scanners without a profile.** The app shows what the scanner offers and picks the obvious
@@ -213,7 +213,7 @@ data in the camera's own channels, which is what the density stage wants (sectio
 - LibRaw leaves the numbers unscaled; they're scaled so that the sensor's white level is full
   scale.
 - A flat-field shot (the light source with no film, same exposure) corrects uneven light and lens
-  vignetting. It's taken once per session and stored with the roll: `negscan import --flat`, or
+  vignetting. It's taken once per session and stored with the roll: `minilab import --flat`, or
   the New roll form for a camera roll. Frames imported after it are divided by it (section 7,
   Linearise); frames already in the roll stay as they are.
 - The film base comes from the rebate in the frame, as for scans.
@@ -294,8 +294,8 @@ Hand edits are kept when detection runs again.
 
 ### The model we start from
 
-darktable's negative inversion model, as its documentation sets out the maths. negscan's code is
-written from these equations, not translated from darktable's C, so it can carry negscan's own
+darktable's negative inversion model, as its documentation sets out the maths. minilab's code is
+written from these equations, not translated from darktable's C, so it can carry minilab's own
 licence (section 13). T is the pixel's transmission and T_base the film base, per channel:
 
 ```
@@ -416,7 +416,7 @@ white balance.
 - **Neutral:** Develop's rendering as it is: the inversion curve and nothing added.
 - **LUT looks:** a .cube LUT (1D, 3D, or a 1D shaper and a 3D LUT, any size and input range)
   laid over Neutral's sRGB-encoded output, read with tetrahedral interpolation. Tone, balance and
-  the rest of Develop's settings still apply. negscan ships one, Frontier emulation (section 10),
+  the rest of Develop's settings still apply. minilab ships one, Frontier emulation (section 10),
   and the user can import any .cube that expects sRGB or Rec. 709 input. Imported LUTs are copied
   into the library's `Looks/` folder.
 - **Fitted looks:** made in the Looks workspace from pairs of our raw scans and a lab's scans of
@@ -511,7 +511,7 @@ ourselves in Zig: we only need a handful of tags, and exiv2, the usual library, 
 | TWAIN DSM (system's, loaded at run time) | scanners on Windows | LGPL-2.1 |
 | darktable's negative inversion model | the equations and their defaults, written in Zig from the maths; no darktable code | (credited; nothing copied) |
 | film makers' datasheets | stock presets: our own readings of the published charts (`data/stocks/README.md`) | the numbers are ours; the PDFs aren't stored |
-| LibRaw | camera RAW | LGPL-2.1 or CDDL-1.0 (negscan takes LGPL-2.1) |
+| LibRaw | camera RAW | LGPL-2.1 or CDDL-1.0 (minilab takes LGPL-2.1) |
 | libtiff, libjpeg-turbo, little-cms2, zlib | file I/O, colour management | BSD-like, BSD/IJG, MIT, zlib |
 | driver repo: `tools/imgcompare`, test data | registration approach; our V200 scans as test inputs | ours |
 
@@ -528,21 +528,21 @@ scanner configuration comes with them.
 
 ## 13. Licence
 
-MPL-2.0, as openreliant-editor. The licence is per file: a changed negscan file stays MPL-2.0, and
-negscan can be combined with code under other licences.
+MPL-2.0, as openreliant-editor. The licence is per file: a changed minilab file stays MPL-2.0, and
+minilab can be combined with code under other licences.
 
-What that rules out, and how negscan keeps to it:
+What that rules out, and how minilab keeps to it:
 
 - No code is ported from GPL projects. The inversion follows darktable's published model, written
   from the equations (section 7).
 - No data under the GPL or CC BY-SA. The stock presets are our own readings of the makers'
   datasheets (`data/stocks/README.md`).
-- GPL programs stay outside negscan: SANE and its backends, our V200 driver among them, are loaded
+- GPL programs stay outside minilab: SANE and its backends, our V200 driver among them, are loaded
   at run time, and SANE's licence makes an exception for programs that use its library.
 - LibRaw is linked statically under LGPL-2.1, which needs users to be able to relink it with
-  their own LibRaw. negscan's source and build are public, which allows that.
+  their own LibRaw. minilab's source and build are public, which allows that.
 
-The Frontier emulation LUT is negscan's own transform of the colour cube's numbers from the
+The Frontier emulation LUT is minilab's own transform of the colour cube's numbers from the
 Frontier software (section 10). None of Fujifilm's code or other tables are in the repository.
 
 ## 14. Build, platforms, tests
@@ -572,7 +572,7 @@ Phases, each ending with something usable:
 
 1. **Core and CLI:** TIFF and camera RAW in, flat field, base, the inversion model, B&W and
    positive paths, TIFF and JPEG out with ICC. Tested on our V200 scans.
-2. **Frame detection** and `negscan detect`.
+2. **Frame detection** and `minilab detect`.
 3. **GUI on files:** roll browser, viewer, develop panel, histogram, before/after.
 4. **Scanning:** SANE with the V200 profile, preview, detection, batch scan; then TWAIN.
 5. **Presets:** film types, tone and WB modes, stock starting points.

@@ -1,6 +1,6 @@
 # Image libraries
 
-negscan reads and writes TIFF, JPEG and camera raw files, and builds ICC profiles, with C
+minilab reads and writes TIFF, JPEG and camera raw files, and builds ICC profiles, with C
 libraries that `zig build` compiles from source. Each upstream is fetched through `build.zig.zon`,
 pinned to a release by URL, commit and hash. Nothing comes from the system.
 
@@ -8,15 +8,15 @@ pinned to a release by URL, commit and hash. Nothing comes from the system.
 | --- | --- | --- | --- | --- |
 | `libtiff/` | LibTIFF | 4.7.2 | gitlab.com/libtiff/libtiff, tag `v4.7.2` | LibTIFF licence (BSD-like) |
 | `libjpeg-turbo/` | libjpeg-turbo | 3.2.0 | github.com/libjpeg-turbo/libjpeg-turbo, tag `3.2.0` | IJG licence, Modified BSD and zlib licences |
-| `libraw/` | LibRaw | 0.22.2 | github.com/LibRaw/LibRaw, tag `0.22.2` | LGPL-2.1 or CDDL-1.0, negscan takes LGPL-2.1 |
+| `libraw/` | LibRaw | 0.22.2 | github.com/LibRaw/LibRaw, tag `0.22.2` | LGPL-2.1 or CDDL-1.0, minilab takes LGPL-2.1 |
 | (by URL) | LittleCMS | 2.18 | allyourcodebase/lcms2, tag `v2.18.0` | MIT |
 | (by URL) | zlib | 1.3.2 | allyourcodebase/zlib, tag `1.3.2` | zlib licence |
-| `codecs/` | the four as one Zig module | | | negscan's own: MPL-2.0 |
+| `codecs/` | the four as one Zig module | | | minilab's own: MPL-2.0 |
 
 zlib and LittleCMS use allyourcodebase's packages, which build with Zig 0.17 as they are. The
 others have a small `build.zig` here, written from the upstream's CMake or automake files.
 
-negscan is MPL-2.0. Every licence above allows negscan to link the library, on these terms:
+minilab is MPL-2.0. Every licence above allows minilab to link the library, on these terms:
 
 - LibTIFF: keep its copyright and permission notice with copies, and don't use the names of Sam
   Leffler or Silicon Graphics in advertising.
@@ -24,8 +24,8 @@ negscan is MPL-2.0. Every licence above allows negscan to link the library, on t
   work of the Independent JPEG Group" (`README.ijg`). The libjpeg API is under the IJG licence, the
   build system under the Modified BSD licence, and the SIMD code, which isn't built here, under
   the zlib licence.
-- LibRaw: negscan uses it under LGPL-2.1. A statically linked LGPL library must be replaceable by
-  its users; negscan's source and build are public, so anyone can relink with their own LibRaw. LibRaw contains code from dcraw, DCB and FBDD demosaicing (BSD 3-clause), the
+- LibRaw: minilab uses it under LGPL-2.1. A statically linked LGPL library must be replaceable by
+  its users; minilab's source and build are public, so anyone can relink with their own LibRaw. LibRaw contains code from dcraw, DCB and FBDD demosaicing (BSD 3-clause), the
   X3F library (BSD) and Adobe's DNG SDK (MIT), listed in its `COPYRIGHT`.
 - LittleCMS: MIT.
 - zlib: zlib licence.
@@ -50,7 +50,7 @@ at build time. Its small helper modules end up in the program.
   libjpeg inside C: libjpeg handles fatal errors with `longjmp`, which mustn't jump over Zig
   frames. The C libraries are built with `ReleaseFast` whatever the program's mode, as in
   OpenReliant, so that a debug build still decodes a camera file quickly. Each library's licence
-  file is a named lazy path, and `licences` in `codecs/build.zig` lists them, so negscan can
+  file is a named lazy path, and `licences` in `codecs/build.zig` lists them, so minilab can
   install them beside the program.
 
 The bindings live in `src/io/codecs/`: `tiff.zig`, `jpeg.zig`, `icc.zig` and `raw.zig`.

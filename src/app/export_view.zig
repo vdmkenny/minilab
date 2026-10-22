@@ -1,11 +1,11 @@
 //! The Export workspace: the open roll's frames to choose from, and on the right how to write
 //! them: format, colour space, size, file names, folder and metadata. The export runs on a thread
 //! of its own with its progress at the bottom of the page, so the window keeps answering; the
-//! export itself is `negscan.export`.
+//! export itself is `minilab.export`.
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -14,9 +14,9 @@ const shortcuts = @import("shortcuts.zig");
 const Library = @import("library.zig").Library;
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
-const exporting = negscan.@"export";
-const icc = negscan.codecs.icc;
-const roll = negscan.roll;
+const exporting = minilab.@"export";
+const icc = minilab.codecs.icc;
+const roll = minilab.roll;
 
 /// Sizes in the design's pixels.
 const settings_width = 360;
@@ -93,7 +93,7 @@ pub const State = struct {
     anchor: ?usize = null,
     file: FileChoice = .tiff16,
     quality: f32 = 92,
-    /// Indices in `negscan.export.spaces` and `sizes`.
+    /// Indices in `minilab.export.spaces` and `sizes`.
     space: usize = 0,
     size: usize = 0,
     pattern: [gui.text_capacity:0]u8 = gui.initText(gui.text_capacity, default_pattern),

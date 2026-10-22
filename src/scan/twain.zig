@@ -381,7 +381,7 @@ pub const Library = struct {
         const module = win.LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral(manager_name)) orelse return error.Unavailable;
         errdefer _ = win.FreeLibrary(module);
         const entry: EntryFn = @ptrCast(win.GetProcAddress(module, "DSM_Entry") orelse return error.Unavailable);
-        const window = win.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), std.unicode.utf8ToUtf16LeStringLiteral("negscan"), 0, 0, 0, 0, 0, win.hwnd_message, null, null, null) orelse return error.Unavailable;
+        const window = win.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), std.unicode.utf8ToUtf16LeStringLiteral("minilab"), 0, 0, 0, 0, 0, win.hwnd_message, null, null, null) orelse return error.Unavailable;
         errdefer _ = win.DestroyWindow(window);
 
         var library: Library = .{
@@ -390,13 +390,13 @@ pub const Library = struct {
             .window = window,
             .app = .{
                 .id = 0,
-                .version = .{ .major = 0, .minor = 1, .language = lg_usa, .country = cy_usa, .info = str32("negscan") },
+                .version = .{ .major = 0, .minor = 1, .language = lg_usa, .country = cy_usa, .info = str32("minilab") },
                 .protocol_major = 2,
                 .protocol_minor = 4,
                 .supported_groups = dg_control | dg_image | df_app2,
-                .manufacturer = str32("negscan"),
-                .product_family = str32("negscan"),
-                .product_name = str32("negscan"),
+                .manufacturer = str32("minilab"),
+                .product_family = str32("minilab"),
+                .product_name = str32("minilab"),
             },
             .memory = .{ .size = @sizeOf(EntryPoint), .entry = null, .allocate = null, .free = null, .lock = null, .unlock = null },
         };

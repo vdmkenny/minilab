@@ -4,7 +4,7 @@
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -17,9 +17,9 @@ const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
 /// What "Import .cube…" opens.
-const develop = negscan.develop;
-const look = negscan.look;
-const roll = negscan.roll;
+const develop = minilab.develop;
+const look = minilab.look;
+const roll = minilab.roll;
 
 /// Sizes in the design's pixels.
 const frames_width = 210;
@@ -52,7 +52,7 @@ const CropEdit = struct {
     min: [2]f32,
     max: [2]f32,
     /// The crop the frame had, for Cancel, and the turns and mirroring to apply after.
-    before: ?negscan.image.Area,
+    before: ?minilab.image.Area,
     turns: u2,
     mirrored: bool,
     /// What a drag moves, and the box's width over height while a corner moves.
@@ -311,8 +311,8 @@ pub const State = struct {
     }
 
     /// The roll's format, or 135 full frame for a scan opened on its own.
-    fn format(state: *const State, library: *const Library) negscan.formats.Format {
-        const r = state.rollIndex(library) orelse return negscan.formats.Standard.default.format();
+    fn format(state: *const State, library: *const Library) minilab.formats.Format {
+        const r = state.rollIndex(library) orelse return minilab.formats.Standard.default.format();
         return library.rolls.items[r].info.format.format();
     }
 
@@ -357,7 +357,7 @@ pub const State = struct {
         const scale: f32 = @floatCast(frame.scale());
         const x: usize = @intFromFloat(@max(0, @round(edit.min[0] * scale)));
         const y: usize = @intFromFloat(@max(0, @round(edit.min[1] * scale)));
-        const area: negscan.image.Area = .{
+        const area: minilab.image.Area = .{
             .x = @min(x, frame.scan_width - 1),
             .y = @min(y, frame.scan_height - 1),
             .width = @max(1, @min(frame.scan_width - @min(x, frame.scan_width - 1), @as(usize, @intFromFloat(@round((edit.max[0] - edit.min[0]) * scale))))),
@@ -551,12 +551,12 @@ pub const State = struct {
         var included = false;
         for (measured) |m| included = included or std.mem.eql(u8, m.roll, rl.info.name);
         const status = if (measured.len == 0)
-            gui.print("Stock balance needs the {s} calibrated once, from a roll of a stock with a preset and {d} frames or more.", .{ scanner, negscan.calibration.min_frames })
+            gui.print("Stock balance needs the {s} calibrated once, from a roll of a stock with a preset and {d} frames or more.", .{ scanner, minilab.calibration.min_frames })
         else
             gui.print("The {s} is calibrated from {d} {s}{s}.", .{ scanner, measured.len, if (measured.len == 1) "roll" else "rolls", if (included) ", this one among them" else "" });
         gui.paragraph(theme.text_tertiary, status);
         gui.rowLabel("");
-        c.ImGui_BeginDisabled(rl.frames.items.len < negscan.calibration.min_frames);
+        c.ImGui_BeginDisabled(rl.frames.items.len < minilab.calibration.min_frames);
         const label: [:0]const u8 = if (measured.len == 0) "Calibrate from this roll" else if (included) "Measure this roll again" else "Add this roll";
         if (gui.button(label)) state.calibrate(gpa, io, library, r, scanner);
         c.ImGui_EndDisabled();
@@ -581,8 +581,8 @@ pub const State = struct {
             const s = develop.neutralSlopes(.colour_negative, base, stats.centre) orelse continue;
             slopes.append(gpa, s) catch return;
         }
-        const factors = negscan.calibration.measure(slopes.items, gamma) orelse {
-            state.calibration_note.set("Only {d} frames could be measured; it takes {d}.", .{ slopes.items.len, negscan.calibration.min_frames });
+        const factors = minilab.calibration.measure(slopes.items, gamma) orelse {
+            state.calibration_note.set("Only {d} frames could be measured; it takes {d}.", .{ slopes.items.len, minilab.calibration.min_frames });
             return;
         };
         library.calibrations.add(io, scanner, .{ .roll = rl.info.name, .stock = rl.info.stock.?, .frames = @intCast(slopes.items.len), .factors = factors }) catch |err| {
@@ -713,7 +713,7 @@ fn oppositeTurns(quarter_turns: u2) u2 {
 
 /// The crop when detection finds no frame: the format's shape at the full extent across the
 /// film, which runs along the scan's longer side, in the middle.
-fn fallbackCrop(frame: *const Frame, format: negscan.formats.Format) negscan.image.Area {
+fn fallbackCrop(frame: *const Frame, format: minilab.formats.Format) minilab.image.Area {
     const w = frame.scan_width;
     const h = frame.scan_height;
     const ratio = format.ratio();
@@ -1391,7 +1391,7 @@ fn drawBase(state: *State, library: *Library) void {
     const swatch = gui.px(28);
     const swatch_min = gui.vec2(corner.x, corner.y + (row_height - swatch) / 2);
     var colour: [3]u8 = undefined;
-    for (&colour, frame.settings.base) |*out, t| out.* = @intFromFloat(@round(negscan.encode.srgb(t) * 255));
+    for (&colour, frame.settings.base) |*out, t| out.* = @intFromFloat(@round(minilab.encode.srgb(t) * 255));
     c.ImDrawList_AddRectFilledEx(list, swatch_min, gui.vec2(swatch_min.x + swatch, swatch_min.y + swatch), @as(u32, colour[0]) | @as(u32, colour[1]) << 8 | @as(u32, colour[2]) << 16 | 0xFF000000, gui.px(4), 0);
     gui.outline(swatch_min, gui.vec2(swatch_min.x + swatch, swatch_min.y + swatch), theme.withAlpha(theme.text, 0.15), gui.px(4), 1);
     const text_x = corner.x + swatch + gui.px(10);
@@ -1612,7 +1612,7 @@ fn drawHistogram(frame: *Frame) void {
 fn importError(err: anyerror) []const u8 {
     return switch (err) {
         error.NotACube => "it isn't a .cube LUT",
-        error.BadSize => "its size isn't one negscan reads (2 to 129 points a side)",
+        error.BadSize => "its size isn't one minilab reads (2 to 129 points a side)",
         error.Truncated => "it ends early",
         error.TooMuchData => "it has more values than its size says",
         error.InvalidNumber => "a value in it isn't a number",
@@ -1633,13 +1633,13 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
     defer rl.close();
     // Two negatives, one of them much thinner than the other.
     for ([_]f32{ 0.15, 0.35 }) |lowest| {
-        var scan: negscan.image.Scan = try .init(gpa, 96, 64);
+        var scan: minilab.image.Scan = try .init(gpa, 96, 64);
         defer scan.deinit(gpa);
         for (scan.pixels, 0..) |*p, i| {
             const t = lowest + (0.85 - lowest) * @as(f32, @floatFromInt(i % 96)) / 95;
             p.* = .{ @intFromFloat(t * 60000), @intFromFloat(t * 30000), @intFromFloat(t * 20000) };
         }
-        const ppm = try negscan.pnm.write(gpa, u16, scan);
+        const ppm = try minilab.pnm.write(gpa, u16, scan);
         defer gpa.free(ppm);
         _ = try rl.addScan(gpa, io, ppm);
     }
@@ -1676,5 +1676,5 @@ fn stockSlopes(library: *const Library, rl: *const roll.Roll) ?[3]f32 {
     if (rl.info.kind != .colour_negative) return null;
     const gamma = labels.stockGamma(rl.info.stock) orelse return null;
     const factors = library.calibrations.factors(scannerOf(rl.info) orelse return null) orelse return null;
-    return negscan.calibration.stockSlopes(factors, gamma);
+    return minilab.calibration.stockSlopes(factors, gamma);
 }

@@ -80,7 +80,7 @@ const Compression = enum(u16) {
 };
 
 /// The software tag written.
-const software = "negscan";
+const software = "minilab";
 /// The size the strips written aim for, uncompressed.
 const strip_bytes_target = 1 << 20;
 /// Above this many bytes of pixels, the file is written as BigTIFF, as Deflate cannot be relied on
@@ -325,7 +325,7 @@ fn open(stream: *anyopaque, mode: [:0]const u8, comptime Stream: type) ?*c.TIFF 
     c.TIFFOpenOptionsSetErrorHandlerExtR(options, ignoreMessage, null);
     c.TIFFOpenOptionsSetWarningHandlerExtR(options, ignoreMessage, null);
     return c.TIFFClientOpenExt(
-        "negscan",
+        "minilab",
         mode.ptr,
         stream,
         Stream.readProc,

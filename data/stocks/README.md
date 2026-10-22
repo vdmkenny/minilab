@@ -428,9 +428,9 @@ Run them with `python -I`, since the PDFs are third-party files.
 
 ## Licences and attribution
 
-negscan is MPL-2.0. The makers' datasheets are their copyright; they are not stored in this
+minilab is MPL-2.0. The makers' datasheets are their copyright; they are not stored in this
 repository. The numbers in `stocks.zig` are our own readings of the charts and figures the makers
-publish, made with the scripts in `tools/`, which are part of negscan and MPL-2.0 like the rest of
+publish, made with the scripts in `tools/`, which are part of minilab and MPL-2.0 like the rest of
 it. Kodak, Eastman, Vision3, Kodachrome, Ektachrome, Fujifilm, Fujicolor, Fujichrome, Ilford,
 Harman, Kentmere, Foma, Fomapan, Rollei, ADOX, CineStill, Lomography and the product names are
 trademarks of their owners.

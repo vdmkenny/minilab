@@ -8,7 +8,7 @@
 
 const std = @import("std");
 const c = @import("c");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -16,7 +16,7 @@ const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const Library = @import("library.zig").Library;
-const looks = negscan.looks;
+const looks = minilab.looks;
 
 const draft = looks.draft;
 const fit = looks.fit;
@@ -204,7 +204,7 @@ pub const State = struct {
     loaded: bool = false,
     own: std.ArrayList(Own) = .empty,
     /// The LUTs imported into the library's Looks folder.
-    imported: std.ArrayList(negscan.look.Id) = .empty,
+    imported: std.ArrayList(minilab.look.Id) = .empty,
     cube_dialog: Dialog = .{ .filters = &file_dialog.cube_files, .many = true },
     selected: Selected = .neutral,
     /// The selected pair of the selected look.
@@ -347,7 +347,7 @@ pub const State = struct {
 
     /// Imports the .cube files chosen, and selects the last.
     fn importCubes(state: *State, ctx: context.Context, paths: []const []const u8) void {
-        var last: ?negscan.look.Id = null;
+        var last: ?minilab.look.Id = null;
         for (paths) |path| {
             last = ctx.library.looks.import(ctx.gpa, ctx.io, path) catch |err| {
                 ctx.notice.set("Can't import {s}: {t}.", .{ std.fs.path.basename(path), err });
@@ -571,7 +571,7 @@ pub const State = struct {
             ctx.notice.set("Can't rename the look: {t}.", .{err});
             return;
         };
-        const old_id = negscan.look.Id.ofFitted(std.fs.path.basename(own.path)) catch null;
+        const old_id = minilab.look.Id.ofFitted(std.fs.path.basename(own.path)) catch null;
         ctx.gpa.free(own.path);
         own.path = path;
         const copy = ctx.gpa.dupe(u8, name) catch return;
@@ -579,7 +579,7 @@ pub const State = struct {
         own.name = copy;
         // Frames name their look by its folder: they follow it to the new name.
         const old = old_id orelse return;
-        const new = negscan.look.Id.ofFitted(name) catch return;
+        const new = minilab.look.Id.ofFitted(name) catch return;
         ctx.library.lookChanged(ctx.gpa, old);
         for (ctx.library.rolls.items, 0..) |*r, i| {
             for (r.frames.items, 0..) |*frame, j| {
@@ -734,7 +734,7 @@ fn findFrame(library: *Library, path: []const u8) ?struct { label: []const u8, s
 }
 
 /// Where frame `index` of `r` lies on its scan, and its film base, as the roll has them.
-fn placementOf(r: *const negscan.roll.Roll, index: usize) draft.Placement {
+fn placementOf(r: *const minilab.roll.Roll, index: usize) draft.Placement {
     const frame = r.frames.items[index];
     return .{
         .crop = frame.crop,
@@ -962,7 +962,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
     var y = origin.y;
 
     const title: []const u8, const badge: []const u8, const description: []const u8 = switch (state.selected) {
-        .neutral => .{ "Neutral", "Built in", "negscan's own inversion: density above the film base, a density matrix, then the inversion curve. Nothing is added to the colour." },
+        .neutral => .{ "Neutral", "Built in", "minilab's own inversion: density above the film base, a density matrix, then the inversion curve. Nothing is added to the colour." },
         .frontier => .{ "Frontier emulation", "Built in", "The Fujifilm Frontier's colour, from the colour cube in its scanning software at its standard saturation, as a LUT over Neutral. Tone, neutrals and lightness stay Neutral's: greens lean a little toward teal, and skin, skies and yellows gain a little." },
         .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "A LUT laid over Neutral's sRGB output: tone and balance come from Develop, then the LUT. It should expect sRGB or Rec. 709 input." },
         .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), switch (state.own.items[i].references) {
@@ -1253,7 +1253,7 @@ fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
     const aligned = if (pair) |p| p.alignment != null else false;
     const f = &state.figures;
     const captions = [_][]const u8{
-        "negscan, Neutral look",
+        "minilab, Neutral look",
         gui.print("{s}, {s}", .{ own.references.one(), if (aligned or pair == null) "aligned to ours" else "not aligned yet" }),
         if (f.median) |m| gui.print("Difference, ΔE2000 · median {d:.1}", .{m}) else "Difference, ΔE2000",
     };
@@ -1378,7 +1378,7 @@ fn saveLook(ctx: context.Context, own: *Own) void {
     };
     own.saved = true;
     own.kept = true;
-    if (negscan.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| ctx.library.lookChanged(ctx.gpa, id) else |_| {}
+    if (minilab.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| ctx.library.lookChanged(ctx.gpa, id) else |_| {}
     ctx.notice.set("Saved {s}: look.json and look.cube{s} in Looks/{s}.", .{ own.name, if (result.lut != null) ", residual.cube" else "", own.name });
 }
 
@@ -1492,14 +1492,14 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
         .neutral => {
             // Neutral's inversion curve with Develop's default settings, the film base at full
             // transmission.
-            const prepared: negscan.develop.Prepared = .init(.{});
+            const prepared: minilab.develop.Prepared = .init(.{});
             var points: [65]gui.Vec2 = undefined;
             for (&points, 0..) |*pt, i| {
                 const x = @as(f32, @floatFromInt(i)) / 64;
-                const t = std.math.pow(f32, 10, -x * (negscan.develop.Settings{}).density_range);
-                const raw: u16 = @intFromFloat(@round(t * negscan.image.full_scale));
-                const out = negscan.develop.pixel(prepared, .{ raw, raw, raw });
-                pt.* = plot(at, k, x, negscan.encode.srgb(out[1]));
+                const t = std.math.pow(f32, 10, -x * (minilab.develop.Settings{}).density_range);
+                const raw: u16 = @intFromFloat(@round(t * minilab.image.full_scale));
+                const out = minilab.develop.pixel(prepared, .{ raw, raw, raw });
+                pt.* = plot(at, k, x, minilab.encode.srgb(out[1]));
             }
             c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.text_secondary), 1.5 * k, 0);
         },

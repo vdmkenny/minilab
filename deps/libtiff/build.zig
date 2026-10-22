@@ -5,7 +5,7 @@
 //! (`cmake/LibraryFeatures.cmake`).
 //!
 //! File input and output go through `tif_unix.c` on every system, Windows included, rather than
-//! `tif_win32.c`: `tiffio.h` then needs no `windows.h`, and negscan opens TIFFs from memory through
+//! `tif_win32.c`: `tiffio.h` then needs no `windows.h`, and minilab opens TIFFs from memory through
 //! `TIFFClientOpen` anyway. LibTIFF is covered by its own BSD-like licence (the upstream's
 //! `LICENSE.md`), which the package exposes as a named lazy path.
 

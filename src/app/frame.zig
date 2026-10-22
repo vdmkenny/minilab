@@ -2,11 +2,11 @@
 //! viewer's renderings of it, negative and positive.
 
 const std = @import("std");
-const negscan = @import("negscan");
+const minilab = @import("minilab");
 
-const image = negscan.image;
-const develop = negscan.develop;
-const look = negscan.look;
+const image = minilab.image;
+const develop = minilab.develop;
+const look = minilab.look;
 
 /// The viewer's copy of a frame is at most this many pixels along its longer side.
 pub const preview_longest = 1600;
@@ -58,10 +58,10 @@ pub const Frame = struct {
     /// Whether `rendered` is out of date with the settings.
     stale: bool = true,
 
-    /// Loads the scan at `path`, of any kind `negscan.input` reads, as the frame `name`, cut to
+    /// Loads the scan at `path`, of any kind `minilab.input` reads, as the frame `name`, cut to
     /// `crop` and turned, with default settings: the caller measures or applies saved ones.
     pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, name: []const u8, crop: ?image.Area, quarter_turns: u2, mirrored: bool) !Frame {
-        var scan = (try negscan.input.read(gpa, io, path)).scan;
+        var scan = (try minilab.input.read(gpa, io, path)).scan;
         defer scan.deinit(gpa);
         var full = try image.downscale(gpa, scan, reducedLongest(scan, crop));
         errdefer full.deinit(gpa);
@@ -131,14 +131,14 @@ pub const Frame = struct {
     /// Fills `negative` as the frame looks on a light table: its film base, from the gaps when
     /// it's known or else the frame's thinnest film, nearly white through the mask.
     pub fn fillNegative(frame: *Frame) void {
-        const gain = negscan.light_table.gainForBase(frame.gap_base orelse frame.whole.thinnest);
-        negscan.light_table.toScreen(frame.preview.pixels, gain, frame.negative);
+        const gain = minilab.light_table.gainForBase(frame.gap_base orelse frame.whole.thinnest);
+        minilab.light_table.toScreen(frame.preview.pixels, gain, frame.negative);
     }
 
     /// The frame on the scan found by frame detection, in the scan's pixels. `dpi` is the scan's
     /// resolution; null guesses it.
-    pub fn detect(frame: *const Frame, gpa: std.mem.Allocator, format: negscan.formats.Format, dpi: ?f32) !image.Area {
-        return negscan.framing.find(gpa, frame.full, frame.scan_width, frame.scan_height, dpi, format, frame.settings.kind);
+    pub fn detect(frame: *const Frame, gpa: std.mem.Allocator, format: minilab.formats.Format, dpi: ?f32) !image.Area {
+        return minilab.framing.find(gpa, frame.full, frame.scan_width, frame.scan_height, dpi, format, frame.settings.kind);
     }
 
     /// Works out the automatic settings for film `kind`, with the base measured, and balanced the
@@ -197,7 +197,7 @@ pub const Frame = struct {
         frame.histogram = std.mem.zeroes(Histogram);
         var linear = try look.render(gpa, frame.preview, frame.settings, catalog.resolve(gpa, io, frame.look));
         defer linear.deinit(gpa);
-        var encoded = try negscan.encode.toSrgb8(gpa, linear);
+        var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
         frame.store(encoded);
         frame.stale = false;

@@ -28,7 +28,7 @@ const max_cube_bytes = 8 << 20;
 pub const File = struct {
     name: []const u8,
     /// What the look expects, for whoever reads the file.
-    input: []const u8 = "Density 0..1 per channel, as negscan's Log tone stores it, sRGB-encoded",
+    input: []const u8 = "Density 0..1 per channel, as minilab's Log tone stores it, sRGB-encoded",
     output: []const u8 = "sRGB",
     /// Density in, mixed: each row adds up to 1.
     matrix: model.Matrix,
@@ -107,7 +107,7 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8
     };
     if (result.lut) |lut| {
         const bytes = try cube.write(a, lut, name, &.{
-            "negscan look: what the curves and matrix leave, applied to the curves' output.",
+            "minilab look: what the curves and matrix leave, applied to the curves' output.",
             "Input and output: sRGB-encoded 0..1.",
         });
         try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ folder, lut_file }), .data = bytes });
@@ -116,8 +116,8 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8
     const baked = try a.create(model.Lut);
     for (&baked.values, 0..) |*v, i| v.* = result.model.encoded(model.Lut.input(i), @splat(0));
     const baked_bytes = try cube.write(a, baked, name, &.{
-        "negscan look, whole: density matrix, channel curves and LUT in one.",
-        "Input: density 0..1 per channel, as negscan's Log tone writes it. Output: sRGB.",
+        "minilab look, whole: density matrix, channel curves and LUT in one.",
+        "Input: density 0..1 per channel, as minilab's Log tone writes it. Output: sRGB.",
     });
     try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ folder, baked_file }), .data = baked_bytes });
 

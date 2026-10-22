@@ -171,7 +171,7 @@ test "what is not a camera raw file is refused" {
 
 /// The environment variable naming a camera raw file for the test below, which skips without it.
 /// `zig build test -Draw-sample=<file>` in `deps/codecs` sets it.
-const sample_variable = "NEGSCAN_RAW_SAMPLE";
+const sample_variable = "MINILAB_RAW_SAMPLE";
 /// The largest sample file read.
 const max_sample_bytes = 1 << 30;
 

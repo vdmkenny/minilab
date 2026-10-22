@@ -13,7 +13,7 @@ const encode = @import("encode.zig");
 const pnm = @import("../io/pnm.zig");
 const formats = @import("../frames/formats.zig");
 
-/// Where `vendor/` is, seen from the project root and from `negscan/`.
+/// Where `vendor/` is, seen from the project root and from `minilab/`.
 const vendor_dirs = [_][]const u8{ "vendor", "../vendor" };
 const strip_dir = "hw-scans/2026-10-22-colour";
 const max_file_bytes = 256 << 20;

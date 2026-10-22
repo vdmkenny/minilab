@@ -161,7 +161,7 @@ test "a camera's white level becomes full scale" {
 
 /// The environment variable naming a camera RAW file for the test below, which skips without it:
 /// the same one `raw.zig`'s test reads.
-const raw_sample_variable = "NEGSCAN_RAW_SAMPLE";
+const raw_sample_variable = "MINILAB_RAW_SAMPLE";
 
 test "a camera RAW file reads as a linear scan up to full scale" {
     const gpa = std.testing.allocator;

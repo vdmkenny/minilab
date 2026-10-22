@@ -1,4 +1,4 @@
-# Builds negscan and runs the tests on Linux, macOS and Windows for every pull request and every
+# Builds minilab and runs the tests on Linux, macOS and Windows for every pull request and every
 # push to main, and checks the Zig code's formatting and the repository's files.
 name: Tests
 

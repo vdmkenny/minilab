@@ -1,7 +1,7 @@
 //! The looks a frame can be developed with. Each starts from Develop's rendering:
 //!
 //! - Neutral: Develop's rendering as it is.
-//! - A LUT look: a .cube LUT laid over Neutral's sRGB-encoded output (`cube_lut`). negscan comes
+//! - A LUT look: a .cube LUT laid over Neutral's sRGB-encoded output (`cube_lut`). minilab comes
 //!   with one, Frontier emulation (`presets/looks/frontier.cube`), and takes any .cube the user
 //!   imports into the library's Looks folder.
 //! - A fitted look from the Looks workspace (`looks.saved`). It takes over from Develop after the
@@ -18,7 +18,7 @@ const cube_lut = @import("cube_lut.zig");
 const model = @import("../looks/model.zig");
 const saved = @import("../looks/saved.zig");
 
-/// The looks negscan comes with.
+/// The looks minilab comes with.
 pub const Builtin = enum {
     neutral,
     frontier,
@@ -90,7 +90,7 @@ pub const Id = struct {
         return id.bytes[0..id.len];
     }
 
-    /// What the id names. An id that names nothing negscan knows of is Neutral.
+    /// What the id names. An id that names nothing minilab knows of is Neutral.
     pub fn kind(id: *const Id) Kind {
         const t = id.text();
         if (std.mem.startsWith(u8, t, cube_prefix) and t.len > cube_prefix.len) return .{ .cube = t[cube_prefix.len..] };
@@ -229,7 +229,7 @@ pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, 
 /// The largest .cube file read, 64 MiB: a 129-point 3D LUT in text is about 60.
 const max_cube_bytes = 64 << 20;
 
-/// Reads the looks ids name, once each: the built-in ones from negscan itself, imported LUTs and
+/// Reads the looks ids name, once each: the built-in ones from minilab itself, imported LUTs and
 /// fitted looks from the library's Looks folder. One thread at a time.
 pub const Catalog = struct {
     /// `<library>/Looks`; null without a library, when only the built-in looks are there.

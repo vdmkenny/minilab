@@ -46,7 +46,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.522, 0.539, 0.612 },
         .density_range = .{ 1.563, 1.723, 2.017 },
         .curves = curve_data.kodak_portra_160,
-        .source = "Kodak E-4051 (January 2025), Status M, daylight; curves digitised for negscan from the vector drawing in the PDF (about ±0.02 D: the drawn density ticks are uneven); log H in lux-seconds",
+        .source = "Kodak E-4051 (January 2025), Status M, daylight; curves digitised for minilab from the vector drawing in the PDF (about ±0.02 D: the drawn density ticks are uneven); log H in lux-seconds",
     },
     .{
         .name = "Kodak Portra 400",
@@ -57,7 +57,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.547, 0.549, 0.635 },
         .density_range = .{ 1.759, 1.780, 2.142 },
         .curves = curve_data.kodak_portra_400,
-        .source = "Kodak E-4050 (January 2025), Status M, daylight; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4050 (January 2025), Status M, daylight; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Portra 800",
@@ -68,7 +68,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.515, 0.527, 0.602 },
         .density_range = .{ 1.599, 1.678, 1.889 },
         .curves = curve_data.kodak_portra_800,
-        .source = "Kodak E-4040 (January 2025), EI 800, Status M, daylight; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4040 (January 2025), EI 800, Status M, daylight; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Portra 800 (push 1, EI 1600)",
@@ -79,7 +79,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.623, 0.630, 0.716 },
         .density_range = .{ 2.026, 1.984, 2.235 },
         .curves = curve_data.kodak_portra_800_push_1,
-        .source = "Kodak E-4040 (January 2025), EI 1600, one-stop push process, Status M; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4040 (January 2025), EI 1600, one-stop push process, Status M; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Portra 800 (push 2, EI 3200)",
@@ -90,7 +90,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.680, 0.717, 0.774 },
         .density_range = .{ 2.192, 2.157, 2.396 },
         .curves = curve_data.kodak_portra_800_push_2,
-        .source = "Kodak E-4040 (January 2025), EI 3200, two-stop push process, Status M; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4040 (January 2025), EI 3200, two-stop push process, Status M; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Ektar 100",
@@ -101,7 +101,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.559, 0.567, 0.646 },
         .density_range = .{ 1.699, 1.750, 2.171 },
         .curves = curve_data.kodak_ektar_100,
-        .source = "Kodak E-4046 (January 2025), Status M, daylight; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4046 (January 2025), Status M, daylight; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Gold 200",
@@ -112,7 +112,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.538, 0.557, 0.611 },
         .density_range = .{ 1.561, 1.627, 1.731 },
         .curves = curve_data.kodak_gold_200,
-        .source = "Kodak E-7022 (June 2023), Status M, daylight; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-7022 (June 2023), Status M, daylight; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak UltraMax 400",
@@ -123,7 +123,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.508, 0.532, 0.597 },
         .density_range = .{ 1.625, 1.724, 1.956 },
         .curves = curve_data.kodak_ultramax_400,
-        .source = "Kodak E-7023 (February 2016), Status M, daylight, C-41; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-7023 (February 2016), Status M, daylight, C-41; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Pro Image 100",
@@ -134,7 +134,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.560, 0.594, 0.696 },
         .density_range = .{ 1.790, 1.885, 2.193 },
         .curves = curve_data.kodak_pro_image_100,
-        .source = "Kodak E-4L (July 1997), Status M, C-41, daylight; curves read for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak E-4L (July 1997), Status M, C-41, daylight; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak Vision3 50D 5203",
@@ -145,7 +145,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.484, 0.570, 0.549 },
         .density_range = .{ 1.708, 2.027, 1.955 },
         .curves = curve_data.kodak_vision3_50d,
-        .source = "Kodak H-1-5203 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.02 D)",
+        .source = "Kodak H-1-5203 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.02 D)",
     },
     .{
         .name = "Kodak Vision3 250D 5207",
@@ -156,7 +156,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.466, 0.546, 0.530 },
         .density_range = .{ 1.667, 1.976, 1.889 },
         .curves = curve_data.kodak_vision3_250d,
-        .source = "Kodak H-1-5207 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
+        .source = "Kodak H-1-5207 (July 2015 edition), Status M, ECN-2, 5500 K daylight 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
     },
     .{
         .name = "Kodak Vision3 200T 5213",
@@ -167,7 +167,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.469, 0.549, 0.526 },
         .density_range = .{ 1.647, 1.948, 1.861 },
         .curves = curve_data.kodak_vision3_200t,
-        .source = "Kodak H-1-5213 (July 2015 edition), Status M, ECN-2, 3200 K tungsten 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.004 D)",
+        .source = "Kodak H-1-5213 (July 2015 edition), Status M, ECN-2, 3200 K tungsten 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.004 D)",
     },
     .{
         .name = "Kodak Vision3 500T 5219",
@@ -178,7 +178,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.465, 0.546, 0.533 },
         .density_range = .{ 1.673, 1.978, 1.905 },
         .curves = curve_data.kodak_vision3_500t,
-        .source = "Kodak H-1-5219 (July 2015 edition), Status M (the chart says \"Densitometry: ECN-2\", Kodak's slip), ECN-2, 3200 K tungsten 1/50 s; curves read for negscan from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
+        .source = "Kodak H-1-5219 (July 2015 edition), Status M (the chart says \"Densitometry: ECN-2\", Kodak's slip), ECN-2, 3200 K tungsten 1/50 s; curves read for minilab from the vector drawing in the PDF; log H relative to normal exposure, from the chart's camera-stop axis (0.30103 per stop). The March 2026 edition prints the same curves as an image (a raster reading agrees within 0.002 D)",
     },
     .{
         .name = "Kodak Verita 200D 5206",
@@ -189,7 +189,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.488, 0.485, 0.596 },
         .density_range = .{ 1.891, 1.718, 2.170 },
         .curves = curve_data.kodak_verita_200d,
-        .source = "Kodak Verita 200D brochure (K-1216, April 2026; data sheet H-1-5206), Status M, 5500 K daylight 1/50 s, ECN-2; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds from the chart's top axis (0.3 per camera stop)",
+        .source = "Kodak Verita 200D brochure (K-1216, April 2026; data sheet H-1-5206), Status M, 5500 K daylight 1/50 s, ECN-2; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds from the chart's top axis (0.3 per camera stop)",
     },
     .{
         .name = "CineStill 800T",
@@ -211,7 +211,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.549, 0.626, 0.632 },
         .density_range = .{ 1.605, 1.862, 1.772 },
         .curves = curve_data.fujifilm_200,
-        .source = "Fujifilm AF3-0261E (February 2022), Status M, daylight, CN-16; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Fujifilm AF3-0261E (February 2022), Status M, daylight, CN-16; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Fujifilm 400",
@@ -222,7 +222,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.560, 0.626, 0.616 },
         .density_range = null,
         .curves = curve_data.fujifilm_400,
-        .source = "Fujifilm AF3-0262E (April 2023), Status M, daylight, CN-16; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Fujifilm AF3-0262E (April 2023), Status M, daylight, CN-16; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Superia X-TRA 400",
@@ -233,7 +233,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.610, 0.665, 0.696 },
         .density_range = .{ 1.923, 2.033, 2.085 },
         .curves = curve_data.fujifilm_superia_xtra_400,
-        .source = "Fujifilm AF3-0217E / 013AR0316A, Status M, daylight, CN-16; curves digitised for negscan from the vector drawing in the PDF (about ±0.015 D: the drawn grid is slightly uneven); log H in lux-seconds",
+        .source = "Fujifilm AF3-0217E / 013AR0316A, Status M, daylight, CN-16; curves digitised for minilab from the vector drawing in the PDF (about ±0.015 D: the drawn grid is slightly uneven); log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Superia 200",
@@ -244,7 +244,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.738, 0.803, 0.760 },
         .density_range = null,
         .curves = curve_data.fujifilm_superia_200,
-        .source = "Fujifilm AF3-026E (October 1998), Status M, CN-16, daylight 1/125 s; curves read for negscan from the 600 ppi scanned chart image in the PDF (reads at 600 and 300 dpi agree within 0.003 D); log H in lux-seconds. The green curve still rises at 0.105 per log H where it starts, so base density is unknown",
+        .source = "Fujifilm AF3-026E (October 1998), Status M, CN-16, daylight 1/125 s; curves read for minilab from the 600 ppi scanned chart image in the PDF (reads at 600 and 300 dpi agree within 0.003 D); log H in lux-seconds. The green curve still rises at 0.105 per log H where it starts, so base density is unknown",
     },
     .{
         .name = "Fujifilm Fujicolor C200",
@@ -255,7 +255,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.607, 0.643, 0.658 },
         .density_range = .{ 1.744, 1.954, 1.941 },
         .curves = curve_data.fujifilm_c200,
-        .source = "Fujifilm AF3-0249E (May 2017), Status M, CN-16, daylight 1/125 s; curves read for negscan from the 600 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); log H in lux-seconds",
+        .source = "Fujifilm AF3-0249E (May 2017), Status M, CN-16, daylight 1/125 s; curves read for minilab from the 600 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Pro 400H",
@@ -266,7 +266,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.591, 0.550, 0.524 },
         .density_range = .{ 1.762, 1.683, 1.657 },
         .curves = curve_data.fujifilm_pro_400h,
-        .source = "Fujifilm AF3-176E (January 2005), Status M, C-41, daylight 1/125 s; curves read for negscan from the vector drawing in the PDF (its gridlines are uneven by up to 0.013 log H); log H in lux-seconds",
+        .source = "Fujifilm AF3-176E (January 2005), Status M, C-41, daylight 1/125 s; curves read for minilab from the vector drawing in the PDF (its gridlines are uneven by up to 0.013 log H); log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Pro 160NS",
@@ -277,7 +277,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.613, 0.538, 0.537 },
         .density_range = .{ 1.685, 1.474, 1.560 },
         .curves = curve_data.fujifilm_pro_160ns,
-        .source = "Fujifilm 163AR109A (Japanese sheet), \"Status M equivalent\", daylight, CN-16; curves digitised for negscan from the vector drawing in the PDF (about ±0.017 D: the frame is drawn off the grid); log H in lux-seconds",
+        .source = "Fujifilm 163AR109A (Japanese sheet), \"Status M equivalent\", daylight, CN-16; curves digitised for minilab from the vector drawing in the PDF (about ±0.017 D: the frame is drawn off the grid); log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Fujicolor 100",
@@ -288,7 +288,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.777, 0.731, 0.801 },
         .density_range = .{ 1.916, 1.896, 2.140 },
         .curves = curve_data.fujifilm_fujicolor_100,
-        .source = "Fujifilm 013AR0317A (Japanese sheet), \"Status M equivalent\", daylight, CN-16; curves digitised for negscan from the vector drawing in the PDF (about ±0.015 D: the drawn grid is slightly uneven); log H in lux-seconds",
+        .source = "Fujifilm 013AR0317A (Japanese sheet), \"Status M equivalent\", daylight, CN-16; curves digitised for minilab from the vector drawing in the PDF (about ±0.015 D: the drawn grid is slightly uneven); log H in lux-seconds",
     },
     .{
         .name = "Harman Phoenix 200",
@@ -299,7 +299,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 1.276, 1.248, 1.426 },
         .density_range = .{ 1.741, 1.922, 2.098 },
         .curves = curve_data.harman_phoenix_200,
-        .source = "HARMAN Phoenix 200 datasheet (September 2024), standard C-41 chemicals; the densitometry is not stated; curves read for negscan from the 216 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D). Blue and red are drawn over each other up to relative log H 0.9 and share one reading there; log H relative (\"relative log exposure\")",
+        .source = "HARMAN Phoenix 200 datasheet (September 2024), standard C-41 chemicals; the densitometry is not stated; curves read for minilab from the 216 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D). Blue and red are drawn over each other up to relative log H 0.9 and share one reading there; log H relative (\"relative log exposure\")",
     },
     // Colour positive (slide): Status A densities.
     .{
@@ -311,7 +311,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 1.832, 2.052, 2.138 },
         .density_range = null,
         .curves = curve_data.kodak_ektachrome_e100,
-        .source = "Kodak E-4000 (August 2018), Status A, daylight 1/100 s, E-6; curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds. The plotted curves stop before D-min levels off, so D-min is unknown",
+        .source = "Kodak E-4000 (August 2018), Status A, daylight 1/100 s, E-6; curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds. The plotted curves stop before D-min levels off, so D-min is unknown",
     },
     .{
         .name = "Kodak Kodachrome 64",
@@ -322,7 +322,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 2.056, 1.982, 1.877 },
         .density_range = null,
         .curves = curve_data.kodak_kodachrome_64,
-        .source = "Kodak E-88 (June 2009), Status A, daylight 1/50 s, K-14; curves read for negscan from the vector drawing in the PDF; log H in lux-seconds. The plotted curves level off at neither end, so D-min and D-max are unknown",
+        .source = "Kodak E-88 (June 2009), Status A, daylight 1/50 s, K-14; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds. The plotted curves level off at neither end, so D-min and D-max are unknown",
     },
     .{
         .name = "Fujifilm Provia 100F",
@@ -333,7 +333,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 1.770, 1.900, 1.742 },
         .density_range = .{ 3.202, 3.333, 3.249 },
         .curves = curve_data.fujifilm_provia_100f,
-        .source = "Fujifilm AF3-036E (October 2000), Fuji FAD-30S (Status A), daylight 1/50 s, E-6; curves read for negscan from the 300 ppi chart image in the PDF. Green and blue are drawn under red and take its reading where they coincide with it (reads at 600 and 300 dpi agree within 0.06 D, on the steep part where green is partly covered); log H in lux-seconds",
+        .source = "Fujifilm AF3-036E (October 2000), Fuji FAD-30S (Status A), daylight 1/50 s, E-6; curves read for minilab from the 300 ppi chart image in the PDF. Green and blue are drawn under red and take its reading where they coincide with it (reads at 600 and 300 dpi agree within 0.06 D, on the steep part where green is partly covered); log H in lux-seconds",
     },
     .{
         .name = "Fujifilm Velvia 100",
@@ -344,7 +344,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 2.350, 2.660, 2.419 },
         .density_range = .{ 3.252, 3.689, 3.558 },
         .curves = curve_data.fujifilm_velvia_100,
-        .source = "Fujifilm AF3-202E (February 2005), Status A, daylight, E-6; curves read for negscan from the vector drawing in the PDF (its gridlines are uneven by up to 0.008 log H); log H in lux-seconds",
+        .source = "Fujifilm AF3-202E (February 2005), Status A, daylight, E-6; curves read for minilab from the vector drawing in the PDF (its gridlines are uneven by up to 0.008 log H); log H in lux-seconds",
     },
     .{
         .name = "Fujichrome Velvia 50",
@@ -355,7 +355,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 2.206, 2.295, 2.198 },
         .density_range = .{ 3.185, 3.646, 3.543 },
         .curves = curve_data.fujichrome_velvia_50,
-        .source = "Fujifilm AF3-0221E2 (March 2007), Status A, daylight, E-6/CR-56; curves read for negscan from the 600 ppi chart image in the PDF. From log H -1.6 on the three curves are drawn over each other, within about a line width, and there all three take the centre of the band they form (reads at 600 and 300 dpi agree within 0.07 D); log H in lux-seconds",
+        .source = "Fujifilm AF3-0221E2 (March 2007), Status A, daylight, E-6/CR-56; curves read for minilab from the 600 ppi chart image in the PDF. From log H -1.6 on the three curves are drawn over each other, within about a line width, and there all three take the centre of the band they form (reads at 600 and 300 dpi agree within 0.07 D); log H in lux-seconds",
     },
     // Black-and-white negative.
     .{
@@ -367,7 +367,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.583, 0.583, 0.583 },
         .density_range = .{ 1.762, 1.762, 1.762 },
         .curves = curve_data.kodak_tri_x_400,
-        .source = "Kodak F-4017 (October 2021), 35 mm, diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 6 min, 20 °C (the starting point, stated to give contrast index 0.56); curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak F-4017 (October 2021), 35 mm, diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 6 min, 20 °C (the starting point, stated to give contrast index 0.56); curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak T-Max 100",
@@ -378,7 +378,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.556, 0.556, 0.556 },
         .density_range = .{ 1.546, 1.546, 1.546 },
         .curves = curve_data.kodak_t_max_100,
-        .source = "Kodak F-4016 (June 2018), diffuse visual; D-76, small tank, 6 min, 20 °C (the sheet prints curves for 6, 7.5 and 10 min; its D-76 starting point is 6½ min, which has no curve); curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak F-4016 (June 2018), diffuse visual; D-76, small tank, 6 min, 20 °C (the sheet prints curves for 6, 7.5 and 10 min; its D-76 starting point is 6½ min, which has no curve); curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak T-Max 400",
@@ -389,7 +389,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.746, 0.746, 0.746 },
         .density_range = .{ 1.994, 1.994, 1.994 },
         .curves = curve_data.kodak_t_max_400,
-        .source = "Kodak F-4043 (February 2016), diffuse visual; T-MAX RS Developer and Replenisher, large tank, 5 min, 24 °C (the starting point for that developer); curves digitised for negscan from the vector drawing in the PDF; log H in lux-seconds",
+        .source = "Kodak F-4043 (February 2016), diffuse visual; T-MAX RS Developer and Replenisher, large tank, 5 min, 24 °C (the starting point for that developer); curves digitised for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
         .name = "Kodak T-Max P3200",
@@ -400,7 +400,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.816, 0.816, 0.816 },
         .density_range = .{ 2.704, 2.704, 2.704 },
         .curves = curve_data.kodak_t_max_p3200,
-        .source = "Kodak Alaris F-4001 (March 2018), diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 12 min, 20 °C (the table's starting point for EI 3200); curve read for negscan from the vector drawing in the PDF; log H in lux-seconds. The curve leaves the chart at density 3.0. The July 2018 and April 2019 editions print an older set of curves (8, 9, 11 and 13 min), none at a table time",
+        .source = "Kodak Alaris F-4001 (March 2018), diffuse visual; KODAK PROFESSIONAL T-MAX Developer, small tank, 12 min, 20 °C (the table's starting point for EI 3200); curve read for minilab from the vector drawing in the PDF; log H in lux-seconds. The curve leaves the chart at density 3.0. The July 2018 and April 2019 editions print an older set of curves (8, 9, 11 and 13 min), none at a table time",
     },
     .{
         .name = "Eastman Double-X 5222",
@@ -433,7 +433,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.648, 0.648, 0.648 },
         .density_range = .{ 1.420, 1.420, 1.420 },
         .curves = curve_data.ilford_ortho_plus,
-        .source = "Harman/Ilford Ortho Plus datasheet (October 2019), ID-11 stock, 8 min, 20 °C, intermittent agitation: the curve the chart labels G-bar 0.62, the low end of the 0.62 to 0.70 Ilford calls normal for camera use. The densitometry is not stated; curve read for negscan from the 199 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); the 8 and 10 min curves run together in the toe and share one reading there; log H relative (\"relative log exposure\")",
+        .source = "Harman/Ilford Ortho Plus datasheet (October 2019), ID-11 stock, 8 min, 20 °C, intermittent agitation: the curve the chart labels G-bar 0.62, the low end of the 0.62 to 0.70 Ilford calls normal for camera use. The densitometry is not stated; curve read for minilab from the 199 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.01 D); the 8 and 10 min curves run together in the toe and share one reading there; log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford HP5 Plus",
@@ -444,7 +444,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.641, 0.641, 0.641 },
         .density_range = .{ 1.966, 1.966, 1.966 },
         .curves = curve_data.ilford_hp5_plus,
-        .source = "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.005 D); log H relative (\"relative log exposure\")",
+        .source = "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.005 D); log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford FP4 Plus",
@@ -455,7 +455,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.762, 0.762, 0.762 },
         .density_range = .{ 1.767, 1.767, 1.767 },
         .curves = curve_data.ilford_fp4_plus,
-        .source = "Ilford FP4 Plus datasheet (July 2010 edition), rollfilm, ILFOTEC HC 1+31, 8 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        .source = "Ilford FP4 Plus datasheet (July 2010 edition), rollfilm, ILFOTEC HC 1+31, 8 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford Pan F Plus",
@@ -466,7 +466,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.824, 0.824, 0.824 },
         .density_range = .{ 1.862, 1.862, 1.862 },
         .curves = curve_data.ilford_pan_f_plus,
-        .source = "Ilford Pan F Plus datasheet (June 2010 edition), rollfilm, ILFOTEC HC 1+31, 4 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        .source = "Ilford Pan F Plus datasheet (June 2010 edition), rollfilm, ILFOTEC HC 1+31, 4 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford Delta 100 Professional",
@@ -477,7 +477,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.776, 0.776, 0.776 },
         .density_range = .{ 1.732, 1.732, 1.732 },
         .curves = curve_data.ilford_delta_100,
-        .source = "Ilford Delta 100 Professional datasheet (April 2023), rollfilm, ID-11 stock, 8.5 min, 20 °C (the table's time for EI 100), intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the 168 ppi chart image in the PDF (its gridlines are uneven by up to 0.016 log H; reads at 600 and 300 dpi agree within 0.01 D); log H relative (\"relative log exposure\")",
+        .source = "Ilford Delta 100 Professional datasheet (April 2023), rollfilm, ID-11 stock, 8.5 min, 20 °C (the table's time for EI 100), intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the 168 ppi chart image in the PDF (its gridlines are uneven by up to 0.016 log H; reads at 600 and 300 dpi agree within 0.01 D); log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford Delta 3200 Professional",
@@ -488,7 +488,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.671, 0.671, 0.671 },
         .density_range = .{ 1.848, 1.848, 1.848 },
         .curves = curve_data.ilford_delta_3200,
-        .source = "Ilford Delta 3200 Professional datasheet (May 2010 edition), MICROPHEN stock, 9 min, 20 °C (the table's time for EI 3200; the chart also shows 7, 12 and 16 min), intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        .source = "Ilford Delta 3200 Professional datasheet (May 2010 edition), MICROPHEN stock, 9 min, 20 °C (the table's time for EI 3200; the chart also shows 7, 12 and 16 min), intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford XP2 Super",
@@ -499,7 +499,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.699, 0.699, 0.699 },
         .density_range = .{ 1.630, 1.630, 1.630 },
         .curves = curve_data.ilford_xp2_super,
-        .source = "Ilford XP2 Super datasheet (June 2010 edition), chromogenic, standard C-41 chemicals; Ilford does not say how density was measured; curve read for negscan from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        .source = "Ilford XP2 Super datasheet (June 2010 edition), chromogenic, standard C-41 chemicals; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford SFX 200",
@@ -510,7 +510,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.679, 0.679, 0.679 },
         .density_range = .{ 2.012, 2.012, 2.012 },
         .curves = curve_data.ilford_sfx_200,
-        .source = "Ilford SFX 200 datasheet (November 2018), ID-11 stock, 10 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for negscan from the 185 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D); log H relative (\"relative log exposure\")",
+        .source = "Ilford SFX 200 datasheet (November 2018), ID-11 stock, 10 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the 185 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D); log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Fujifilm Acros 100 II",
@@ -521,7 +521,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.571, 0.571, 0.571 },
         .density_range = .{ 1.561, 1.561, 1.561 },
         .curves = curve_data.fujifilm_acros_100_ii,
-        .source = "Fujifilm AF3-0258E (February 2020), Microfine, small tank, 10 min, 20 °C (the table's time for EI 100; the chart also shows 5, 15 and 20 min); the densitometry is not stated; curve read for negscan from the chart image in the PDF (reads at 600 and 300 dpi agree within 0.04 D); the four curves run together in the toe and share one reading there; log H in lux-seconds",
+        .source = "Fujifilm AF3-0258E (February 2020), Microfine, small tank, 10 min, 20 °C (the table's time for EI 100; the chart also shows 5, 15 and 20 min); the densitometry is not stated; curve read for minilab from the chart image in the PDF (reads at 600 and 300 dpi agree within 0.04 D); the four curves run together in the toe and share one reading there; log H in lux-seconds",
     },
     .{
         .name = "Fomapan 100 Classic",

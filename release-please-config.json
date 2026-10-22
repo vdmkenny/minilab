@@ -18,7 +18,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "negscan",
+      "package-name": "minilab",
       "initial-version": "0.0.1",
       "extra-files": [{ "type": "generic", "path": "build.zig.zon" }]
     }

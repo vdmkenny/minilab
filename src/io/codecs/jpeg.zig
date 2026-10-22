@@ -1,6 +1,6 @@
 //! JPEG output through libjpeg-turbo: 8-bit RGB at a chosen quality, with an ICC profile when
 //! given, and JPEG input, which checks what was written. Both work on files in memory. libjpeg
-//! runs inside negscan's C shim (`deps/codecs/jpeg_shim.c`), which turns its fatal errors into
+//! runs inside minilab's C shim (`deps/codecs/jpeg_shim.c`), which turns its fatal errors into
 //! results.
 
 const std = @import("std");
@@ -44,7 +44,7 @@ pub fn write(gpa: std.mem.Allocator, encoded: image.Encoded8, options: WriteOpti
         std.math.cast(c_uint, profile.len) orelse return error.JpegWriteFailed
     else
         0;
-    const compression: c.negscan_jpeg_compression = .{
+    const compression: c.minilab_jpeg_compression = .{
         .pixels = std.mem.sliceAsBytes(encoded.pixels).ptr,
         .width = std.math.cast(c_uint, encoded.width) orelse return error.ImageTooLarge,
         .height = std.math.cast(c_uint, encoded.height) orelse return error.ImageTooLarge,
@@ -56,9 +56,9 @@ pub fn write(gpa: std.mem.Allocator, encoded: image.Encoded8, options: WriteOpti
     };
     var file: [*c]u8 = null;
     var file_size: c_ulong = 0;
-    var message: [c.NEGSCAN_JPEG_MESSAGE_LENGTH]u8 = undefined;
-    try check(c.negscan_jpeg_compress(&compression, &file, &file_size, &message), &message, error.JpegWriteFailed);
-    defer c.negscan_jpeg_free(file);
+    var message: [c.MINILAB_JPEG_MESSAGE_LENGTH]u8 = undefined;
+    try check(c.minilab_jpeg_compress(&compression, &file, &file_size, &message), &message, error.JpegWriteFailed);
+    defer c.minilab_jpeg_free(file);
     return gpa.dupe(u8, file[0..file_size]);
 }
 
@@ -83,12 +83,12 @@ pub const ReadError = error{
 
 /// Reads the JPEG file `bytes` as 8-bit RGB.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
-    var decompressed: c.negscan_jpeg_image = .{};
-    var message: [c.NEGSCAN_JPEG_MESSAGE_LENGTH]u8 = undefined;
+    var decompressed: c.minilab_jpeg_image = .{};
+    var message: [c.MINILAB_JPEG_MESSAGE_LENGTH]u8 = undefined;
     const size = std.math.cast(c_ulong, bytes.len) orelse return error.InvalidJpeg;
-    try check(c.negscan_jpeg_decompress(bytes.ptr, size, &decompressed, &message), &message, error.InvalidJpeg);
-    defer c.negscan_jpeg_free(decompressed.pixels);
-    defer c.negscan_jpeg_free(decompressed.icc_profile);
+    try check(c.minilab_jpeg_decompress(bytes.ptr, size, &decompressed, &message), &message, error.InvalidJpeg);
+    defer c.minilab_jpeg_free(decompressed.pixels);
+    defer c.minilab_jpeg_free(decompressed.icc_profile);
 
     var decoded: image.Encoded8 = try .init(gpa, decompressed.width, decompressed.height);
     errdefer decoded.deinit(gpa);
@@ -102,14 +102,14 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
 }
 
 /// The shim's results, by name.
-const Result = enum(c.negscan_jpeg_result) {
-    ok = c.NEGSCAN_JPEG_OK,
-    failed = c.NEGSCAN_JPEG_FAILED,
-    out_of_memory = c.NEGSCAN_JPEG_OUT_OF_MEMORY,
+const Result = enum(c.minilab_jpeg_result) {
+    ok = c.MINILAB_JPEG_OK,
+    failed = c.MINILAB_JPEG_FAILED,
+    out_of_memory = c.MINILAB_JPEG_OUT_OF_MEMORY,
 };
 
 /// Turns the shim's `result` into `failure` or out of memory, logging libjpeg's `message`.
-fn check(result: c.negscan_jpeg_result, message: *const [c.NEGSCAN_JPEG_MESSAGE_LENGTH]u8, comptime failure: anytype) !void {
+fn check(result: c.minilab_jpeg_result, message: *const [c.MINILAB_JPEG_MESSAGE_LENGTH]u8, comptime failure: anytype) !void {
     switch (std.enums.fromInt(Result, result) orelse .failed) {
         .ok => {},
         .out_of_memory => return error.OutOfMemory,

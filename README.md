@@ -1,6 +1,6 @@
-# negscan
+# minilab
 
-negscan scans and develops film: colour and B&W negatives and slides, from a scanner, a camera or
+minilab scans and develops film: colour and B&W negatives and slides, from a scanner, a camera or
 files, a roll at a time. It runs on macOS, Linux and Windows. It is written in Zig 0.17, with a
 Dear ImGui interface. `docs/design.md` describes how it works and why.
 
@@ -9,7 +9,7 @@ Dear ImGui interface. `docs/design.md` describes how it works and why.
 Download the archive for your system from the [latest release](../../releases/latest) and extract
 it. There are builds for Windows, macOS and Linux, on x86-64 and Arm, each with its checksum. The
 macOS builds aren't signed, so macOS blocks them at first: run `xattr -d com.apple.quarantine
-negscan` once to allow them. `negscan --version` says which version you have.
+minilab` once to allow them. `minilab --version` says which version you have.
 
 ## Building
 
@@ -39,7 +39,7 @@ Five workspaces:
 - **Looks:** the looks frames can be developed with, and fitting a look of your own from pairs of
   our scans and a lab's scans of the same negatives.
 
-`negscan open --shortcuts` lists the keyboard shortcuts, which follow Lightroom's where it has one.
+`minilab open --shortcuts` lists the keyboard shortcuts, which follow Lightroom's where it has one.
 
 ## Looks
 
@@ -57,27 +57,27 @@ A look is what follows Develop's settings. Develop's Look drop-down lists them a
 ## Command line
 
 ```
-negscan import <roll name> <scan.ppm>... [--library <folder>] [--stock <name>] [--film colour|bw|slide]
-negscan develop <scan.ppm> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>] [--depth 8|16]
-negscan develop-roll <out folder> <scan.ppm>... [--look neutral|frontier|<file.cube>]
-negscan detect <scan.ppm> --dpi <n>
-negscan scan --list
-negscan scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
+minilab import <roll name> <scan.ppm>... [--library <folder>] [--stock <name>] [--film colour|bw|slide]
+minilab develop <scan.ppm> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>] [--depth 8|16]
+minilab develop-roll <out folder> <scan.ppm>... [--look neutral|frontier|<file.cube>]
+minilab detect <scan.ppm> --dpi <n>
+minilab scan --list
+minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
 ```
 
-`negscan --help` gives every option. Any command takes `--verbose`.
+`minilab --help` gives every option. Any command takes `--verbose`.
 
 ## Scanning
 
-On macOS and Linux negscan loads the system's SANE library when it scans, so it starts without
+On macOS and Linux minilab loads the system's SANE library when it scans, so it starts without
 SANE installed and uses SANE's own configuration of backends. On Windows it uses TWAIN and the
-scanner maker's driver. Scanners negscan has a profile for (the Epson Perfection V200 so far) scan
+scanner maker's driver. Scanners minilab has a profile for (the Epson Perfection V200 so far) scan
 raw: linear, 16 bits per channel, with no inversion or colour matrix in the scanner, so the film
 base can be measured between the frames.
 
 ## Licence
 
-negscan is under the Mozilla Public License 2.0 (`LICENSE`). The libraries it builds keep their own
+minilab is under the Mozilla Public License 2.0 (`LICENSE`). The libraries it builds keep their own
 licences, which the build installs beside the program. LibRaw is linked under the LGPL 2.1, so it
 can be relinked. The film stock presets are our own readings of the makers' datasheets
 (`data/stocks/README.md`).

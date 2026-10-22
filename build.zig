@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
     for (@import("codecs").licences) |name| b.getInstallStep().dependOn(&b.addInstallFile(codecs.namedLazyPath(name), name).step);
 
     // The core: everything that works without a window.
-    const core = b.addModule("negscan", .{
+    const core = b.addModule("minilab", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -62,7 +62,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .strip = strip,
         .imports = &.{
-            .{ .name = "negscan", .module = core },
+            .{ .name = "minilab", .module = core },
             .{ .name = "c", .module = translator.mod },
         },
     });
@@ -70,13 +70,13 @@ pub fn build(b: *std.Build) void {
     if (macos_sdk) |sdk| addMacosSdk(b, app, sdk);
     addFonts(b, app);
 
-    const exe = b.addExecutable(.{ .name = "negscan", .root_module = app });
+    const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
     run.addPassthruArgs();
-    b.step("run", "Run negscan").dependOn(&run.step);
+    b.step("run", "Run minilab").dependOn(&run.step);
 
     const tests = b.step("test", "Run tests");
     tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = core })).step);
@@ -87,7 +87,7 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
     check.dependOn(&b.addTest(.{ .root_module = core }).step);
     check.dependOn(&b.addTest(.{ .root_module = app }).step);
-    check.dependOn(&b.addExecutable(.{ .name = "negscan", .root_module = app }).step);
+    check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = app }).step);
 }
 
 /// `git describe` of the checkout against the release tags, such as `v0.0.1-12-gabc1234-dirty`, or

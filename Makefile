@@ -1,9 +1,9 @@
-# negscan's workflows. `make help` lists them.
+# minilab's workflows. `make help` lists them.
 
 .PHONY: help build run test check fmt release check-files hooks
 
 help:
-	@echo "make build        build negscan into zig-out/bin"
+	@echo "make build        build minilab into zig-out/bin"
 	@echo "make run          build and run the app (ARGS='open --library <folder>' and so on)"
 	@echo "make test         run the tests"
 	@echo "make check        run the checks CI runs: formatting, files, tests"
