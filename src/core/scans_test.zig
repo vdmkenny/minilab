@@ -58,7 +58,7 @@ test "the colour strip develops as it did" {
         defer frame.deinit(gpa);
         const whole: image.Area = .whole(frame.width, frame.height);
         for ([_]look.Id{ .neutral, .frontier }, [_][3]u8{ golden.neutral, golden.frontier }) |id, expected| {
-            var developed = try look.developFrame(gpa, frame, whole, .colour_negative, catalog.resolve(gpa, io, id), base, null);
+            var developed = try look.developFrame(gpa, frame, whole, .colour_negative, catalog.resolve(gpa, io, id), base, .{});
             defer developed.deinit(gpa);
             const mean = meanColour(developed, whole.centre(0.5));
             for (mean, expected) |m, e| try std.testing.expect(@abs(@as(i32, m) - e) <= tolerance);

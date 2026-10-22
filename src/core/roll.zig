@@ -242,7 +242,9 @@ pub const Roll = struct {
 
     /// Imports the file at `path`, of any kind `input.zig` reads, as `addImage` does. A camera
     /// frame is divided by `flat` first, the roll's flat field (`flatField`), when there is one.
-    /// A roll still empty and without a flat field takes its input from the file's kind.
+    /// A roll still empty and without a flat field takes its input from the file's kind. A camera
+    /// raw file's colour goes with its frames, for slides: with a flat field, which has made the
+    /// light behind the film white already, its matrix alone.
     pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField) !Added {
         var read = try file_input.read(gpa, io, path);
         defer read.deinit(gpa);
@@ -251,7 +253,11 @@ pub const Roll = struct {
             roll.info.input = .of(read.kind);
             try roll.saveInfo(io);
         }
-        return roll.addImage(gpa, io, read.scan, null);
+        var slide = read.camera;
+        if (flat != null) {
+            if (slide) |*s| s.balance = @splat(1);
+        }
+        return roll.addImageWith(gpa, io, read.scan, null, slide);
     }
 
     /// Saves `scan` as the roll's next scan file, with its thumbnail, and adds a frame for each
@@ -260,6 +266,11 @@ pub const Roll = struct {
     /// whole frame on it, all sharing the scan. A scan where detection finds no frame adds one,
     /// uncropped. `dpi` is the scan's resolution, when known.
     pub fn addImage(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32) !Added {
+        return roll.addImageWith(gpa, io, scan, dpi, null);
+    }
+
+    /// `addImage` for a scan with a camera's colour, `slide`, for its frames when they're slides.
+    fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32, slide: ?develop.SlideColour) !Added {
         const arena = roll.arena.allocator();
         const first = roll.frames.items.len;
         // Frames added before a failure would have no file; they go again.
@@ -291,7 +302,7 @@ pub const Roll = struct {
             .width = scan.width,
             .height = scan.height,
             .dpi = dpi,
-            .settings = .{ .kind = roll.info.kind },
+            .settings = .{ .kind = roll.info.kind, .slide_colour = slide },
         };
         if (found.len == 0) try roll.frames.append(arena, frame);
         for (found) |f| {

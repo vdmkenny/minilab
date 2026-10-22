@@ -7,13 +7,15 @@
 //!   too, widened to 16 bits, with a warning: it's probably gamma-encoded, and nothing undoes that
 //!   yet.
 //! - Camera RAW is demosaiced with no white balance, no colour matrix and no gamma (`raw.read`),
-//!   and scaled so that the sensor's white level is full scale.
+//!   and scaled so that the sensor's white level is full scale. Its white balance and matrix come
+//!   with it, for slides (`develop.SlideColour`).
 
 const std = @import("std");
 const image = @import("image.zig");
 const pnm = @import("../io/pnm.zig");
 const tiff = @import("../io/codecs/tiff.zig");
 const raw = @import("../io/codecs/raw.zig");
+const develop = @import("develop.zig");
 
 const log = std.log.scoped(.input);
 
@@ -52,6 +54,9 @@ pub const Read = struct {
     scan: image.Scan,
     kind: Kind,
     depth: Depth,
+    /// A camera raw file's colour: its white balance as shot, for the light behind the film, or
+    /// for daylight where it has none, and its matrix to sRGB. Null for scans.
+    camera: ?develop.SlideColour = null,
 
     pub fn deinit(read_scan: *Read, gpa: std.mem.Allocator) void {
         read_scan.scan.deinit(gpa);
@@ -97,7 +102,13 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
         .camera_raw => {
             const decoded = try raw.read(gpa, bytes, .{});
             toFullScale(decoded.scan, decoded.white);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = .sixteen };
+            const balance = decoded.as_shot_multipliers orelse decoded.daylight_multipliers;
+            return .{
+                .scan = decoded.scan,
+                .kind = kind,
+                .depth = .sixteen,
+                .camera = if (balance) |b| .{ .balance = b, .to_srgb = decoded.camera_to_srgb } else null,
+            };
         },
     }
 }

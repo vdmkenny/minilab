@@ -170,7 +170,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     var developed = if (frame.developed)
         try render(gpa, current, frame.settings, frame_look, cancel)
     else
-        try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, frame.settings.curves());
+        try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, .{ .curves = frame.settings.curves(), .slide = frame.settings.slide_colour });
     defer developed.deinit(gpa);
     if (owned) |*s| {
         s.deinit(gpa);

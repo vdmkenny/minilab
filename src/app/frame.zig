@@ -224,13 +224,14 @@ pub const Frame = struct {
     }
 };
 
-/// Carries the user's own choices over a fresh measurement: the tone, temperature and tint, and the
-/// roll's stock curves.
+/// Carries the user's own choices over a fresh measurement: the tone, temperature and tint; and the
+/// roll's stock curves and the camera's colour, which belong to the film and the scan.
 fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.tone = keep.tone;
     settings.temperature = keep.temperature;
     settings.tint = keep.tint;
     settings.stock_curves = keep.stock_curves;
+    settings.slide_colour = keep.slide_colour;
 }
 
 /// The longer side of the reduced copy of `scan` that a frame `crop` of it is cut from: enough for

@@ -127,6 +127,27 @@ pub const Range = enum {
     }
 };
 
+/// A camera raw file's colour, kept with the frame at import, as the roll's scan of it is in the
+/// camera's own colour: the white balance for the light behind the film, and the camera's matrix
+/// from its colour, so balanced, to linear sRGB. Colour slides take it; a negative's base cancels
+/// the light's colour on its own.
+pub const SlideColour = struct {
+    /// Per channel, with green 1: the camera's white balance as shot, or for daylight where the
+    /// file has none; 1 where the roll's flat field has made the light white already.
+    balance: [3]f32,
+    /// Each row gives an sRGB channel from the camera's red, green and blue.
+    to_srgb: [3][3]f32,
+
+    /// `t`, the camera's linear values, as linear sRGB, with nothing below 0.
+    pub fn apply(slide: SlideColour, t: [3]f32) [3]f32 {
+        var white: [3]f32 = undefined;
+        for (&white, t, slide.balance) |*w, v, m| w.* = v * m;
+        var out: [3]f32 = undefined;
+        for (&out, slide.to_srgb) |*o, row| o.* = @max(0, row[0] * white[0] + row[1] * white[1] + row[2] * white[2]);
+        return out;
+    }
+};
+
 /// Where the film base comes from.
 pub const BaseSource = enum {
     /// The thinnest film in the frame.
@@ -170,6 +191,8 @@ pub const Settings = struct {
     /// The roll's stock's curves, straightening each layer's density; null for no stock, or one
     /// without curves.
     stock_curves: ?stock_curves.Curves = null,
+    /// For a slide shot with a camera, how to bring the camera's colour to sRGB; null for a scan.
+    slide_colour: ?SlideColour = null,
 
     /// The curves, for `automatic`.
     pub fn curves(settings: *const Settings) ?*const stock_curves.Curves {
@@ -352,7 +375,11 @@ pub fn pixel(prepared: Prepared, raw: [3]u16) [3]f32 {
     var t: [3]f32 = undefined;
     for (&t, raw) |*out, v| out.* = @as(f32, @floatFromInt(v)) / image.full_scale;
     if (!prepared.settings.kind.isNegative()) {
-        if (prepared.settings.kind.isMonochrome()) t = @splat(t[@backingInt(prepared.settings.monochrome_channel)]);
+        if (prepared.settings.kind.isMonochrome()) {
+            t = @splat(t[@backingInt(prepared.settings.monochrome_channel)]);
+        } else if (prepared.settings.slide_colour) |slide| {
+            t = slide.apply(t);
+        }
         for (&t) |*v| v.* = std.math.clamp(v.* * prepared.settings.exposure, 0, 1);
         return t;
     }
@@ -808,4 +835,22 @@ test "a new stock measures the frame again and keeps the user's choices" {
     const none = restocked(restocked_settings, stats, null, null);
     try std.testing.expectEqual(null, none.stock_curves);
     try std.testing.expectEqual(WhiteBalance.auto_neutral, none.white_balance);
+}
+
+test "a slide shot with a camera comes out in sRGB, its light white" {
+    // A camera whose light, through clear film, reads 0.5, 1 and 0.8, and whose matrix mixes a
+    // little of each channel into the others.
+    const slide: SlideColour = .{
+        .balance = .{ 2, 1, 1.25 },
+        .to_srgb = .{ .{ 1.2, -0.1, -0.1 }, .{ -0.1, 1.2, -0.1 }, .{ -0.1, -0.1, 1.2 } },
+    };
+    const light = slide.apply(.{ 0.5, 1, 0.8 });
+    for (light) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 1e-5);
+    // Through the develop path: white light comes out white, and a scan without the camera's colour
+    // as it is.
+    const settings: Settings = .{ .kind = .colour_positive, .exposure = 1, .slide_colour = slide };
+    const raw: [3]u16 = .{ 32768, 65535, 52428 };
+    for (pixel(.init(settings), raw)) |v| try std.testing.expectApproxEqAbs(@as(f32, 1), v, 1e-3);
+    const plain = pixel(.init(.{ .kind = .colour_positive, .exposure = 1 }), raw);
+    try std.testing.expectApproxEqAbs(@as(f32, 0.5), plain[0], 1e-3);
 }

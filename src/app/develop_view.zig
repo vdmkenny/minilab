@@ -461,6 +461,7 @@ pub const State = struct {
                 frame.settings = saved.settings;
                 frame.stock_slopes = library.stockSlopes(rl);
             } else {
+                frame.settings.slide_colour = saved.settings.slide_colour;
                 prepareStock(library, rl, &frame, saved.settings.kind);
                 frame.measure(saved.settings.kind);
             }
@@ -694,7 +695,8 @@ pub const State = struct {
         if (state.committed) |before| state.undo.push(before);
         state.redo = .{};
         const kind = frame.settings.kind;
-        frame.settings = .{};
+        const slide = frame.settings.slide_colour;
+        frame.settings = .{ .slide_colour = slide };
         frame.look = .neutral;
         if (state.rollIndex(library)) |r| prepareStock(library, &library.rolls.items[r], frame, kind);
         frame.measure(kind);

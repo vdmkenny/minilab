@@ -424,7 +424,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     const suffix = std.fs.path.stem(look_name);
     const curves = if (stock_name) |name| try stockNamed(name, kind) else null;
     for (frames.items) |frame| {
-        var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base, if (curves) |*cv| cv else null);
+        var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base, .{ .curves = if (curves) |*cv| cv else null });
         defer developed.deinit(gpa);
         var encoded = try minilab.encode.toSrgb16(gpa, developed);
         defer encoded.deinit(gpa);
@@ -645,7 +645,7 @@ fn developArea(gpa: std.mem.Allocator, io: std.Io, options: Options, format: For
     if (base) |b| std.log.info("film base: {d:.4} {d:.4} {d:.4}", .{ b[0], b[1], b[2] });
     var scan = try full.crop(gpa, area);
     defer scan.deinit(gpa);
-    var developed = try minilab.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base, if (options.curves) |*cv| cv else null);
+    var developed = try minilab.look.developFrame(gpa, scan, .whole(scan.width, scan.height), options.kind, look, base, .{ .curves = if (options.curves) |*cv| cv else null });
     defer developed.deinit(gpa);
 
     const file = switch (options.depth) {

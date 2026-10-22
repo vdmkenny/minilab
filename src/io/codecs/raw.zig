@@ -1,7 +1,8 @@
 //! Camera raw input through LibRaw, for film scanned with a camera. The scan holds the sensor's
 //! own numbers, demosaiced: linear (gamma 1/1), unscaled, with the black level taken off, no white
 //! balance (unity multipliers), no brightening, and in the camera's own colour, with no matrix
-//! applied (LibRaw's `output_color = 0`). The camera's colour matrix comes with it, for positives.
+//! applied (LibRaw's `output_color = 0`). The camera's colour matrix and white balance come with
+//! it, for positives.
 //! The file is read from memory: the caller reads the file system.
 
 const std = @import("std");
@@ -43,6 +44,9 @@ pub const Decoded = struct {
     /// `camera_to_srgb` expects to have been applied; null when LibRaw has no colour data for the
     /// camera.
     daylight_multipliers: ?[image.channel_count]f32,
+    /// The multipliers the camera recorded for the light it was shot in, with green 1: for film,
+    /// the light behind it. Null where the file has none.
+    as_shot_multipliers: ?[image.channel_count]f32,
 
     pub fn deinit(decoded: *Decoded, gpa: std.mem.Allocator) void {
         decoded.scan.deinit(gpa);
@@ -135,17 +139,29 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8, options: Options) ReadErr
     const colour = &processor.color;
     var camera_to_srgb: [image.channel_count][image.channel_count]f32 = undefined;
     for (&camera_to_srgb, colour.rgb_cam) |*row, source| row.* = source[0..image.channel_count].*;
-    const green = colour.pre_mul[1];
-    const daylight_multipliers: ?[image.channel_count]f32 = if (green > 0)
-        .{ colour.pre_mul[0] / green, 1.0, colour.pre_mul[2] / green }
-    else
-        null;
     return .{
         .scan = scan,
         .white = std.math.cast(u16, colour.maximum) orelse std.math.maxInt(u16),
         .camera_to_srgb = camera_to_srgb,
-        .daylight_multipliers = daylight_multipliers,
+        .daylight_multipliers = relativeToGreen(colour.pre_mul),
+        .as_shot_multipliers = relativeToGreen(colour.cam_mul),
     };
+}
+
+/// LibRaw's multipliers for red, green, blue and second green, as red, green and blue with green
+/// 1; null for ones it doesn't have, which it leaves 0.
+fn relativeToGreen(multipliers: [4]f32) ?[image.channel_count]f32 {
+    const green = multipliers[1];
+    if (!(green > 0) or !(multipliers[0] > 0) or !(multipliers[2] > 0)) return null;
+    const result: [image.channel_count]f32 = .{ multipliers[0] / green, 1.0, multipliers[2] / green };
+    for (result) |m| if (!std.math.isFinite(m)) return null;
+    return result;
+}
+
+test "multipliers come relative to green, and missing ones are none" {
+    try std.testing.expectEqual([image.channel_count]f32{ 2, 1, 1.5 }, relativeToGreen(.{ 1024, 512, 768, 512 }).?);
+    try std.testing.expectEqual(null, relativeToGreen(.{ 0, 0, 0, 0 }));
+    try std.testing.expectEqual(null, relativeToGreen(.{ 2, 1, 0, 1 }));
 }
 
 /// Turns LibRaw's `code` into an error, logging LibRaw's words for it.
@@ -191,6 +207,10 @@ test "a camera raw file reads as a linear scan with its colour matrix" {
     try std.testing.expect(full.white > 0);
     const tolerance = 1e-3;
     for (full.camera_to_srgb) |row| try std.testing.expectApproxEqAbs(1.0, row[0] + row[1] + row[2], tolerance);
+    // Every camera LibRaw knows has daylight multipliers; most files record the light they were
+    // shot in too.
+    try std.testing.expect(full.daylight_multipliers != null);
+    if (full.as_shot_multipliers) |m| try std.testing.expectEqual(@as(f32, 1), m[1]);
     // Unscaled, the brightest samples sit near the white level, not at 16 bits' full scale;
     // demosaicing may overshoot it a little.
     const overshoot = 2;

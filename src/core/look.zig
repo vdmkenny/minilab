@@ -234,14 +234,21 @@ fn renderBand(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, o
     develop.saturate(prepared, out);
 }
 
+/// What a frame brings to `developFrame` besides the scan: its stock's curves, and a camera's colour.
+pub const FrameExtras = struct {
+    curves: ?*const stock_curves.Curves = null,
+    slide: ?develop.SlideColour = null,
+};
+
 /// Develops `scan` with `look` and automatic settings measured on `area`, on the film base
 /// `film_base` when it's known from elsewhere, such as the gaps between frames, or else the
 /// thinnest film in `area`.
-pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, kind: develop.FilmKind, look: Resolved, film_base: ?[3]f32, curves: ?*const stock_curves.Curves) !image.Rendered {
+pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, kind: develop.FilmKind, look: Resolved, film_base: ?[3]f32, extras: FrameExtras) !image.Rendered {
     const stats = try develop.Statistics.measure(gpa, scan, area.centre(develop.measured_fraction));
     const whole = try develop.Statistics.measure(gpa, scan, area);
-    var settings = develop.automatic(kind, film_base orelse whole.thinnest, stats, curves);
-    if (curves) |cv| settings.stock_curves = cv.*;
+    var settings = develop.automatic(kind, film_base orelse whole.thinnest, stats, extras.curves);
+    if (extras.curves) |cv| settings.stock_curves = cv.*;
+    settings.slide_colour = extras.slide;
     return render(gpa, scan, settings, look);
 }
 

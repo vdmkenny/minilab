@@ -1,7 +1,8 @@
-# Zig's build output, its cache, and the packages it fetches into the project.
-/zig-out/
-/.zig-cache/
-/zig-pkg/
+# Zig's build output, its cache, and the packages it fetches, in the project and in deps/'s own
+# packages when they're built on their own.
+zig-out/
+.zig-cache/
+zig-pkg/
 
 # Scans, camera files, pictures and the makers' datasheets: people's own films and other people's
 # documents. `scripts/check-files.sh`, run by the pre-commit hook and by CI, refuses them too.

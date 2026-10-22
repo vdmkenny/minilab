@@ -362,7 +362,12 @@ Each stage has its own parameters; presets set some or all of them.
 
 B&W negatives use one channel's density (selectable, green by default) through the same stages.
 Positives skip stages 2 to 5. Their transmission goes through an input profile (an IT8.7/1
-transparency target if the user has one, otherwise a matrix) and then the tone stage.
+transparency target if the user has one, otherwise a matrix) and then the tone stage. A colour
+slide shot with a camera keeps its raw file's colour with the frame at import, since the roll's
+scan of it is in the camera's own colour: the camera's white balance as shot, for the light behind
+the film (or for daylight where the file has none), then the camera's matrix to sRGB
+(`develop.SlideColour`). With a flat field, which has made the light white already, only the
+matrix applies. Slides imported before this keep the camera's colour as it is.
 
 ### Auto values
 
