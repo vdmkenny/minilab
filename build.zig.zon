@@ -30,6 +30,20 @@
             .url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
             .hash = "N-V-__8AADWVlwASf7XCdCqpjVW5Jv_7oogANJ_H4_dIoEp6",
         },
+        // Film looks from other people's collections, baked into the app at build time
+        // (`src/presets/looks/bundled.zig`).
+        .glassmeter = .{
+            .url = "git+https://github.com/TrondW/glassmeter-film-looks.git#6a65ee016120d6fc3e17219c8a7d7a1d187abd90",
+            .hash = "N-V-__8AALugLAIbrCEnXLMWKBOfdjQE-8TVgTfEU4iOmeLO",
+        },
+        .t3mujinpack = .{
+            .url = "git+https://github.com/t3mujinpack/t3mujinpack.git#0b421f3e25209ed78253d1724a29cc6255c5e7fe",
+            .hash = "N-V-__8AAJ69qgPbF1g5uadmfKIIlVjR2LG9zQqjuFN8edL1",
+        },
+        .street_monochrome = .{
+            .url = "git+https://github.com/sfi0zy/street-monochrome.git#3f915315da4f43dd86af304273615b3a54939a94",
+            .hash = "N-V-__8AAIKS1QERXHqASkptdd1bGfa2YEP2t029YlpWY1GQ",
+        },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "deps" },
 }

@@ -9,7 +9,8 @@ minilab does and why.
 
 - Install [Zig 0.17](https://ziglang.org). `zig build` builds minilab, `zig build test` runs the
   tests, and `zig build check -fincremental --watch` reports compile errors moments after a save.
-  The first build fetches the libraries `build.zig.zon` names and builds the C and C++ ones.
+  The first build fetches the libraries and look collections `build.zig.zon` names (about 75 MB
+  of looks), builds the C and C++ ones and bakes the looks.
 - Run `make hooks` once. It installs a pre-commit hook that keeps scans and other files out of the
   repository. `make help` lists the other workflows.
 - `make run` opens the app on your library (`~/Pictures/Rolls`, or `ARGS='open --library
@@ -22,7 +23,9 @@ minilab does and why.
   looks (`look.zig`, `cube_lut.zig`), rolls on disk (`roll.zig`), frame detection's use
   (`framing.zig`), scanner calibration (`calibration.zig`) and export.
 - `src/frames/`, `src/scan/`, `src/io/` and `src/looks/` are frame detection, scanners, file
-  formats and fitting looks. `src/presets/` holds the film stocks and the built-in LUTs.
+  formats and fitting looks. `src/presets/` holds the film stocks, the built-in LUT and the list
+  of film looks from other collections (`looks/bundled.zig`), which `src/bake_looks.zig` bakes
+  into the program at build time.
 - `src/app/` is the interface, one file per workspace, and `src/ui/` its controls and theme.
 - `src/main.zig` is the command line.
 

@@ -2,8 +2,9 @@
 //!
 //! - Neutral: Develop's rendering as it is.
 //! - A LUT look: a .cube LUT laid over Neutral's sRGB-encoded output (`cube_lut`). minilab comes
-//!   with one, Frontier emulation (`presets/looks/frontier.cube`), and takes any .cube the user
-//!   imports into the library's Looks folder.
+//!   with Frontier emulation (`presets/looks/frontier.cube`) and the film looks of three free
+//!   collections (`presets/looks/bundled.zig`), and takes any .cube the user imports into the
+//!   library's Looks folder.
 //! - A fitted look from the Looks workspace (`looks.saved`). It takes over from Develop after the
 //!   film base and density stages: the frame is rendered with the Log tone, and the look turns
 //!   that into colour.
@@ -17,6 +18,13 @@ const encode = @import("encode.zig");
 const cube_lut = @import("cube_lut.zig");
 const model = @import("../looks/model.zig");
 const saved = @import("../looks/saved.zig");
+const bundled = @import("../presets/looks/bundled.zig");
+
+/// The bundled looks' LUTs, baked by the build (`bake_looks.zig`).
+const baked = @embedFile("bundled_looks");
+comptime {
+    if (baked.len != bundled.looks.len * bundled.lut_bytes) @compileError("the baked looks don't match bundled.zig");
+}
 
 /// The looks minilab comes with.
 pub const Builtin = enum {
@@ -39,8 +47,8 @@ pub const Builtin = enum {
     }
 };
 
-/// What a frame keeps to name its look: a built-in's name, `cube:` and an imported LUT's name, or
-/// `look:` and a fitted look's folder. Kept in place, so that frame settings copy as values, and
+/// What a frame keeps to name its look: a built-in's name, a bundled look's id (`bundled.Look.id`),
+/// `cube:` and an imported LUT's name, or `look:` and a fitted look's folder. Kept in place, so that frame settings copy as values, and
 /// written to JSON as a string.
 pub const Id = struct {
     bytes: [capacity]u8 = undefined,
@@ -55,6 +63,8 @@ pub const Id = struct {
 
     pub const Kind = union(enum) {
         builtin: Builtin,
+        /// A look from a collection, an index in `bundled.looks`.
+        bundled: usize,
         /// An imported LUT, `<Looks>/<name>.cube`.
         cube: []const u8,
         /// A fitted look, `<Looks>/<name>/`.
@@ -63,6 +73,10 @@ pub const Id = struct {
 
     pub fn builtin(b: Builtin) Id {
         return ofText(@tagName(b)) catch unreachable;
+    }
+
+    pub fn ofBundled(index: usize) Id {
+        return ofText(bundled.looks[index].id) catch unreachable;
     }
 
     pub fn ofCube(name: []const u8) error{NameTooLong}!Id {
@@ -95,6 +109,7 @@ pub const Id = struct {
         const t = id.text();
         if (std.mem.startsWith(u8, t, cube_prefix) and t.len > cube_prefix.len) return .{ .cube = t[cube_prefix.len..] };
         if (std.mem.startsWith(u8, t, fitted_prefix) and t.len > fitted_prefix.len) return .{ .fitted = t[fitted_prefix.len..] };
+        if (bundled.find(t)) |index| return .{ .bundled = index };
         return .{ .builtin = std.meta.stringToEnum(Builtin, t) orelse .neutral };
     }
 
@@ -110,6 +125,7 @@ pub const Id = struct {
     pub fn label(id: *const Id) []const u8 {
         return switch (id.kind()) {
             .builtin => |b| b.label(),
+            .bundled => |index| bundled.looks[index].label,
             .cube, .fitted => |name| name,
         };
     }
@@ -235,6 +251,8 @@ pub const Catalog = struct {
     /// `<library>/Looks`; null without a library, when only the built-in looks are there.
     folder: ?[]u8 = null,
     builtins: std.EnumArray(Builtin, ?*cube_lut.Lut) = .initFill(null),
+    /// The bundled looks decoded so far.
+    bundled_luts: [bundled.looks.len]?*cube_lut.Lut = @splat(null),
     /// The looks read from the folder, by id; null for one that couldn't be read.
     read: std.StringArrayHashMapUnmanaged(?Loaded) = .empty,
 
@@ -248,10 +266,8 @@ pub const Catalog = struct {
     }
 
     pub fn deinit(catalog: *Catalog, gpa: std.mem.Allocator) void {
-        for (&catalog.builtins.values) |*b| if (b.*) |lut| {
-            lut.deinit(gpa);
-            gpa.destroy(lut);
-        };
+        for (&catalog.builtins.values) |b| if (b) |lut| destroyLut(gpa, lut);
+        for (catalog.bundled_luts) |b| if (b) |lut| destroyLut(gpa, lut);
         catalog.forgetAll(gpa);
         catalog.read.deinit(gpa);
         if (catalog.folder) |f| gpa.free(f);
@@ -267,6 +283,14 @@ pub const Catalog = struct {
                 const slot = catalog.builtins.getPtr(b);
                 if (slot.* == null) slot.* = parsed(gpa, file) catch |err| {
                     std.log.err("the built-in look {s} doesn't read: {t}", .{ b.label(), err });
+                    return .neutral;
+                };
+                return .{ .lut = slot.*.? };
+            },
+            .bundled => |index| {
+                const slot = &catalog.bundled_luts[index];
+                if (slot.* == null) slot.* = decoded(gpa, index) catch |err| {
+                    std.log.err("the look {s} doesn't read: {t}", .{ id.label(), err });
                     return .neutral;
                 };
                 return .{ .lut = slot.*.? };
@@ -294,7 +318,7 @@ pub const Catalog = struct {
     fn load(catalog: *Catalog, gpa: std.mem.Allocator, io: std.Io, id: Id) !Loaded {
         const folder = catalog.folder orelse return error.NoLibrary;
         switch (id.kind()) {
-            .builtin => unreachable,
+            .builtin, .bundled => unreachable,
             .cube => |name| {
                 const file = try std.fmt.allocPrint(gpa, "{s}.cube", .{name});
                 defer gpa.free(file);
@@ -322,6 +346,22 @@ pub const Catalog = struct {
         return lut;
     }
 
+    /// The bundled look `index`'s LUT, from the baked file.
+    fn decoded(gpa: std.mem.Allocator, index: usize) !*cube_lut.Lut {
+        const lut = try gpa.create(cube_lut.Lut);
+        errdefer gpa.destroy(lut);
+        const values = try gpa.alloc([3]f32, bundled.lut_values / 3);
+        errdefer gpa.free(values);
+        bundled.decode(baked[index * bundled.lut_bytes ..][0..bundled.lut_bytes], values);
+        lut.* = .{ .title = try gpa.dupe(u8, bundled.looks[index].label), .three = .{ .size = bundled.size, .values = values } };
+        return lut;
+    }
+
+    fn destroyLut(gpa: std.mem.Allocator, lut: *cube_lut.Lut) void {
+        lut.deinit(gpa);
+        gpa.destroy(lut);
+    }
+
     /// Forgets the look `id`, so that it is read again when next asked for: after it changes.
     pub fn forget(catalog: *Catalog, gpa: std.mem.Allocator, id: Id) void {
         const index = catalog.read.getIndex(id.text()) orelse return;
@@ -339,10 +379,7 @@ pub const Catalog = struct {
         gpa.free(key);
         const loaded = value orelse return;
         switch (loaded) {
-            .lut => |lut| {
-                lut.deinit(gpa);
-                gpa.destroy(lut);
-            },
+            .lut => |lut| destroyLut(gpa, lut),
             .fitted => |look| {
                 look.deinit(gpa);
                 gpa.destroy(look);
@@ -355,15 +392,16 @@ pub const Catalog = struct {
         id: Id,
         group: Group,
 
-        pub const Group = enum { builtin, imported, fitted };
+        pub const Group = enum { builtin, bundled, imported, fitted };
     };
 
-    /// Every look there is to choose from: the built-in ones, then imported LUTs and fitted looks
-    /// by name. The caller frees the list.
+    /// Every look there is to choose from: the built-in ones, the bundled ones in their list's
+    /// order, then imported LUTs and fitted looks by name. The caller frees the list.
     pub fn choices(catalog: *const Catalog, gpa: std.mem.Allocator, io: std.Io) !std.ArrayList(Choice) {
         var list: std.ArrayList(Choice) = .empty;
         errdefer list.deinit(gpa);
         for (std.enums.values(Builtin)) |b| try list.append(gpa, .{ .id = .builtin(b), .group = .builtin });
+        for (0..bundled.looks.len) |i| try list.append(gpa, .{ .id = .ofBundled(i), .group = .bundled });
         const folder = catalog.folder orelse return list;
         var dir = std.Io.Dir.cwd().openDir(io, folder, .{ .iterate = true }) catch return list;
         defer dir.close(io);
@@ -497,4 +535,29 @@ test "Frontier emulation leaves neutrals and keeps close to Neutral" {
     look.apply(&green);
     try std.testing.expect(@abs(encode.srgb(green[0][1]) - encode.srgb(0.3)) < 0.05);
     try std.testing.expect(green[0][2] != 0.06);
+}
+
+test "a bundled look's id keeps its look, and every bundled look reads" {
+    const portra = Id.ofBundled(bundled.find("glassmeter:kodak-portra-400").?);
+    try std.testing.expectEqualStrings("glassmeter:kodak-portra-400", portra.text());
+    try std.testing.expectEqualStrings("Kodak Portra 400 · GlassMeter", portra.label());
+    const gpa = std.testing.allocator;
+    const Holder = struct { look: Id = .neutral };
+    const back = try std.json.parseFromSlice(Holder, gpa, "{\"look\":\"glassmeter:kodak-portra-400\"}", .{});
+    defer back.deinit();
+    try std.testing.expect(back.value.look.eql(&portra));
+
+    var catalog: Catalog = try .init(gpa, null);
+    defer catalog.deinit(gpa);
+    for (bundled.looks, 0..) |b, i| {
+        const look = catalog.resolve(gpa, undefined, .ofBundled(i));
+        try std.testing.expect(look == .lut);
+        // A black and white look leaves a colour grey.
+        var pixels = [_][3]f32{ .{ 0.3, 0.1, 0.05 }, .{ 0.05, 0.2, 0.4 } };
+        look.apply(&pixels);
+        for (pixels) |p| {
+            for (p) |v| try std.testing.expect(v >= 0 and v <= 1);
+            if (b.film == .bw) try std.testing.expectApproxEqAbs(p[0], p[2], 0.01);
+        }
+    }
 }

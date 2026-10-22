@@ -23,7 +23,9 @@ const usage =
     \\                                   a frame per frame on it. --flat keeps a shot of the
     \\                                   light with no film as the roll's flat field and divides
     \\                                   the frames by it
-    \\  minilab develop-roll <out folder> <scan>... [--look neutral|frontier|<file.cube>]
+    \\  minilab looks                    list the looks --look takes by name: neutral, frontier and
+    \\                                   the film looks; --look also takes a .cube file
+    \\  minilab develop-roll <out folder> <scan>... [--look <look>]
     \\      [--film colour|bw] [--base r,g,b]
     \\                                   develop scans of one 35mm roll together on one film base
     \\  minilab scan --list              list the scanners
@@ -33,7 +35,7 @@ const usage =
     \\                                   Film) by default; 300 dpi unless --dpi says otherwise
     \\  minilab detect <scan> --dpi <n> [--film colour|bw|slide]
     \\                                   list the 135 frames found on a strip scan, in mm
-    \\  minilab develop <scan> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>]
+    \\  minilab develop <scan> <out.tif|out.ppm> [--look <look>]
     \\      [--film colour|bw]
     \\      [--depth 8|16] [--whole]     a scan of one 35mm frame, or of a strip, whose frames go
     \\                                   to out-1.tif, out-2.tif and so on; --whole keeps all of
@@ -110,7 +112,11 @@ const Options = struct {
 fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog, name: []const u8) !minilab.look.Resolved {
     if (std.mem.eql(u8, name, "neutral")) return .neutral;
     if (std.mem.eql(u8, name, "frontier")) return catalog.resolve(gpa, io, .frontier);
-    if (!std.ascii.endsWithIgnoreCase(name, ".cube")) return error.UnknownLook;
+    if (minilab.bundled_looks.find(name)) |index| return catalog.resolve(gpa, io, .ofBundled(index));
+    if (!isCubeFile(name)) {
+        std.log.err("no look is called {s}: `minilab looks` lists them", .{name});
+        std.process.exit(usage_status);
+    }
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(64 << 20));
     defer gpa.free(bytes);
     const lut = try gpa.create(minilab.cube_lut.Lut);
@@ -118,11 +124,27 @@ fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog,
     return .{ .lut = lut };
 }
 
+/// Frees the look `lookNamed` read from a .cube file; the catalog keeps the others.
 fn freeLook(gpa: std.mem.Allocator, look: minilab.look.Resolved, name: []const u8) void {
-    if (look != .lut or std.mem.eql(u8, name, "frontier")) return;
+    if (look != .lut or !isCubeFile(name)) return;
     const lut: *minilab.cube_lut.Lut = @constCast(look.lut);
     lut.deinit(gpa);
     gpa.destroy(lut);
+}
+
+fn isCubeFile(name: []const u8) bool {
+    return std.ascii.endsWithIgnoreCase(name, ".cube");
+}
+
+/// `minilab looks`: the looks `--look` takes by name, with their names for people.
+fn listLooks(io: std.Io) !void {
+    var buffer: [4096]u8 = undefined;
+    var stdout: std.Io.File.Writer = .initStreaming(.stdout(), io, &buffer);
+    const out = &stdout.interface;
+    const look = minilab.look;
+    for ([_]look.Id{ .neutral, .frontier }) |id| try out.print("{s:<40} {s}\n", .{ id.text(), id.label() });
+    for (minilab.bundled_looks.looks) |b| try out.print("{s:<40} {s}\n", .{ b.id, b.label });
+    try out.flush();
 }
 
 /// `minilab scan`: lists the scanners, or makes one scan into a 16-bit PPM, raw where the
@@ -221,6 +243,7 @@ pub fn main(init: std.process.Init) !void {
     const args = kept.items;
     if (args.len == 2 and std.mem.eql(u8, args[1], "--version")) return printOut(init.io, "minilab " ++ version.string ++ "\n");
     if (args.len == 2 and (std.mem.eql(u8, args[1], "--help") or std.mem.eql(u8, args[1], "-h"))) return printOut(init.io, usage);
+    if (args.len == 2 and std.mem.eql(u8, args[1], "looks")) return listLooks(init.io);
     const library = try defaultLibrary(arena, init.environ_map);
     const home = homeFolder(init.environ_map);
     if (args.len < 2) return app.run(gpa, init.io, .{ .library = library, .home = home });

@@ -29,6 +29,8 @@ const frame_columns = 2;
 const frame_gap = 8;
 const thumb_height = 58;
 const bottom_bar_height = 36;
+/// The tallest a collection's look menu grows before it scrolls.
+const pack_menu_height = 480;
 
 /// What the viewer shows.
 const Compare = enum { split, negative, positive };
@@ -520,21 +522,47 @@ pub const State = struct {
                 group = choice.group;
                 c.ImGui_SeparatorText(switch (group) {
                     .builtin => "Built in",
+                    .bundled => "Film looks",
                     .imported => "Imported LUTs",
                     .fitted => "Fitted looks",
                 });
+                if (group == .bundled) state.drawPacks(frame);
             }
+            // The bundled looks are in their collections' menus.
+            if (group == .bundled) continue;
             c.ImGui_PushIDInt(@intCast(i));
-            if (c.ImGui_SelectableEx(gui.print("{s}", .{choice.id.label()}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) {
-                frame.look = choice.id;
-                state.import_failed = null;
-                state.changed();
-            }
+            if (c.ImGui_SelectableEx(gui.print("{s}", .{choice.id.label()}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, choice.id);
             c.ImGui_PopID();
         }
         c.ImGui_Separator();
         if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("A 3D or 1D LUT that expects sRGB or Rec. 709 input. It's copied into the library's Looks folder.");
+    }
+
+    /// A menu for each collection of bundled looks, its looks grouped by film.
+    fn drawPacks(state: *State, frame: *Frame) void {
+        const bundled = minilab.bundled_looks;
+        for (std.enums.values(bundled.Pack)) |pack| {
+            c.ImGui_SetNextWindowSizeConstraints(gui.vec2(0, 0), gui.vec2(std.math.floatMax(f32), gui.px(pack_menu_height)), null, null);
+            if (!c.ImGui_BeginMenu(gui.print("{s}", .{pack.info().name}).ptr)) continue;
+            defer c.ImGui_EndMenu();
+            var film: ?bundled.Film = null;
+            for (bundled.looks, 0..) |b, i| {
+                if (b.pack != pack) continue;
+                if (film != b.film) {
+                    film = b.film;
+                    c.ImGui_SeparatorText(gui.print("{s}", .{b.film.label()}).ptr);
+                }
+                const id: look.Id = .ofBundled(i);
+                if (c.ImGui_SelectableEx(gui.print("{s}", .{b.name}).ptr, id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, id);
+            }
+        }
+    }
+
+    fn setLook(state: *State, frame: *Frame, id: look.Id) void {
+        frame.look = id;
+        state.import_failed = null;
+        state.changed();
     }
 
     /// The calibration of the roll's scanner for Stock balance: how far along it is, and a button

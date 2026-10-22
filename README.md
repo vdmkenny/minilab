@@ -49,6 +49,9 @@ A look is what follows Develop's settings. Develop's Look drop-down lists them a
 - **Frontier emulation:** the colour of a Fujifilm Frontier scan, as a LUT over Neutral. Tone,
   greys and lightness stay Neutral's; greens lean a little toward teal, skin and skies gain a
   little.
+- **Film looks:** 85 film emulations from three free collections, in a menu each: GlassMeter
+  (30 colour negative, slide and B&W films), t3mujinpack (51) and Street Monochrome (4 B&W looks).
+  Each is a LUT over Neutral. The Looks workspace shows each collection's credit and licence.
 - **Imported LUTs:** any .cube LUT (3D or 1D, any size) that expects sRGB or Rec. 709 input. Import
   one from the Look drop-down or the Looks workspace; it's copied into the library's `Looks`
   folder.
@@ -58,14 +61,16 @@ A look is what follows Develop's settings. Develop's Look drop-down lists them a
 
 ```
 minilab import <roll name> <scan.ppm>... [--library <folder>] [--stock <name>] [--film colour|bw|slide]
-minilab develop <scan.ppm> <out.tif|out.ppm> [--look neutral|frontier|<file.cube>] [--depth 8|16]
-minilab develop-roll <out folder> <scan.ppm>... [--look neutral|frontier|<file.cube>]
+minilab looks
+minilab develop <scan.ppm> <out.tif|out.ppm> [--look <look>] [--depth 8|16]
+minilab develop-roll <out folder> <scan.ppm>... [--look <look>]
 minilab detect <scan.ppm> --dpi <n>
 minilab scan --list
 minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
 ```
 
-`minilab --help` gives every option. Any command takes `--verbose`.
+`minilab --help` gives every option. Any command takes `--verbose`. `--look` takes a look's
+name from `minilab looks`, such as `glassmeter:kodak-portra-400`, or a .cube file.
 
 ## Scanning
 
@@ -80,4 +85,6 @@ base can be measured between the frames.
 minilab is under the Mozilla Public License 2.0 (`LICENSE`). The libraries it builds keep their own
 licences, which the build installs beside the program. LibRaw is linked under the LGPL 2.1, so it
 can be relinked. The film stock presets are our own readings of the makers' datasheets
-(`data/stocks/README.md`).
+(`data/stocks/README.md`). The film looks come from GlassMeter by Glass Works and Street Monochrome
+by Ivan Bogachev, under CC BY 4.0, and t3mujinpack by João Almeida, under the MIT licence. The
+build fetches them and installs their licences and `CREDITS-looks.txt` beside the program.

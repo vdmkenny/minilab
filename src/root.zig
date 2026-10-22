@@ -12,6 +12,8 @@ pub const look = @import("core/look.zig");
 pub const calibration = @import("core/calibration.zig");
 /// .cube LUTs, for looks.
 pub const cube_lut = @import("core/cube_lut.zig");
+/// The film looks minilab carries from free collections.
+pub const bundled_looks = @import("presets/looks/bundled.zig");
 /// Fitting looks to pairs of scans, and the user's saved looks.
 pub const looks = @import("looks/root.zig");
 pub const roll = @import("core/roll.zig");
@@ -29,6 +31,8 @@ pub const scan = @import("scan/root.zig");
 pub const stocks = @import("presets/stocks.zig");
 pub const @"export" = @import("core/export.zig");
 pub const pnm = @import("io/pnm.zig");
+/// PNG, for HaldCLUT images.
+pub const png = @import("io/png.zig");
 /// JPEG, TIFF with compression and profiles, camera RAW, and ICC colour spaces.
 pub const codecs = struct {
     pub const jpeg = @import("io/codecs/jpeg.zig");

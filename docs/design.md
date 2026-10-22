@@ -416,15 +416,25 @@ white balance.
 - **Neutral:** Develop's rendering as it is: the inversion curve and nothing added.
 - **LUT looks:** a .cube LUT (1D, 3D, or a 1D shaper and a 3D LUT, any size and input range)
   laid over Neutral's sRGB-encoded output, read with tetrahedral interpolation. Tone, balance and
-  the rest of Develop's settings still apply. minilab ships one, Frontier emulation (section 10),
-  and the user can import any .cube that expects sRGB or Rec. 709 input. Imported LUTs are copied
-  into the library's `Looks/` folder.
+  the rest of Develop's settings still apply. minilab ships Frontier emulation (section 10)
+  and the film looks below, and the user can import any .cube that expects sRGB or Rec. 709
+  input. Imported LUTs are copied into the library's `Looks/` folder.
+- **Film looks:** 85 LUTs from three free collections, listed in
+  `src/presets/looks/bundled.zig` with each one's film, name and file: GlassMeter (CC BY 4.0, 30
+  33³ .cube files), t3mujinpack (MIT, 51 HaldCLUT PNGs at 144³) and Street Monochrome (CC BY
+  4.0, four 64³ .cube files). `build.zig.zon` fetches the collections at pinned commits, and
+  `src/bake_looks.zig`, run by the build, samples every look at 33³ with tetrahedral
+  interpolation and writes the tables as 16-bit values into one file (18 MB) that the core
+  embeds. A table is decoded the first time a frame uses it. Develop's Look menu has a submenu
+  per collection, grouped by film; the Looks workspace shows each collection's credit, licence
+  and changes.
 - **Fitted looks:** made in the Looks workspace from pairs of our raw scans and a lab's scans of
   the same negatives. They take over after the film base and density stages: curves, a density
   matrix and an optional 3D LUT. Tone and the inversion settings don't apply to them.
 
-A frame keeps its look by name (`neutral`, `frontier`, `cube:<name>` or `look:<name>`). A look
-that can't be read develops as Neutral, with a warning.
+A frame keeps its look by name (`neutral`, `frontier`, `<collection>:<look>` such as
+`glassmeter:kodak-portra-400`, `cube:<name>` or `look:<name>`). A film look's name never changes
+once released. A look that can't be read develops as Neutral, with a warning.
 
 **Tone profile:** standard, soft, hard, linear, log. Parametric curves, defined in the docs.
 
@@ -514,6 +524,9 @@ ourselves in Zig: we only need a handful of tags, and exiv2, the usual library, 
 | LibRaw | camera RAW | LGPL-2.1 or CDDL-1.0 (minilab takes LGPL-2.1) |
 | libtiff, libjpeg-turbo, little-cms2, zlib | file I/O, colour management | BSD-like, BSD/IJG, MIT, zlib |
 | driver repo: `tools/imgcompare`, test data | registration approach; our V200 scans as test inputs | ours |
+| GlassMeter Film Looks (Glass Works) | 30 film looks, baked in | CC BY 4.0 |
+| t3mujinpack (João Almeida) | 51 film looks, baked in | MIT |
+| Street Monochrome (Ivan Bogachev) | 4 B&W looks, baked in | CC BY 4.0 |
 
 `build.zig.zon` fetches all of these at pinned versions and `zig build` builds the C and C++ ones,
 as in openreliant-editor and OpenReliant:
@@ -545,12 +558,18 @@ What that rules out, and how minilab keeps to it:
 The Frontier emulation LUT is minilab's own transform of the colour cube's numbers from the
 Frontier software (section 10). None of Fujifilm's code or other tables are in the repository.
 
+The film looks are under CC BY 4.0 and MIT, which allow them in minilab on two conditions: the
+credit and licence go with them, and for CC BY, what we changed is said. The build installs each
+collection's licence and `CREDITS-looks.txt` (credit, source and changes, from `bundled.zig`)
+beside the program, and the Looks workspace shows the same. The collections' files aren't in the
+repository; the build fetches them.
+
 ## 14. Build, platforms, tests
 
 - **Build.** `zig build`, `zig build test`, `zig build run`, and `zig build check` for fast
   compile errors. A Makefile wraps them with `make help`, as in the editor. The first build
-  fetches and builds every library. Nothing is needed from Homebrew or apt except SANE itself,
-  for scanning.
+  fetches and builds every library, and fetches and bakes the film looks. Nothing is needed from
+  Homebrew or apt except SANE itself, for scanning.
 - **Platforms.** macOS arm64/x86_64, Linux x86_64/arm64 and Windows x86_64. All of them can be
   cross-compiled from the Mac, as the editor is. Scanning on Windows can only be tried on a
   Windows machine.

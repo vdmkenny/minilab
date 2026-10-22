@@ -1,5 +1,6 @@
 const std = @import("std");
 const Translator = @import("translate_c").Translator;
+const bundled = @import("src/presets/looks/bundled.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -19,6 +20,8 @@ pub fn build(b: *std.Build) void {
             .{ .name = "codecs", .module = codecs.module("codecs") },
         },
     });
+    const looks = bakeLooks(b);
+    core.addAnonymousImport("bundled_looks", .{ .root_source_file = looks.baked });
 
     // Building for a Mac other than the host, SDL and the app need the SDK's paths: from xcrun.
     const macos_sdk: ?[]const u8 = if (target.result.os.tag == .macos and !target.query.isNative())
@@ -81,6 +84,7 @@ pub fn build(b: *std.Build) void {
     const tests = b.step("test", "Run tests");
     tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = core })).step);
     tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = app })).step);
+    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = looks.tool })).step);
 
     // `zig build check` compiles the program and the tests without linking them:
     // `zig build check -fincremental --watch` reports errors within moments of a save.
@@ -143,6 +147,39 @@ fn interfaceIncludes(b: *std.Build) [4]std.Build.LazyPath {
     const imgui = b.dependency("imgui", .{});
     const bindings = b.dependency("dear_bindings", .{});
     return .{ imgui.path("."), imgui.path("backends"), bindings.path("."), bindings.path("backends") };
+}
+
+/// The looks from other people's collections (`src/presets/looks/bundled.zig`): each collection
+/// fetched, its looks baked into one file for the core to embed, and its licence and credit
+/// installed.
+fn bakeLooks(b: *std.Build) struct { baked: std.Build.LazyPath, tool: *std.Build.Module } {
+    // The tool runs on this machine as part of the build, so it's always optimised.
+    const tool = b.createModule(.{
+        .root_source_file = b.path("src/bake_looks.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseFast,
+    });
+    const run = b.addRunArtifact(b.addExecutable(.{ .name = "bake_looks", .root_module = tool }));
+    const baked = run.addOutputFileArg("looks.bin");
+    var credits: std.ArrayList([]const u8) = .empty;
+    credits.append(b.allocator, "The film looks minilab carries come from these collections. Each one's licence is\ninstalled beside this file, as LICENSE-<collection>.txt.\n") catch @panic("out of memory");
+    for (std.enums.values(bundled.Pack)) |pack| {
+        const info = pack.info();
+        credits.append(b.allocator, b.fmt("\n{s}, by {s}\n  {s}\n  Licence: {s}\n  Source: {s}\n  Changes: {s}\n", .{
+            info.name, info.author, info.credit, info.licence, info.url, info.changes,
+        })) catch @panic("out of memory");
+        const collection = b.dependency(@tagName(pack), .{});
+        run.addDirectoryArg(collection.path("."));
+        const licence: []const u8, const installed: []const u8 = switch (pack) {
+            .glassmeter => .{ "LICENSE", "LICENSE-glassmeter.txt" },
+            .t3mujinpack => .{ "LICENSE.txt", "LICENSE-t3mujinpack.txt" },
+            .street_monochrome => .{ "LICENSE", "LICENSE-street-monochrome.txt" },
+        };
+        b.getInstallStep().dependOn(&b.addInstallFile(collection.path(licence), installed).step);
+    }
+    const credits_file = b.addWriteFiles().add("CREDITS-looks.txt", std.mem.concat(b.allocator, u8, credits.items) catch @panic("out of memory"));
+    b.getInstallStep().dependOn(&b.addInstallFile(credits_file, "CREDITS-looks.txt").step);
+    return .{ .baked = baked, .tool = tool };
 }
 
 /// The fonts the app carries: IBM Plex Sans for the interface and JetBrains Mono for values.

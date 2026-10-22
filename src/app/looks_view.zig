@@ -16,6 +16,7 @@ const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const Library = @import("library.zig").Library;
+const bundled = minilab.bundled_looks;
 const looks = minilab.looks;
 
 const draft = looks.draft;
@@ -35,6 +36,10 @@ const main_padding_y = 16;
 const model_padding = 16;
 const table_min_width = 620;
 const figure_gap = 12;
+/// The labels' column beside a collection's credit and license.
+const pack_label_width = 90;
+/// Room for one film's look names in a collection, comma-separated.
+const pack_names_bytes = 2048;
 /// The figures are 3:2.
 const figure_ratio = 2.0 / 3.0;
 /// The figures' images, at most this many pixels across.
@@ -48,6 +53,8 @@ const poor_quality = 0.5;
 const Selected = union(enum) {
     neutral,
     frontier,
+    /// A collection of bundled looks.
+    pack: bundled.Pack,
     /// An imported LUT, an index in `State.imported`.
     imported: usize,
     own: usize,
@@ -856,7 +863,7 @@ fn drawList(state: *State, ctx: context.Context) void {
     const item_height = gui.px(8 + 8 + 1) + line(13) + line(12) + 2;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
         .{ .neutral, "Neutral", "Built in · inversion curve" },
-        .{ .frontier, "Frontier emulation", "Built in · colour LUT" },
+        .{ .frontier, "Frontier emulation", "Built in · color LUT" },
     };
     for (built_in, 0..) |b, i| {
         c.ImGui_PushIDInt(@intCast(i));
@@ -864,8 +871,17 @@ fn drawList(state: *State, ctx: context.Context) void {
         c.ImGui_PopID();
         y += item_height + gui.px(6);
     }
-    for (state.imported.items, 0..) |*id, i| {
+    const packs = comptime std.enums.values(bundled.Pack);
+    for (packs, 0..) |pack, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len));
+        const info = pack.info();
+        const source = gui.print("{d} film looks · {s}", .{ packLooks(pack), info.licence });
+        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, info.name, source, std.meta.eql(state.selected, .{ .pack = pack }))) select(state, .{ .pack = pack });
+        c.ImGui_PopID();
+        y += item_height + gui.px(6);
+    }
+    for (state.imported.items, 0..) |*id, i| {
+        c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len));
         const selected = switch (state.selected) {
             .imported => |s| s == i,
             else => false,
@@ -875,7 +891,7 @@ fn drawList(state: *State, ctx: context.Context) void {
         y += item_height + gui.px(6);
     }
     for (state.own.items, 0..) |*own, i| {
-        c.ImGui_PushIDInt(@intCast(i + built_in.len + state.imported.items.len));
+        c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len + state.imported.items.len));
         const source = gui.print("{s} · {s}", .{ own.status(), own.references.short() });
         const selected = switch (state.selected) {
             .own => |s| s == i,
@@ -964,6 +980,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
     const title: []const u8, const badge: []const u8, const description: []const u8 = switch (state.selected) {
         .neutral => .{ "Neutral", "Built in", "minilab's own inversion: density above the film base, a density matrix, then the inversion curve. Nothing is added to the colour." },
         .frontier => .{ "Frontier emulation", "Built in", "The Fujifilm Frontier's colour, from the colour cube in its scanning software at its standard saturation, as a LUT over Neutral. Tone, neutrals and lightness stay Neutral's: greens lean a little toward teal, and skin, skies and yellows gain a little." },
+        .pack => |p| .{ p.info().name, "Film looks", p.info().about },
         .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "A LUT laid over Neutral's sRGB output: tone and balance come from Develop, then the LUT. It should expect sRGB or Rec. 709 input." },
         .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), switch (state.own.items[i].references) {
             .frontier_software => "What the Frontier's scanning software does to a negative, measured from its output and kept as small functions and a LUT.",
@@ -1000,6 +1017,11 @@ fn drawMain(state: *State, ctx: context.Context) void {
 
     const look = switch (state.selected) {
         .own => |i| i,
+        .pack => |p| {
+            y += gui.px(14);
+            drawPack(list, gui.vec2(origin.x, y), width, p);
+            return;
+        },
         .imported => |i| {
             y += gui.px(14);
             c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, y));
@@ -1020,6 +1042,50 @@ fn drawMain(state: *State, ctx: context.Context) void {
     y = drawTable(state, ctx, own, gui.vec2(origin.x, y), width);
     y += gui.px(14);
     drawFigures(state, own, gui.vec2(origin.x, y), width);
+}
+
+/// How many looks the collection `pack` has.
+fn packLooks(pack: bundled.Pack) usize {
+    var count: usize = 0;
+    for (bundled.looks) |b| count += @intFromBool(b.pack == pack);
+    return count;
+}
+
+/// A collection's credit, license and changes, then its looks by film.
+fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) void {
+    const info = pack.info();
+    var y = at.y;
+    const label_width = gui.px(pack_label_width);
+    const rows = [_][2][]const u8{
+        .{ "Credit", info.credit },
+        .{ "License", info.licence },
+        .{ "Source", info.url },
+        .{ "Changes", info.changes },
+    };
+    for (rows) |row| {
+        textIn(list, gui.vec2(at.x, y), line(13), theme.text_secondary, row[0]);
+        y += @max(line(13), paragraph(list, gui.vec2(at.x + label_width, y + (line(13) - c.ImGui_GetFontSize() * 1.4) / 2), width - label_width, theme.text, row[1]));
+        y += gui.px(4);
+    }
+    for (std.enums.values(bundled.Film)) |film| {
+        var names: [pack_names_bytes]u8 = undefined;
+        var writer: std.Io.Writer = .fixed(&names);
+        var count: usize = 0;
+        for (bundled.looks) |b| {
+            if (b.pack != pack or b.film != film) continue;
+            writer.print("{s}{s}", .{ if (count > 0) ", " else "", b.name }) catch break;
+            count += 1;
+        }
+        if (count == 0) continue;
+        y += gui.px(14);
+        fonts.pushSized(.semibold, 12);
+        textIn(list, gui.vec2(at.x, y), line(12), theme.text_secondary, gui.print("{s} · {d}", .{ film.label(), count }));
+        fonts.pop();
+        y += line(12) + gui.px(4);
+        y += paragraph(list, gui.vec2(at.x, y), width, theme.text_tertiary, writer.buffered());
+    }
+    y += gui.px(14);
+    _ = paragraph(list, gui.vec2(at.x, y), width, theme.text_tertiary, "Choose one in Develop's Look menu, under Film looks. Each is a LUT laid over Neutral, like an imported one.");
 }
 
 fn drawRename(state: *State, ctx: context.Context) void {
@@ -1306,6 +1372,13 @@ fn drawModel(state: *State, ctx: context.Context) void {
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
                 .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
                 .{ "Frontier colour LUT", "33³, on Neutral's sRGB output: the Frontier cube's colour at its standard saturation, with Neutral's lightness kept" },
+            });
+            return;
+        },
+        .pack => |p| {
+            _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
+                .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
+                .{ gui.print("{s} LUT", .{p.info().name}), gui.print("{d}³, on Neutral's sRGB output", .{bundled.size}) },
             });
             return;
         },
