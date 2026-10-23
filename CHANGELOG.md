@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/vdmkenny/minilab/compare/v0.2.0...v0.3.0) (2026-10-23)
+
+
+### Features
+
+* Glass plates and lantern slides as formats ([#37](https://github.com/vdmkenny/minilab/issues/37)) ([c7ff0cd](https://github.com/vdmkenny/minilab/commit/c7ff0cdb59f48398043b079e46076636402920c3))
+* Raw scans on scanners without a profile, with scanner settings ([#20](https://github.com/vdmkenny/minilab/issues/20)) ([c402323](https://github.com/vdmkenny/minilab/commit/c402323003963146bf67f2d3ec5975f1a245b8e4))
+* Resolution menu with the scanner's raw resolutions ([#38](https://github.com/vdmkenny/minilab/issues/38)) ([d79b56c](https://github.com/vdmkenny/minilab/commit/d79b56c15a7b1bea50a3b5f353948b75c505054b))
+* Scanner drivers included in the Mac download ([#16](https://github.com/vdmkenny/minilab/issues/16)) ([b46f167](https://github.com/vdmkenny/minilab/commit/b46f1671eb2fabf5ddd1df7c03428463141c1f40))
+
+
+### Fixes
+
+* Bugs from a review of the code ([#21](https://github.com/vdmkenny/minilab/issues/21)) ([474a24e](https://github.com/vdmkenny/minilab/commit/474a24e6246811863457c01307af339ae41c4e55))
+* Drop-down lists with room between rows, and Develop opens on Positive ([#39](https://github.com/vdmkenny/minilab/issues/39)) ([3083719](https://github.com/vdmkenny/minilab/commit/3083719487b330bff3f562b4b0a1f35ea11c1201))
+* Odd files and drivers can't crash the app, and errors aren't dropped ([#29](https://github.com/vdmkenny/minilab/issues/29)) ([e1c4db9](https://github.com/vdmkenny/minilab/commit/e1c4db9984bcd482a148f155ab0994895c2a3972)), closes [#26](https://github.com/vdmkenny/minilab/issues/26)
+* On-screen text as short labels ([#32](https://github.com/vdmkenny/minilab/issues/32)) ([5897e0b](https://github.com/vdmkenny/minilab/commit/5897e0bb74e6057cb29addbe56adb6c7f0c32342)), closes [#25](https://github.com/vdmkenny/minilab/issues/25)
+
 ## [0.2.0](https://github.com/vdmkenny/minilab/compare/v0.1.0...v0.2.0) (2026-10-23)
 
 
