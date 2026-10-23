@@ -120,6 +120,9 @@ const crop_line = 1.5;
 const crop_corner_arm = 14;
 const crop_corner_stroke = 3;
 const crop_note_inset = 8;
+/// How dark the picture is outside the crop, and how light the lines in thirds are.
+const crop_shade = 0.7;
+const thirds_alpha = 0.35;
 /// The settings column: the gaps between its rows, between slider rows, and above Inversion.
 const row_gap_x = 10;
 const row_gap = 8;
@@ -188,6 +191,55 @@ const CropEdit = struct {
     aspect: f32 = 1,
 
     const Grip = enum { box, top_left, top_right, bottom_right, bottom_left };
+    /// The corners, clockwise from the top left, in the order `corners` gives them.
+    const corner_grips = [_]Grip{ .top_left, .top_right, .bottom_right, .bottom_left };
+
+    fn corners(edit: CropEdit) [4][2]f32 {
+        return .{ .{ edit.min[0], edit.min[1] }, .{ edit.max[0], edit.min[1] }, .{ edit.max[0], edit.max[1] }, .{ edit.min[0], edit.max[1] } };
+    }
+
+    /// What a drag starting at `p` would move: a corner within `reach` of it, or else the box if
+    /// `p` is inside it.
+    fn gripAt(edit: CropEdit, p: [2]f32, reach: f32) ?Grip {
+        var under: ?Grip = null;
+        for (corner_grips, edit.corners()) |grip, corner| {
+            if (@abs(p[0] - corner[0]) < reach and @abs(p[1] - corner[1]) < reach) under = grip;
+        }
+        if (under == null and p[0] > edit.min[0] and p[0] < edit.max[0] and p[1] > edit.min[1] and p[1] < edit.max[1]) under = .box;
+        return under;
+    }
+
+    /// Moves the box by `delta`, but not off an image `size` big.
+    fn move(edit: *CropEdit, delta: [2]f32, size: [2]f32) void {
+        for (0..2) |axis| {
+            const moved = std.math.clamp(delta[axis], -edit.min[axis], size[axis] - edit.max[axis]);
+            edit.min[axis] += moved;
+            edit.max[axis] += moved;
+        }
+    }
+
+    /// Moves corner `grip` towards `p`, keeping the opposite corner where it is and the format's
+    /// shape (`ratio`) the way up the box already is. The box stays on an image `size` big, and
+    /// no smaller than `min_crop`.
+    fn dragCorner(edit: *CropEdit, grip: Grip, p: [2]f32, size: [2]f32, ratio: f32) void {
+        const index = std.mem.indexOfScalar(Grip, &corner_grips, grip) orelse return;
+        const fixed = edit.corners()[(index + 2) % 4];
+        const to = [2]f32{ std.math.clamp(p[0], 0, size[0]), std.math.clamp(p[1], 0, size[1]) };
+        const aspect = if (edit.aspect >= 1) @max(ratio, 1 / ratio) else @min(ratio, 1 / ratio);
+        var w = @max(@abs(to[0] - fixed[0]), min_crop);
+        var h = @max(@abs(to[1] - fixed[1]), min_crop);
+        if (w / h > aspect) w = h * aspect else h = w / aspect;
+        // Grow towards the mouse, unless the fixed corner is against that edge of the image.
+        // Then the box grows the other way instead, so it never shrinks to nothing.
+        const right = if (to[0] >= fixed[0]) size[0] - fixed[0] >= min_crop else fixed[0] < min_crop;
+        const down = if (to[1] >= fixed[1]) size[1] - fixed[1] >= min_crop else fixed[1] < min_crop;
+        // Keep the box on the image.
+        w = @max(@min(w, if (right) size[0] - fixed[0] else fixed[0]), @min(min_crop, size[0]));
+        h = @max(@min(h, if (down) size[1] - fixed[1] else fixed[1]), @min(min_crop, size[1]));
+        if (w / h > aspect) w = h * aspect else h = w / aspect;
+        edit.min = .{ if (right) fixed[0] else fixed[0] - w, if (down) fixed[1] else fixed[1] - h };
+        edit.max = .{ edit.min[0] + w, edit.min[1] + h };
+    }
 };
 
 /// How many changes undo can go back through.
@@ -489,7 +541,7 @@ pub const State = struct {
     /// frame if there's no crop yet.
     fn startCrop(state: *State, gpa: std.mem.Allocator, library: *const Library) !void {
         const frame = if (state.frame) |*f| f else return;
-        const area = frame.crop orelse frame.detect(gpa, state.format(library), state.dpi(library)) catch fallbackCrop(frame, state.format(library));
+        const area = frame.crop orelse frame.detect(gpa, state.format(library), state.dpi(library)) catch fallbackCrop(frame.scan_width, frame.scan_height, state.format(library));
         const turns = frame.quarter_turns;
         const mirrored = frame.mirrored;
         const before = frame.crop;
@@ -933,9 +985,7 @@ fn oppositeTurns(quarter_turns: u2) u2 {
 
 /// The crop to use when detection finds no frame: the format's shape at the scan's full extent
 /// across the film (the film runs along the scan's longer side), centred.
-fn fallbackCrop(frame: *const Frame, format: minilab.formats.Format) minilab.image.Area {
-    const w = frame.scan_width;
-    const h = frame.scan_height;
+fn fallbackCrop(w: usize, h: usize, format: minilab.formats.Format) minilab.image.Area {
     const ratio = format.ratio();
     if (w >= h) {
         const width = @min(w, @as(usize, @intFromFloat(@as(f32, @floatFromInt(h)) * ratio)));
@@ -1440,14 +1490,7 @@ const min_crop = 16;
 fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, size: [2]f32, hovered: bool, active: bool, ratio: f32) void {
     const mouse = c.ImGui_GetMousePos();
     const p = [2]f32{ (mouse.x - origin.x) / scale, (mouse.y - origin.y) / scale };
-    const reach = gui.px(crop_reach) / scale;
-    const grips = [_]CropEdit.Grip{ .top_left, .top_right, .bottom_right, .bottom_left };
-    const corners = [_][2]f32{ .{ edit.min[0], edit.min[1] }, .{ edit.max[0], edit.min[1] }, .{ edit.max[0], edit.max[1] }, .{ edit.min[0], edit.max[1] } };
-    var under: ?CropEdit.Grip = null;
-    for (grips, corners) |grip, corner| {
-        if (@abs(p[0] - corner[0]) < reach and @abs(p[1] - corner[1]) < reach) under = grip;
-    }
-    if (under == null and p[0] > edit.min[0] and p[0] < edit.max[0] and p[1] > edit.min[1] and p[1] < edit.max[1]) under = .box;
+    const under = edit.gripAt(p, gui.px(crop_reach) / scale);
     if (hovered and c.ImGui_IsMouseClicked(0)) {
         edit.grip = under;
         edit.aspect = (edit.max[0] - edit.min[0]) / @max(1, edit.max[1] - edit.min[1]);
@@ -1463,45 +1506,20 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     if (edit.grip) |grip| if (c.ImGui_IsMouseDragging(0, 0)) switch (grip) {
         .box => {
             const delta = c.ImGui_GetIO().*.MouseDelta;
-            for (0..2) |axis| {
-                const d = (if (axis == 0) delta.x else delta.y) / scale;
-                const moved = std.math.clamp(d, -edit.min[axis], size[axis] - edit.max[axis]);
-                edit.min[axis] += moved;
-                edit.max[axis] += moved;
-            }
+            edit.move(.{ delta.x / scale, delta.y / scale }, size);
         },
-        else => {
-            // The opposite corner stays put, and the dragged one follows the mouse, keeping the
-            // shape.
-            const index = std.mem.indexOfScalar(CropEdit.Grip, &grips, grip).?;
-            const fixed = corners[(index + 2) % 4];
-            const to = [2]f32{ std.math.clamp(p[0], 0, size[0]), std.math.clamp(p[1], 0, size[1]) };
-            const aspect = if (edit.aspect >= 1) @max(ratio, 1 / ratio) else @min(ratio, 1 / ratio);
-            var w = @max(@abs(to[0] - fixed[0]), min_crop);
-            var h = @max(@abs(to[1] - fixed[1]), min_crop);
-            if (w / h > aspect) w = h * aspect else h = w / aspect;
-            // Grow towards the mouse, unless the fixed corner is against that edge of the image.
-            // Then the box grows the other way instead, so it never shrinks to nothing.
-            const right = if (to[0] >= fixed[0]) size[0] - fixed[0] >= min_crop else fixed[0] < min_crop;
-            const down = if (to[1] >= fixed[1]) size[1] - fixed[1] >= min_crop else fixed[1] < min_crop;
-            // Keep the box on the image.
-            w = @max(@min(w, if (right) size[0] - fixed[0] else fixed[0]), @min(min_crop, size[0]));
-            h = @max(@min(h, if (down) size[1] - fixed[1] else fixed[1]), @min(min_crop, size[1]));
-            if (w / h > aspect) w = h * aspect else h = w / aspect;
-            edit.min = .{ if (right) fixed[0] else fixed[0] - w, if (down) fixed[1] else fixed[1] - h };
-            edit.max = .{ edit.min[0] + w, edit.min[1] + h };
-        },
+        .top_left, .top_right, .bottom_right, .bottom_left => edit.dragCorner(grip, p, size, ratio),
     };
 
     const box_min = gui.vec2(origin.x + edit.min[0] * scale, origin.y + edit.min[1] * scale);
     const box_max = gui.vec2(origin.x + edit.max[0] * scale, origin.y + edit.max[1] * scale);
     const image_max = gui.vec2(origin.x + size[0] * scale, origin.y + size[1] * scale);
-    const shade = theme.imU32(theme.withAlpha(theme.header, 0.7));
+    const shade = theme.imU32(theme.withAlpha(theme.header, crop_shade));
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(image_max.x, box_min.y), shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, box_max.y), image_max, shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, box_min.y), gui.vec2(box_min.x, box_max.y), shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(box_max.x, box_min.y), gui.vec2(image_max.x, box_max.y), shade);
-    const thirds = theme.imU32(theme.withAlpha(theme.text, 0.35));
+    const thirds = theme.imU32(theme.withAlpha(theme.text, thirds_alpha));
     for ([_]f32{ 1.0 / 3.0, 2.0 / 3.0 }) |t| {
         const x = box_min.x + (box_max.x - box_min.x) * t;
         const y = box_min.y + (box_max.y - box_min.y) * t;
@@ -2031,4 +2049,49 @@ fn prepareStock(library: *const Library, rl: *const roll.Roll, frame: *Frame, ki
     frame.settings.stock_curves = library.stockCurves(rl, kind);
     frame.stock_slopes = library.stockSlopes(rl);
     if (frame.stock_slopes != null and frame.settings.white_balance == .auto_neutral) frame.settings.white_balance = .stock;
+}
+
+test "undo keeps the last changes, and drops the oldest when it's full" {
+    var history: History = .{};
+    try std.testing.expectEqual(@as(?Snapshot, null), history.pop());
+    for (0..history_depth + 2) |i| {
+        var snapshot: Snapshot = .{ .look = .neutral, .settings = .{} };
+        snapshot.settings.exposure = @floatFromInt(i);
+        history.push(snapshot);
+    }
+    try std.testing.expectEqual(@as(usize, history_depth), history.len);
+    try std.testing.expectEqual(@as(f32, history_depth + 1), history.pop().?.settings.exposure);
+    try std.testing.expectEqual(@as(f32, 2), history.items[0].settings.exposure);
+}
+
+test "with no frame found, the crop is the format's shape across the film" {
+    const format = minilab.formats.Standard.@"135_full_frame".format();
+    try std.testing.expectEqual(minilab.image.Area{ .x = 50, .y = 0, .width = 600, .height = 400 }, fallbackCrop(700, 400, format));
+    try std.testing.expectEqual(minilab.image.Area{ .x = 0, .y = 50, .width = 400, .height = 600 }, fallbackCrop(400, 700, format));
+    try std.testing.expectEqual(minilab.image.Area{ .x = 0, .y = 0, .width = 500, .height = 400 }, fallbackCrop(500, 400, format));
+}
+
+test "the crop box is grabbed by its corners or inside, and stays on the picture" {
+    const size = [2]f32{ 1000, 600 };
+    var edit: CropEdit = .{ .min = .{ 100, 100 }, .max = .{ 400, 300 }, .before = null, .turns = 0, .mirrored = false };
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .top_left), edit.gripAt(.{ 104, 97 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .bottom_right), edit.gripAt(.{ 395, 305 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .box), edit.gripAt(.{ 250, 200 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, null), edit.gripAt(.{ 600, 200 }, 10));
+
+    edit.move(.{ -500, 50 }, size);
+    try std.testing.expectEqual([2]f32{ 0, 150 }, edit.min);
+    try std.testing.expectEqual([2]f32{ 300, 350 }, edit.max);
+}
+
+test "dragging a crop corner keeps the opposite one and the format's shape" {
+    const size = [2]f32{ 1000, 600 };
+    var edit: CropEdit = .{ .min = .{ 100, 100 }, .max = .{ 400, 300 }, .before = null, .turns = 0, .mirrored = false, .aspect = 1.5 };
+    edit.dragCorner(.bottom_right, .{ 700, 700 }, size, 1.5);
+    try std.testing.expectEqual([2]f32{ 100, 100 }, edit.min);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.5), (edit.max[0] - edit.min[0]) / (edit.max[1] - edit.min[1]), 1e-4);
+    try std.testing.expect(edit.max[1] <= size[1]);
+    // A drag onto the fixed corner leaves the smallest box, its long side `min_crop`.
+    edit.dragCorner(.bottom_right, edit.min, size, 1.5);
+    try std.testing.expectApproxEqAbs(@as(f32, min_crop), edit.max[0] - edit.min[0], 1e-4);
 }

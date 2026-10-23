@@ -2035,3 +2035,31 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
 test {
     _ = looks;
 }
+
+test "a look's pairs, readings and balances stay in step" {
+    const gpa = std.testing.allocator;
+    var own: Own = .{ .name = try gpa.dupe(u8, "Look 1"), .path = try gpa.dupe(u8, "/Looks/Look 1"), .saved = false, .arena = .init(gpa) };
+    defer own.deinit(gpa);
+    try own.append(gpa, .{ .ours = "/Rolls/a.ppm", .label = "a", .theirs = "/refs/a.jpg" });
+    try own.append(gpa, .{ .ours = "/Rolls/b.ppm", .label = "b", .theirs = "/refs/b.jpg", .held_out = true });
+    try std.testing.expectEqual(@as(usize, 2), own.unread());
+    try std.testing.expectEqual(@as(usize, 1), own.heldOut());
+    own.remove(gpa, 0);
+    try std.testing.expectEqual(@as(usize, 1), own.pairs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), own.readings.items.len);
+    try std.testing.expectEqual(@as(usize, 1), own.balance.items.len);
+    try std.testing.expectEqualStrings("b", own.pairs.items[0].label);
+}
+
+test "the difference map runs from near black through amber to red" {
+    try std.testing.expectEqual(theme.rgba8(theme.histogram_ground), ramp(0));
+    try std.testing.expectEqual(theme.rgba8(theme.accent), ramp(6));
+    try std.testing.expectEqual(theme.rgba8(theme.red), ramp(30));
+}
+
+test "the stock column leaves out the maker" {
+    try std.testing.expectEqualStrings("Portra 400", stockName("Kodak Portra 400"));
+    try std.testing.expectEqualStrings("Superia X-TRA 400", stockName("Fujifilm Superia X-TRA 400"));
+    try std.testing.expectEqualStrings("Rollei RPX 400", stockName("Rollei RPX 400"));
+    try std.testing.expectEqualStrings("None", stockName(null));
+}

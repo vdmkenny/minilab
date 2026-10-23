@@ -624,3 +624,40 @@ test "a bundled look's id keeps its look, and every bundled look reads" {
         }
     }
 }
+
+test "an imported LUT is copied into the library, listed, read, and removed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    // The identity, two points a side.
+    const cube = "LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "Warm.cube", .data = cube });
+    const source = try std.fs.path.join(gpa, &.{ library, "Warm.cube" });
+    defer gpa.free(source);
+
+    var catalog: Catalog = try .init(gpa, library);
+    defer catalog.deinit(gpa);
+    const id = try catalog.import(gpa, io, source);
+    try std.testing.expectEqualStrings("cube:Warm", id.text());
+    // A second copy gets a name of its own.
+    const again = try catalog.import(gpa, io, source);
+    try std.testing.expectEqualStrings("cube:Warm 2", again.text());
+
+    var listed = try catalog.choices(gpa, io);
+    defer listed.deinit(gpa);
+    var imported: usize = 0;
+    for (listed.items) |choice| imported += @intFromBool(choice.group == .imported);
+    try std.testing.expectEqual(@as(usize, 2), imported);
+
+    try std.testing.expect(try catalog.resolve(gpa, io, id) == .lut);
+    try catalog.remove(gpa, io, id);
+    try std.testing.expect(try catalog.resolve(gpa, io, id) == .neutral);
+    try std.testing.expectError(error.NotImported, catalog.remove(gpa, io, .frontier));
+
+    var no_library: Catalog = try .init(gpa, null);
+    defer no_library.deinit(gpa);
+    try std.testing.expectError(error.NoLibrary, no_library.import(gpa, io, source));
+}

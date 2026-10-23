@@ -2398,3 +2398,105 @@ test "a box moved past its neighbours goes back in order, still selected" {
     try std.testing.expectEqual(@as(?usize, 3), state.selected);
     try std.testing.expect(state.boxes_dirty);
 }
+
+/// A preview 300 dpi, of a strip that runs down the scanner, for the tests.
+const test_preview: Preview = .{
+    .scan = .{ .width = 390, .height = 2886, .pixels = &.{} },
+    .dpi = .{ 300, 300 },
+    .area = default_film_area,
+    .axis = .y,
+    .opening = 300,
+    .opening_middle = 195,
+};
+
+test "a box takes the opening's height and its shape's length" {
+    const format = formats.Standard.@"135_full_frame".format();
+    var box: Box = .{ .along = 500, .across = 100, .length = 10, .height = 10 };
+    reshape(&box, &test_preview, format);
+    try std.testing.expectEqual(@as(f32, 300), box.height);
+    try std.testing.expectEqual(@as(f32, 195), box.across);
+    try std.testing.expectEqual(@as(f32, 450), box.length);
+    box.shape = .custom;
+    box.ratio = 1;
+    reshape(&box, &test_preview, format);
+    try std.testing.expectEqual(@as(f32, 300), box.length);
+    box.shape = .free;
+    box.length = 123;
+    reshape(&box, &test_preview, format);
+    try std.testing.expectEqual(@as(f32, 123), box.length);
+}
+
+test "a detected frame becomes a box along the strip, marked when it's in doubt" {
+    const format = formats.Standard.@"135_full_frame".format();
+    const confident = boxOf(.{ .index = 0, .area = .{ .x = 10, .y = 100, .width = 240, .height = 360 }, .rotation_degrees = 0.5, .confidence = .confident }, test_preview, format);
+    try std.testing.expectEqual(@as(f32, 280), confident.along);
+    try std.testing.expectEqual(@as(f32, 130), confident.across);
+    try std.testing.expectEqual(@as(f32, 360), confident.length);
+    try std.testing.expectEqual(Shape.roll, confident.shape);
+    try std.testing.expectEqual(@as(f32, 0.5), confident.detected_rotation);
+    try std.testing.expectEqual(@as(?Check, null), confident.check);
+
+    const long = boxOf(.{ .index = 1, .area = .{ .x = 10, .y = 600, .width = 240, .height = 500 }, .rotation_degrees = 0, .confidence = .check }, test_preview, format);
+    try std.testing.expectEqual(Shape.free, long.shape);
+    try std.testing.expectEqual(@as(?Check, .length), long.check);
+    const cut = boxOf(.{ .index = 2, .area = .{ .x = 10, .y = 0, .width = 240, .height = 360 }, .rotation_degrees = 0, .confidence = .check }, test_preview, format);
+    try std.testing.expectEqual(@as(?Check, .cut), cut.check);
+}
+
+test "dragging a corner of a free box moves that corner only" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    try state.boxes.append(gpa, .{ .along = 500, .across = 200, .length = 100, .height = 60, .shape = .free, .full_height = false });
+    resizeBox(&state, &test_preview, 0, 2, 10, 6);
+    const box = state.boxes.items[0];
+    // Along runs right to left in the view of a strip that runs down the scanner.
+    try std.testing.expectEqual(@as(f32, 110), box.length);
+    try std.testing.expectEqual(@as(f32, 495), box.along);
+    try std.testing.expectEqual(@as(f32, 66), box.height);
+    try std.testing.expectEqual(@as(f32, 203), box.across);
+    try std.testing.expect(box.hand and state.boxes_dirty);
+}
+
+test "a scanner's resolutions are offered as they are, or as a spread with the preview's" {
+    var few = [_]u32{ 300, 600, 1200 };
+    var many = [_]u32{ 100, 300, 600, 1200, 2400, 4800, 9600 };
+    var state: State = .{ .capabilities = .{ .sources = .initOne(.transparency), .source = .transparency, .resolutions = &few, .area = default_film_area, .deep = true, .film_setting = false, .profile = null } };
+    var buffer: [max_resolution_choices]u32 = undefined;
+    try std.testing.expectEqualSlices(u32, &few, resolutionChoices(&state, &buffer));
+    state.capabilities.?.resolutions = &many;
+    try std.testing.expectEqualSlices(u32, &.{ 300, 2400, 4800, 9600 }, resolutionChoices(&state, &buffer));
+    state.capabilities = null;
+    try std.testing.expectEqual(@as(usize, 0), resolutionChoices(&state, &buffer).len);
+}
+
+test "a frame placed from its neighbours says which ones" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    const per_mm = test_preview.alongPerMm();
+    for ([_]f32{ 10, 48, 86 }, [_]?Check{ null, .pitch, null }) |mm, check| {
+        try state.boxes.append(gpa, .{ .along = mm * per_mm, .across = 0, .length = 1, .height = 1, .check = check });
+    }
+    try std.testing.expectEqualStrings("Check · faint edges, placed from the 38 mm pitch of frames 1 and 3", pitchNote(&state, &test_preview, 1));
+    state.boxes.items[0].check = .pitch;
+    try std.testing.expectEqualStrings("Check · faint edges, placed from the next frames' pitch", pitchNote(&state, &test_preview, 1));
+}
+
+test "detecting again keeps only the boxes edited by hand" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    for ([_]bool{ false, true, false, true }, 0..) |hand, i| {
+        try state.boxes.append(gpa, .{ .along = @floatFromInt(i), .across = 0, .length = 1, .height = 1, .hand = hand });
+    }
+    state.selected = 2;
+    keepHandBoxes(&state);
+    try std.testing.expectEqual(@as(usize, 2), state.boxes.items.len);
+    try std.testing.expectEqual(@as(f32, 1), state.boxes.items[0].along);
+    try std.testing.expectEqual(@as(?usize, 0), state.selected);
+    state.boxes.items[0].hand = false;
+    state.boxes.items[1].hand = false;
+    keepHandBoxes(&state);
+    try std.testing.expectEqual(@as(?usize, null), state.selected);
+}

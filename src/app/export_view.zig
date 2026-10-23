@@ -342,25 +342,25 @@ pub const State = struct {
                 ctx.notice.set("Export canceled · {d} of {d} files", .{ batch.written.load(.acquire), batch.jobs.len });
             } else {
                 const written = batch.written.load(.acquire);
-                ctx.notice.set("Exported {d} {s} to {s}", .{ written, if (written == 1) "file" else "files", relativeToLibrary(ctx.library, batch.folder) });
+                ctx.notice.set("Exported {d} {s} to {s}", .{ written, if (written == 1) "file" else "files", relativeToLibrary(ctx.library.path, batch.folder) });
             }
             batch.destroy(ctx.gpa);
             state.running = null;
         };
         const chosen = state.dialog.take(ctx.gpa, ctx.io);
         defer Dialog.free(ctx.gpa, chosen);
-        if (chosen.len > 0) state.setFolder(relativeToLibrary(ctx.library, chosen[chosen.len - 1]));
+        if (chosen.len > 0) state.setFolder(relativeToLibrary(ctx.library.path, chosen[chosen.len - 1]));
     }
 };
 
 /// The roll's exports folder, relative to the library's folder.
 fn defaultFolder(library: *const Library, r: *const roll.Roll) []const u8 {
-    return gui.print("{s}/{s}", .{ relativeToLibrary(library, r.path), roll.exports_dir });
+    return gui.print("{s}/{s}", .{ relativeToLibrary(library.path, r.path), roll.exports_dir });
 }
 
 /// Returns `path` relative to the library's folder when it's inside it, or else unchanged.
-fn relativeToLibrary(library: *const Library, path: []const u8) []const u8 {
-    const base = std.mem.trimEnd(u8, library.path, std.fs.path.sep_str);
+fn relativeToLibrary(library: []const u8, path: []const u8) []const u8 {
+    const base = std.mem.trimEnd(u8, library, std.fs.path.sep_str);
     if (path.len > base.len and std.mem.startsWith(u8, path, base) and path[base.len] == std.fs.path.sep) return path[base.len + 1 ..];
     return path;
 }
@@ -1090,4 +1090,23 @@ test "a value cut short for showing keeps whole characters" {
     try std.testing.expectEqualStrings("Gents", std.mem.sliceTo(&box, 0));
     showCut(&box, "Ghent, Belgium");
     try std.testing.expectEqualStrings("Ghent,", std.mem.sliceTo(&box, 0));
+}
+
+test "a custom long edge is a number within range, or nothing" {
+    var state: State = .{};
+    try std.testing.expectEqual(@as(?usize, 3000), state.customEdge());
+    try gui.setText(&state.custom_edge, " 20 ");
+    try std.testing.expectEqual(@as(?usize, min_custom_edge), state.customEdge());
+    try gui.setText(&state.custom_edge, "9999999");
+    try std.testing.expectEqual(@as(?usize, max_custom_edge), state.customEdge());
+    try gui.setText(&state.custom_edge, "");
+    try std.testing.expectEqual(@as(?usize, null), state.customEdge());
+}
+
+test "a folder in the library is shown from the library" {
+    const sep = std.fs.path.sep_str;
+    const library = sep ++ "photos" ++ sep ++ "Rolls";
+    try std.testing.expectEqualStrings("Roll 014" ++ sep ++ "exports", relativeToLibrary(library, library ++ sep ++ "Roll 014" ++ sep ++ "exports"));
+    try std.testing.expectEqualStrings("Roll 014", relativeToLibrary(library ++ sep, library ++ sep ++ "Roll 014"));
+    try std.testing.expectEqualStrings(sep ++ "photos" ++ sep ++ "Rolls 2", relativeToLibrary(library, sep ++ "photos" ++ sep ++ "Rolls 2"));
 }

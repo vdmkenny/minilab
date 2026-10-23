@@ -8,9 +8,9 @@ pub const Color = c.ImVec4;
 
 fn hex(value: u24) Color {
     return .{
-        .x = @as(f32, @floatFromInt(value >> 16)) / 255,
-        .y = @as(f32, @floatFromInt((value >> 8) & 0xff)) / 255,
-        .z = @as(f32, @floatFromInt(value & 0xff)) / 255,
+        .x = @as(f32, @floatFromInt(value >> 16)) / std.math.maxInt(u8),
+        .y = @as(f32, @floatFromInt((value >> 8) & 0xff)) / std.math.maxInt(u8),
+        .z = @as(f32, @floatFromInt(value & 0xff)) / std.math.maxInt(u8),
         .w = 1,
     };
 }
@@ -118,4 +118,10 @@ pub fn apply(scale: f32) void {
     set(colors, c.ImGuiCol_TabSelectedOverline, accent);
     set(colors, c.ImGuiCol_DockingPreview, accent);
     set(colors, c.ImGuiCol_NavCursor, accent);
+}
+
+test "colours read from hex and back to bytes" {
+    try std.testing.expectEqual([4]u8{ 0xE8, 0xA3, 0x3D, 0xFF }, rgba8(accent));
+    try std.testing.expectEqual([4]u8{ 0xE8, 0xA3, 0x3D, 0x80 }, rgba8(withAlpha(accent, 0.5)));
+    try std.testing.expectEqual([4]u8{ 0, 0xFF, 0, 0 }, rgba8(.{ .x = -1, .y = 2, .z = 0, .w = 0 }));
 }

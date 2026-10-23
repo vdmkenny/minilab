@@ -269,6 +269,13 @@ test "areas from odd frame files don't overflow" {
     try std.testing.expectError(error.CropOutsideImage, scan.crop(std.testing.allocator, area));
 }
 
+test "an area moves onto a smaller copy of the picture, and stays on it" {
+    const area: Area = .{ .x = 400, .y = 200, .width = 1200, .height = 800 };
+    try std.testing.expectEqual(Area{ .x = 100, .y = 50, .width = 300, .height = 200 }, area.rescale(4000, 1000, 1000, 700));
+    // Clipped to the copy's edges.
+    try std.testing.expectEqual(Area{ .x = 100, .y = 50, .width = 200, .height = 100 }, area.rescale(4000, 1000, 300, 150));
+}
+
 test "a very long thin scan still downscales to a picture" {
     const gpa = std.testing.allocator;
     // 600 by 1 with a longest side of 300: the factor is 2, more than the height.

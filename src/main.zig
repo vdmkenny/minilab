@@ -757,6 +757,11 @@ test {
     _ = @import("app/export_view.zig");
     _ = @import("app/rolls_view.zig");
     _ = @import("app/library.zig");
+    _ = @import("app/labels.zig");
+    _ = @import("app/shortcuts.zig");
+    _ = @import("ui/gui.zig");
+    _ = @import("ui/theme.zig");
+    _ = @import("platform/window.zig");
 }
 
 test {

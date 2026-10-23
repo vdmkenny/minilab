@@ -50,27 +50,44 @@ pub fn print(comptime format: []const u8, args: anytype) [:0]const u8 {
 /// Shortens `value` from the start with an ellipsis until it fits in `width`. Good for paths,
 /// where the end says the most.
 pub fn elideStart(value: []const u8, width: f32) [:0]const u8 {
-    var start: usize = 0;
-    var shown = print("{s}", .{value});
-    while (start < value.len and c.ImGui_CalcTextSize(shown).x > width) {
-        start += 1;
-        // Don't cut a UTF-8 sequence.
-        while (start < value.len and value[start] & 0xc0 == 0x80) start += 1;
-        shown = print("…{s}", .{value[start..]});
-    }
-    return shown;
+    return elide(.start, value, width, textWidth);
 }
 
 /// Shortens `value` at the end with an ellipsis until it fits in `width`.
 pub fn elideEnd(value: []const u8, width: f32) [:0]const u8 {
+    return elide(.end, value, width, textWidth);
+}
+
+fn textWidth(value: [:0]const u8) f32 {
+    return c.ImGui_CalcTextSize(value).x;
+}
+
+/// Shortens `value` with an ellipsis at `side` until `measure` says it fits in `width`, without
+/// cutting a UTF-8 sequence.
+fn elide(side: enum { start, end }, value: []const u8, width: f32, comptime measure: fn ([:0]const u8) f32) [:0]const u8 {
+    var start: usize = 0;
     var end = value.len;
     var shown = print("{s}", .{value});
-    while (end > 0 and c.ImGui_CalcTextSize(shown).x > width) {
-        end -= 1;
-        while (end > 0 and value[end] & 0xc0 == 0x80) end -= 1;
-        shown = print("{s}…", .{value[0..end]});
+    while (start < end and measure(shown) > width) {
+        switch (side) {
+            .start => {
+                start += 1;
+                while (start < end and isContinuation(value[start])) start += 1;
+                shown = print("…{s}", .{value[start..]});
+            },
+            .end => {
+                end -= 1;
+                while (end > start and isContinuation(value[end])) end -= 1;
+                shown = print("{s}…", .{value[0..end]});
+            },
+        }
     }
     return shown;
+}
+
+/// Whether `byte` continues a UTF-8 sequence rather than starting one.
+fn isContinuation(byte: u8) bool {
+    return byte & 0xc0 == 0x80;
 }
 
 pub fn text(value: []const u8) void {
@@ -815,4 +832,44 @@ pub fn dashedRoundedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32,
         c.ImDrawList_PathArcTo(list, corner[0], radius - 0.5, corner[1], corner[1] + 0.5 * std.math.pi, 6);
         c.ImDrawList_PathStroke(list, colour, 1, 0);
     }
+}
+
+test "text is cut short with an ellipsis, never through a character" {
+    const characters = struct {
+        fn count(value: [:0]const u8) f32 {
+            return @floatFromInt(std.unicode.utf8CountCodepoints(value) catch unreachable);
+        }
+    }.count;
+    try std.testing.expectEqualStrings("…/Roll 014", elide(.start, "~/Pictures/Roll 014", 10, characters));
+    try std.testing.expectEqualStrings("Kodak…", elide(.end, "Kodak Portra 400", 6, characters));
+    try std.testing.expectEqualStrings("Ré…", elide(.end, "Réglage", 3, characters));
+    try std.testing.expectEqualStrings("short", elide(.end, "short", 10, characters));
+}
+
+test "a search matches every word, in any case" {
+    try std.testing.expect(matchesWords("Kodak Portra 400", "portra 4"));
+    try std.testing.expect(matchesWords("Kodak Portra 400", ""));
+    try std.testing.expect(!matchesWords("Kodak Portra 400", "portra fuji"));
+    try std.testing.expect(containsIgnoreCase("Ilford HP5 Plus", "hp5"));
+}
+
+test "signed numbers get a real minus, and none when they print as zero" {
+    try std.testing.expectEqualStrings("−1.50", formatSigned("{d:.2}", -1.5));
+    try std.testing.expectEqualStrings("0.00", formatSigned("{d:.2}", -0.004));
+    try std.testing.expectEqualStrings("2.00", formatSigned("{d:.2}", 2));
+}
+
+test "text that doesn't fit leaves a field as it was" {
+    var buffer = initText(4, "ab");
+    try std.testing.expectEqualStrings("ab", std.mem.sliceTo(&buffer, 0));
+    try setText(&buffer, "abcd");
+    try std.testing.expectEqualStrings("abcd", std.mem.sliceTo(&buffer, 0));
+    try std.testing.expectError(error.TooLong, setText(&buffer, "abcde"));
+    try std.testing.expectEqualStrings("abcd", std.mem.sliceTo(&buffer, 0));
+}
+
+test "a choice's index is where it is in the list, or past the end" {
+    const choices = [_]u8{ 3, 1, 2 };
+    try std.testing.expectEqual(@as(usize, 1), indexIn(u8, &choices, 1));
+    try std.testing.expectEqual(@as(usize, 3), indexIn(u8, &choices, 9));
 }
