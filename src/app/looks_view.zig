@@ -289,11 +289,9 @@ fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: mini
     const gpa = ctx.gpa;
     var linear = try minilab.look.render(gpa, small, settings, try ctx.library.looks.resolve(gpa, ctx.io, id));
     defer linear.deinit(gpa);
-    var encoded = try minilab.encode.toSrgb8(gpa, linear);
-    defer encoded.deinit(gpa);
-    const rgba = try gpa.alloc([4]u8, encoded.pixels.len);
+    const rgba = try gpa.alloc([4]u8, linear.pixels.len);
     defer gpa.free(rgba);
-    for (rgba, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+    minilab.encode.toRgba8(linear, rgba);
     return .upload(ctx.gpu, @intCast(small.width), @intCast(small.height), rgba);
 }
 
@@ -380,8 +378,7 @@ pub const State = struct {
         var theirs: std.ArrayList([]const u8) = .empty;
         defer theirs.deinit(ctx.gpa);
         for (paths) |p| {
-            const extension = std.fs.path.extension(p);
-            if (std.ascii.eqlIgnoreCase(extension, ".ppm") or std.ascii.eqlIgnoreCase(extension, ".pnm")) {
+            if (minilab.input.Kind.of(p) == .pnm) {
                 ours.append(ctx.gpa, p) catch return;
             } else if (isReference(p)) {
                 theirs.append(ctx.gpa, p) catch return;
@@ -830,7 +827,7 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
         errors[covered] = e;
         covered += 1;
     };
-    state.figures.median = if (covered > 0) looks.colour.percentile(errors[0..covered], 0.5) else null;
+    state.figures.median = minilab.stats.median(errors[0..covered]);
 }
 
 /// A colour for a ΔE2000 value: near black where the look matches, through grey and amber, to
@@ -852,12 +849,12 @@ fn ramp(e: f32) [4]u8 {
     return .{ @intFromFloat(@round(colour.x * 255)), @intFromFloat(@round(colour.y * 255)), @intFromFloat(@round(colour.z * 255)), 255 };
 }
 
+/// Whether `path` is a lab's reference picture: a JPEG or a TIFF.
 fn isReference(path: []const u8) bool {
-    const extension = std.fs.path.extension(path);
-    for ([_][]const u8{ ".jpg", ".jpeg", ".tif", ".tiff" }) |e| {
-        if (std.ascii.eqlIgnoreCase(extension, e)) return true;
-    }
-    return false;
+    return switch (minilab.input.Kind.of(path)) {
+        .jpeg, .tiff => true,
+        .pnm, .camera_raw => false,
+    };
 }
 
 /// Whether the pair's reference lined up well enough to fit from. A poor registration would
@@ -870,36 +867,7 @@ fn linedUp(pair: draft.Pair) bool {
 /// Sorts by file name, comparing numbers by their value, so `fr_2.jpg` comes before `fr_10.jpg`
 /// just as `02.ppm` comes before `10.ppm`.
 fn byName(_: void, a: []const u8, b: []const u8) bool {
-    return naturalLess(std.fs.path.basename(a), std.fs.path.basename(b));
-}
-
-fn naturalLess(a: []const u8, b: []const u8) bool {
-    var i: usize = 0;
-    var j: usize = 0;
-    while (i < a.len and j < b.len) {
-        if (std.ascii.isDigit(a[i]) and std.ascii.isDigit(b[j])) {
-            const start_a = i;
-            const start_b = j;
-            while (i < a.len and std.ascii.isDigit(a[i])) i += 1;
-            while (j < b.len and std.ascii.isDigit(b[j])) j += 1;
-            const x = std.fmt.parseInt(u64, a[start_a..i], 10) catch std.math.maxInt(u64);
-            const y = std.fmt.parseInt(u64, b[start_b..j], 10) catch std.math.maxInt(u64);
-            if (x != y) return x < y;
-            continue;
-        }
-        if (a[i] != b[j]) return a[i] < b[j];
-        i += 1;
-        j += 1;
-    }
-    return a.len - i < b.len - j;
-}
-
-test "names sort by the numbers in them" {
-    try std.testing.expect(naturalLess("fr_2.jpg", "fr_10.jpg"));
-    try std.testing.expect(!naturalLess("fr_10.jpg", "fr_2.jpg"));
-    try std.testing.expect(naturalLess("02.ppm", "10.ppm"));
-    try std.testing.expect(naturalLess("a.jpg", "b.jpg"));
-    try std.testing.expect(naturalLess("roll", "roll 2"));
+    return minilab.input.naturalLess({}, std.fs.path.basename(a), std.fs.path.basename(b));
 }
 
 /// Finds the roll frame whose raw scan is at `path`, with the name the table uses for it.

@@ -110,7 +110,7 @@ pub const stock_choices = blk: {
     @setEvalBranchQuota(1_000_000);
     const presets = minilab.stocks.stocks;
     var all: [presets.len + unmeasured.len]StockChoice = undefined;
-    for (&presets, 0..) |*preset, i| all[i] = .{ .name = preset.name, .kind = @field(develop.FilmKind, @tagName(preset.kind)), .preset = preset };
+    for (&presets, 0..) |*preset, i| all[i] = .{ .name = preset.name, .kind = preset.kind, .preset = preset };
     var n = presets.len;
     for (unmeasured) |choice| {
         const has_preset = for (presets) |preset| {

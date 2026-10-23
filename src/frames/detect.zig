@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const image = @import("../core/image.zig");
+const stats = @import("../core/stats.zig");
 const formats = @import("formats.zig");
 
 /// Which way round the gap test works.
@@ -379,10 +380,7 @@ fn bandWidth(counts: []const u32, lines: usize) f32 {
     return @floatFromInt(@max(n, 1));
 }
 
-fn quantile(comptime T: type, sorted: []const T, fraction: f32) T {
-    const last: f32 = @floatFromInt(sorted.len - 1);
-    return sorted[@intFromFloat(@round(fraction * last))];
-}
+const quantile = stats.quantile;
 
 /// The luminance plane, read in strip coordinates.
 const View = struct {
@@ -1255,10 +1253,10 @@ fn addPitch(gpa: std.mem.Allocator, pitches: *std.ArrayList(f32), distance: f32,
 }
 
 /// Returns the median of `values`, sorting them on the way, or null when there are none.
+/// The median by nearest rank, which is the upper of the two middle values when there's an even
+/// number of them.
 fn medianOf(values: []f32) ?f32 {
-    if (values.len == 0) return null;
-    std.mem.sortUnstable(f32, values, {}, std.sort.asc(f32));
-    return quantile(f32, values, 0.5);
+    return stats.percentile(values, 0.5);
 }
 
 /// Places mounted slides. Each aperture is a run of mostly light lines between opaque mounts, and

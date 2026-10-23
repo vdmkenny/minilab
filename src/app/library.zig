@@ -282,15 +282,9 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
     } else {
         var rendered = try minilab.look.render(gpa, scan, settings.settings, try library.looks.resolve(gpa, io, settings.look));
         defer rendered.deinit(gpa);
-        var encoded = try minilab.encode.toSrgb8(gpa, rendered);
-        defer encoded.deinit(gpa);
-        rgba(pixels, encoded);
+        minilab.encode.toRgba8(rendered, pixels);
     }
     return Texture.upload(gpu, @intCast(scan.width), @intCast(scan.height), pixels);
-}
-
-fn rgba(pixels: [][4]u8, encoded: image.Encoded8) void {
-    for (pixels, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
 }
 
 test "the library's label has ~ for the home folder, and only for it" {

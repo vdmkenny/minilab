@@ -326,7 +326,7 @@ pub const Worker = struct {
                 const scanner = if (worker.scanner) |*s| s else return worker.post(.{ .failed = .{ .stage = .preview, .err = error.NotFound } });
                 const picture = scanner.scan(gpa, worker.withRaw(request), &worker.progress) catch |err| return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
                 worker.post(.{ .preview = .{
-                    .scan = .{ .width = picture.width, .height = picture.height, .pixels = picture.pixels },
+                    .scan = picture.scan,
                     .dpi = picture.dpi,
                     .area = picture.area,
                 } });
@@ -382,10 +382,10 @@ pub const Worker = struct {
 /// Turns a frame's scan into what the roll keeps: its PPM bytes and the crop. If the frame was
 /// detected rather than placed by hand, the crop is found again on this scan.
 fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
-    const whole: image.Scan = .{ .width = picture.width, .height = picture.height, .pixels = picture.pixels };
+    const whole = picture.scan;
     const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
     // Where the preview says the crop is, in this scan's pixels.
-    const planned = toPixels(job.crop, picture.area, px_per_mm, picture.width, picture.height);
+    const planned = toPixels(job.crop, picture.area, px_per_mm, whole.width, whole.height);
     var crop = planned;
     var refined = false;
     if (job.refine) |refine| {

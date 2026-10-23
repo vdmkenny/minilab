@@ -62,16 +62,8 @@ pub const Develop = struct {
     quarter_turns: u2 = 0,
 };
 
-/// The name LittleCMS's profiles give each space. The XMP repeats it.
-pub fn spaceName(space: icc.Space) []const u8 {
-    return switch (space) {
-        .srgb => "sRGB",
-        .display_p3 => "Display P3",
-        .adobe_rgb => "Adobe RGB (compatible)",
-        .prophoto => "ProPhoto RGB",
-        .rec2020_linear => "Rec. 2020 linear",
-    };
-}
+/// The name the space's profile gives it. The XMP repeats it.
+pub const spaceName = icc.nameOf;
 
 /// minilab's XMP namespace, for things no standard schema has a property for.
 pub const namespace = "urn:minilab:xmp:1.0/";

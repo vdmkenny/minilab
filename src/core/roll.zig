@@ -19,6 +19,7 @@
 const std = @import("std");
 const Io = std.Io;
 const image = @import("image.zig");
+const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
 const pnm = @import("../io/pnm.zig");
@@ -310,8 +311,7 @@ pub const Roll = struct {
     /// The caller frees it.
     pub fn thumbnailPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
         var name: [std.fs.max_name_bytes]u8 = undefined;
-        const file = try std.fmt.bufPrint(&name, "{s}.ppm", .{std.fs.path.stem(roll.frames.items[index].scan)});
-        return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, file });
+        return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, try thumbnailName(&name, roll.frames.items[index].scan) });
     }
 
     /// Adds the scan in `bytes` (a binary PNM) the way `addImage` does, and returns the index of
@@ -375,8 +375,8 @@ pub const Roll = struct {
             var temporary = roll.scratch();
             defer temporary.deinit();
             const a = temporary.allocator();
-            const thumbnail_name = try std.fmt.allocPrint(a, "{s}.ppm", .{std.fs.path.stem(name)});
-            try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, thumbnail_name }), .data = thumbnail_bytes });
+            var thumbnail_name: [std.fs.max_name_bytes]u8 = undefined;
+            try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, try thumbnailName(&thumbnail_name, name) }), .data = thumbnail_bytes });
             try placeFile(gpa, io, path, try std.fs.path.join(a, &.{ roll.path, scans_dir, name }), transfer);
         }
         try roll.appendFrame(.{
@@ -422,7 +422,8 @@ pub const Roll = struct {
             defer temporary.deinit();
             const a = temporary.allocator();
             try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, scans_dir, name }), .data = scan_bytes });
-            try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, name }), .data = thumbnail_bytes });
+            var thumbnail_name: [std.fs.max_name_bytes]u8 = undefined;
+            try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, try thumbnailName(&thumbnail_name, name) }), .data = thumbnail_bytes });
         }
 
         const frame: FrameSettings = .{
@@ -546,21 +547,16 @@ pub const Roll = struct {
 pub const base_tolerance = 0.15;
 
 fn medianBase(frames: []const FrameSettings) ?[3]f32 {
-    var values: [3][max_median_frames]f32 = undefined;
+    var bases: [max_median_frames][3]f32 = undefined;
     var count: usize = 0;
     for (frames) |f| {
         const b = f.film_base orelse continue;
         if (count == max_median_frames) break;
-        for (&values, b) |*channel, v| channel[count] = v;
+        bases[count] = b;
         count += 1;
     }
-    if (count == 0) return null;
-    var base: [3]f32 = undefined;
-    for (&base, &values) |*out, *channel| {
-        std.mem.sort(f32, channel[0..count], {}, std.sort.asc(f32));
-        out.* = if (count % 2 == 1) channel[count / 2] else (channel[count / 2 - 1] + channel[count / 2]) / 2;
-    }
-    return base;
+    var scratch: [max_median_frames]f32 = undefined;
+    return stats.channelMedian(bases[0..count], &scratch);
 }
 
 /// The most frames the roll's base is worked out from. That's more than any roll has.
@@ -618,6 +614,12 @@ fn today(arena: std.mem.Allocator, io: Io) ![]const u8 {
 }
 
 /// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
+/// The file name of the thumbnail of the scan called `scan`, in `buffer`: the scan's own name with
+/// .ppm, which a finished picture's JPEG scan gets too.
+fn thumbnailName(buffer: []u8, scan: []const u8) ![]const u8 {
+    return std.fmt.bufPrint(buffer, "{s}.ppm", .{std.fs.path.stem(scan)});
+}
+
 /// The number in a frame's file name, such as 3 for 03.json, or null when it isn't a frame's.
 fn frameNumber(name: []const u8) ?usize {
     const number = std.fmt.parseInt(usize, std.fs.path.stem(name), 10) catch return null;

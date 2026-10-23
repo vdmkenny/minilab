@@ -785,11 +785,8 @@ pub const Scanner = struct {
             1, 3 => @intCast(info.samples_per_pixel),
             else => return error.Unsupported,
         };
-        const depth: u8 = switch (info.bits_per_sample[0]) {
-            8, 16 => @intCast(info.bits_per_sample[0]),
-            else => return error.Unsupported,
-        };
-        const sample_bytes: usize = depth / 8;
+        const depth = std.enums.fromInt(image.Depth, info.bits_per_sample[0]) orelse return error.Unsupported;
+        const sample_bytes = depth.bytes();
         if (info.length > 0) progress.total.store(@intCast(info.length), .release);
 
         var setup: SetupMemXfer = undefined;
@@ -834,10 +831,7 @@ pub const Scanner = struct {
                 const line = buffer[r * strip.bytes_per_row ..][0 .. width * channels * sample_bytes];
                 if (pixels.items.len < (y + 1) * width) try pixels.appendNTimes(gpa, .{ 0, 0, 0 }, (y + 1) * width - pixels.items.len);
                 for (pixels.items[y * width ..][0..width], 0..) |*p, x| {
-                    for (p, 0..) |*out, c| {
-                        const index = (x * channels + if (channels == 3) c else 0) * sample_bytes;
-                        out.* = if (depth == 8) @as(u16, line[index]) * image.widen_8_to_16 else std.mem.readInt(u16, line[index..][0..2], .little);
-                    }
+                    for (p, 0..) |*out, c| out.* = image.sampleAt(line, x * channels + if (channels == 3) c else 0, depth, .little);
                 }
                 rows = @max(rows, y + 1);
             }
@@ -847,9 +841,7 @@ pub const Scanner = struct {
         if (rows == 0) return error.Failed;
         pixels.shrinkRetainingCapacity(rows * width);
         return .{
-            .width = width,
-            .height = rows,
-            .pixels = try pixels.toOwnedSlice(gpa),
+            .scan = .{ .width = width, .height = rows, .pixels = try pixels.toOwnedSlice(gpa) },
             .depth = depth,
             .dpi = .{ @floatCast(info.x_resolution.value()), @floatCast(info.y_resolution.value()) },
             .area = area,

@@ -11,14 +11,12 @@ const grey_magic = "P5";
 pub const Error = error{ NotAPpm, UnsupportedDepth, Truncated, InvalidHeader };
 
 /// Bits per sample in the file.
-pub const Depth = enum { eight, sixteen };
-
 /// A PNM file after reading it into a scan.
 pub const Decoded = struct {
     /// The pixels. 8-bit samples are scaled up to 16 bits, and a greyscale file gets its value
     /// copied into all three channels.
     scan: image.Scan,
-    depth: Depth,
+    depth: image.Depth,
 };
 
 /// Reads a colour or greyscale PNM into a scan; see `decode`.
@@ -44,28 +42,18 @@ pub fn decode(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Alloc
     if (reader.position >= bytes.len) return error.Truncated;
     const data = bytes[reader.position + 1 ..];
 
-    const depth: Depth = switch (max_value) {
+    const depth: image.Depth = switch (max_value) {
         std.math.maxInt(u8) => .eight,
         std.math.maxInt(u16) => .sixteen,
         else => return error.UnsupportedDepth,
     };
-    const sample_bytes: usize = switch (depth) {
-        .eight => 1,
-        .sixteen => 2,
-    };
     const pixels = std.math.mul(usize, width, height) catch return error.InvalidHeader;
-    const needed = std.math.mul(usize, pixels, channels * sample_bytes) catch return error.InvalidHeader;
+    const needed = std.math.mul(usize, pixels, channels * depth.bytes()) catch return error.InvalidHeader;
     if (data.len < needed) return error.Truncated;
 
     const scan: image.Scan = try .init(gpa, width, height);
     for (scan.pixels, 0..) |*p, i| {
-        for (p, 0..) |*c, channel| {
-            const at = (i * channels + @min(channel, channels - 1)) * sample_bytes;
-            c.* = switch (depth) {
-                .sixteen => std.mem.readInt(u16, data[at..][0..2], .big),
-                .eight => @as(u16, data[at]) * image.widen_8_to_16,
-            };
-        }
+        for (p, 0..) |*c, channel| c.* = image.sampleAt(data, i * channels + @min(channel, channels - 1), depth, .big);
     }
     return .{ .scan = scan, .depth = depth };
 }
@@ -125,7 +113,7 @@ test "8-bit samples scale to 16 bits" {
     const gpa = std.testing.allocator;
     var decoded = try decode(gpa, "P6 1 1 255\n" ++ [_]u8{ 0, 128, 255 });
     defer decoded.scan.deinit(gpa);
-    try std.testing.expectEqual(Depth.eight, decoded.depth);
+    try std.testing.expectEqual(image.Depth.eight, decoded.depth);
     try std.testing.expectEqual([3]u16{ 0, 128 * image.widen_8_to_16, image.full_scale }, decoded.scan.at(0, 0));
 }
 
@@ -133,7 +121,7 @@ test "a greyscale PGM has its value in every channel" {
     const gpa = std.testing.allocator;
     var decoded = try decode(gpa, "P5 2 1 65535\n" ++ [_]u8{ 0x12, 0x34, 0xff, 0xff });
     defer decoded.scan.deinit(gpa);
-    try std.testing.expectEqual(Depth.sixteen, decoded.depth);
+    try std.testing.expectEqual(image.Depth.sixteen, decoded.depth);
     try std.testing.expectEqual([3]u16{ 0x1234, 0x1234, 0x1234 }, decoded.scan.at(0, 0));
     try std.testing.expectEqual([3]u16{ 65535, 65535, 65535 }, decoded.scan.at(1, 0));
 }

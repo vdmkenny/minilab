@@ -50,6 +50,19 @@ pub const Lut = struct {
     }
 
     pub fn lookup(lut: *const Lut, rgb: [3]f32) [3]f32 {
+        var out: [3]f32 = @splat(0);
+        for (corners(rgb)) |corner| {
+            if (corner.weight == 0) continue;
+            for (&out, lut.values[corner.index]) |*o, x| o.* += corner.weight * x;
+        }
+        return out;
+    }
+
+    /// One of the eight grid points around a colour, and how much it counts.
+    pub const Corner = struct { index: usize, weight: f32 };
+
+    /// The eight grid points around `rgb` and their trilinear weights, which add up to 1.
+    pub fn corners(rgb: [3]f32) [8]Corner {
         var base: [3]usize = undefined;
         var frac: [3]f32 = undefined;
         for (&base, &frac, rgb) |*b, *f, v| {
@@ -57,17 +70,17 @@ pub const Lut = struct {
             b.* = @min(@as(usize, @intFromFloat(t)), lut_size - 2);
             f.* = t - @as(f32, @floatFromInt(b.*));
         }
-        var out: [3]f32 = @splat(0);
-        for (0..8) |corner| {
+        var out: [8]Corner = undefined;
+        for (&out, 0..) |*c, corner| {
             const dr = corner & 1;
             const dg = corner >> 1 & 1;
             const db = corner >> 2 & 1;
-            const w = (if (dr == 1) frac[0] else 1 - frac[0]) *
-                (if (dg == 1) frac[1] else 1 - frac[1]) *
-                (if (db == 1) frac[2] else 1 - frac[2]);
-            if (w == 0) continue;
-            const v = lut.values[index(base[0] + dr, base[1] + dg, base[2] + db)];
-            for (&out, v) |*o, x| o.* += w * x;
+            c.* = .{
+                .index = index(base[0] + dr, base[1] + dg, base[2] + db),
+                .weight = (if (dr == 1) frac[0] else 1 - frac[0]) *
+                    (if (dg == 1) frac[1] else 1 - frac[1]) *
+                    (if (db == 1) frac[2] else 1 - frac[2]),
+            };
         }
         return out;
     }

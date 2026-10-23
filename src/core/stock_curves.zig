@@ -27,6 +27,11 @@ pub const max_gain = 3;
 /// sits above the toe and below any shoulder.
 const straight_from = 0.25;
 const straight_to = 0.85;
+/// Whether density `above` the base, on a curve rising `range` in all, is on its straight part.
+fn onStraightPart(above: f32, range: f32) bool {
+    return above >= straight_from * range and above <= straight_to * range;
+}
+
 /// The most points a datasheet curve can have.
 const max_points = 256;
 
@@ -87,7 +92,7 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
     var sum_d: f32 = 0;
     var straight: f32 = 0;
     for (points, above[0..points.len]) |p, a| {
-        if (a < straight_from * range or a > straight_to * range) continue;
+        if (!onStraightPart(a, range)) continue;
         sum_h += p.log_exposure;
         sum_d += a;
         straight += 1;
@@ -98,7 +103,7 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
     var covariance: f32 = 0;
     var variance: f32 = 0;
     for (points, above[0..points.len]) |p, a| {
-        if (a < straight_from * range or a > straight_to * range) continue;
+        if (!onStraightPart(a, range)) continue;
         covariance += (p.log_exposure - mean_h) * (a - mean_d);
         variance += (p.log_exposure - mean_h) * (p.log_exposure - mean_h);
     }

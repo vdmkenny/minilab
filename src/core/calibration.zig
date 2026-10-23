@@ -19,6 +19,7 @@
 
 const std = @import("std");
 const Io = std.Io;
+const stats = @import("stats.zig");
 
 pub const file_name = "calibration.json";
 /// Added to the name of a calibration.json that can't be read, when it's moved aside.
@@ -100,15 +101,11 @@ pub const Calibrations = struct {
     /// has a roll.
     pub fn factors(calibrations: *const Calibrations, scanner: []const u8) ?[3]f32 {
         const measured = calibrations.rolls(scanner);
-        if (measured.len == 0) return null;
-        var values: [3][max_rolls]f32 = undefined;
+        var colours: [max_rolls][3]f32 = undefined;
         const count = @min(measured.len, max_rolls);
-        for (measured[0..count], 0..) |m, i| {
-            for (&values, m.factors) |*channel, f| channel[i] = f;
-        }
-        var result: [3]f32 = undefined;
-        for (&result, &values) |*r, *channel| r.* = median(channel[0..count]);
-        return result;
+        for (colours[0..count], measured[0..count]) |*c, m| c.* = m.factors;
+        var scratch: [max_rolls]f32 = undefined;
+        return stats.channelMedian(colours[0..count], &scratch);
     }
 
     /// Records `measurement` for `scanner`, replacing any earlier one from the same roll, and
@@ -152,14 +149,10 @@ pub const Calibrations = struct {
 /// `min_frames` frames.
 pub fn measure(slopes: []const [3]f32, gamma: [3]f32) ?[3]f32 {
     if (slopes.len < min_frames) return null;
-    var values: [3][max_frames]f32 = undefined;
-    const count = @min(slopes.len, max_frames);
-    for (slopes[0..count], 0..) |s, i| {
-        for (&values, s) |*channel, v| channel[i] = v;
-    }
-    const sheet = datasheetSlopes(gamma);
+    var scratch: [max_frames]f32 = undefined;
+    const medians = stats.channelMedian(slopes, &scratch).?;
     var result: [3]f32 = undefined;
-    for (&result, &values, sheet) |*r, *channel, d| r.* = median(channel[0..count]) / d;
+    for (&result, medians, datasheetSlopes(gamma)) |*r, m, d| r.* = m / d;
     return result;
 }
 
@@ -175,12 +168,6 @@ pub fn stockSlopes(scanner_factors: [3]f32, gamma: [3]f32) [3]f32 {
 /// over the layer's.
 fn datasheetSlopes(gamma: [3]f32) [3]f32 {
     return .{ gamma[1] / gamma[0], 1, gamma[1] / gamma[2] };
-}
-
-fn median(values: []f32) f32 {
-    std.mem.sort(f32, values, {}, std.sort.asc(f32));
-    const n = values.len;
-    return if (n % 2 == 1) values[n / 2] else (values[n / 2 - 1] + values[n / 2]) / 2;
 }
 
 /// More frames than any roll has, and more rolls than anyone calibrates from.

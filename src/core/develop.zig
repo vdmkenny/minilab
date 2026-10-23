@@ -20,6 +20,7 @@
 const std = @import("std");
 const image = @import("image.zig");
 const encode = @import("encode.zig");
+const statistics = @import("stats.zig");
 const stock_curves = @import("stock_curves.zig");
 
 pub const FilmKind = enum {
@@ -370,9 +371,6 @@ fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
     return y;
 }
 
-/// Rec. 709's luminance weights, for linear sRGB.
-const luminance_weights = [3]f32{ 0.2126, 0.7152, 0.0722 };
-
 /// Changes the saturation of linear `pixels` in place. Each pixel is mixed with its own luminance
 /// in linear light, which keeps its hue and its luminance. Colours pushed outside sRGB are cut off
 /// at 0.
@@ -380,7 +378,7 @@ pub fn saturate(prepared: Prepared, pixels: [][3]f32) void {
     const s = prepared.saturation;
     if (s == 1) return;
     for (pixels) |*p| {
-        const y = luminance_weights[0] * p[0] + luminance_weights[1] * p[1] + luminance_weights[2] * p[2];
+        const y = encode.luminance(p.*);
         for (p) |*v| v.* = @max(0, y + s * (v.* - y));
     }
 }
@@ -399,14 +397,6 @@ pub fn pixel(prepared: Prepared, raw: [3]u16) [3]f32 {
         return t;
     }
     return invert(prepared, density(prepared, t));
-}
-
-/// Develops the whole scan.
-pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings) !image.Rendered {
-    const rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
-    const prepared: Prepared = .init(settings);
-    for (rendered.pixels, scan.pixels) |*out, raw| out.* = pixel(prepared, raw);
-    return rendered;
 }
 
 /// The smallest density range, in D, that the automatic settings will work from.
@@ -490,13 +480,15 @@ const histogram_bins = std.math.maxInt(u16) + 1;
 
 /// The value below which `per_mille` of the `count` pixels fall, as a fraction of full scale.
 fn percentile(histogram: []const [image.channel_count]u32, channel: usize, count: usize, per_mille: usize) f32 {
-    const rank = @min(count - 1, count * per_mille / 1000);
-    var seen: usize = 0;
-    for (histogram, 0..) |bins, v| {
-        seen += bins[channel];
-        if (seen > rank) return @max(@as(f32, @floatFromInt(v)) / image.full_scale, smallest_transmission);
-    }
-    return 1;
+    const Channel = struct {
+        histogram: []const [image.channel_count]u32,
+        channel: usize,
+        pub fn at(c: @This(), i: usize) u64 {
+            return c.histogram[i][c.channel];
+        }
+    };
+    const bin = statistics.binAtRank(Channel{ .histogram = histogram, .channel = channel }, histogram.len, statistics.rankAt(count, per_mille)) orelse return 1;
+    return @max(@as(f32, @floatFromInt(bin)) / image.full_scale, smallest_transmission);
 }
 
 /// Works out automatic settings for a negative: the base from `measured_base`, the density range
@@ -697,13 +689,13 @@ test "saturation keeps luminance and hue, and 0 is grey" {
     var pixels = [_][3]f32{.{ 0.6, 0.3, 0.1 }};
     saturate(.init(grey), &pixels);
     try std.testing.expectApproxEqAbs(pixels[0][0], pixels[0][1], 1e-6);
-    try std.testing.expectApproxEqAbs(0.2126 * 0.6 + 0.7152 * 0.3 + 0.0722 * 0.1, pixels[0][1], 1e-6);
+    try std.testing.expectApproxEqAbs(encode.luminance(.{ 0.6, 0.3, 0.1 }), pixels[0][1], 1e-6);
     grey.saturation = 1.5;
     var more = [_][3]f32{.{ 0.6, 0.3, 0.1 }};
     saturate(.init(grey), &more);
     // Further from grey along the same line, so the ratios between the channels' differences
     // stay the same.
-    const y = 0.2126 * 0.6 + 0.7152 * 0.3 + 0.0722 * 0.1;
+    const y = encode.luminance(.{ 0.6, 0.3, 0.1 });
     try std.testing.expectApproxEqAbs((0.6 - y) * 1.5 + y, more[0][0], 1e-6);
     try std.testing.expectApproxEqAbs((0.3 - y) * 1.5 + y, more[0][1], 1e-6);
     // B&W stays as it is.
@@ -789,12 +781,17 @@ test "automatic settings stay finite when a channel's shadows read as the base" 
     try std.testing.expect(std.math.isFinite(blank.density_range));
 }
 
-test "a stock's curves open up the shadows its toe crushed" {
+/// Superia X-TRA 400's curves, in Status M, for the tests.
+fn superiaCurves() stock_curves.Curves {
     const stocks = @import("../presets/stocks.zig");
     const superia = for (stocks.stocks) |s| {
         if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
     } else unreachable;
-    const curves = stock_curves.of(superia, @splat(1)).?;
+    return stock_curves.of(superia, @splat(1)).?;
+}
+
+test "a stock's curves open up the shadows its toe crushed" {
+    const curves = superiaCurves();
     const base = [3]f32{ 0.4, 0.2, 0.12 };
     // Shadows 0.08 D above the base, highlights 1.6 D.
     var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
@@ -826,11 +823,7 @@ test "a stock's curves open up the shadows its toe crushed" {
 }
 
 test "a new stock measures the frame again and keeps the user's choices" {
-    const stocks = @import("../presets/stocks.zig");
-    const superia = for (stocks.stocks) |s| {
-        if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
-    } else unreachable;
-    const curves = stock_curves.of(superia, @splat(1)).?;
+    const curves = superiaCurves();
     const base = [3]f32{ 0.4, 0.2, 0.12 };
     var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
     for (&stats.densest, &stats.shadows, &stats.mean_log, base) |*dense, *shadow, *mean, b| {

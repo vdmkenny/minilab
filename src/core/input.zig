@@ -54,6 +54,15 @@ const pnm_extensions = [_][]const u8{ ".ppm", ".pnm", ".pgm" };
 const tiff_extensions = [_][]const u8{ ".tif", ".tiff" };
 const jpeg_extensions = [_][]const u8{ ".jpg", ".jpeg" };
 
+/// `list`'s extensions without their dots, each followed by ';'.
+fn dialogList(comptime list: []const []const u8) []const u8 {
+    comptime {
+        var out: []const u8 = "";
+        for (list) |extension| out = out ++ extension[1..] ++ ";";
+        return out;
+    }
+}
+
 /// Whether `path` has the extension of a file we read scans from.
 pub fn readable(path: []const u8) bool {
     const extension = std.fs.path.extension(path);
@@ -102,7 +111,7 @@ pub fn freeExpanded(gpa: std.mem.Allocator, paths: []const []u8) void {
 
 /// Whether `a` comes before `b` with runs of digits compared as numbers, so IMG_2 comes before
 /// IMG_10.
-fn naturalLess(_: void, a: []const u8, b: []const u8) bool {
+pub fn naturalLess(_: void, a: []const u8, b: []const u8) bool {
     var i: usize = 0;
     var j: usize = 0;
     while (i < a.len and j < b.len) {
@@ -138,12 +147,12 @@ fn digitsEnd(text: []const u8, start: usize) usize {
 
 /// The extensions of the files we read scans from, without their dots, the way SDL's file
 /// dialogs take them: PNM, TIFF, JPEG, and the camera RAW formats of the makers LibRaw reads.
-pub const extensions = "ppm;pnm;pgm;tif;tiff;jpg;jpeg;" ++ raw_extensions;
+pub const extensions = dialogList(&(pnm_extensions ++ tiff_extensions ++ jpeg_extensions)) ++ raw_extensions;
 pub const raw_extensions = "dng;nef;nrw;cr2;cr3;crw;arw;srf;sr2;raf;orf;rw2;rwl;pef;srw;3fr;fff;iiq;erf;kdc;dcr;mos;mrw;x3f";
 
 /// Bits per sample in the file. Camera RAW counts as 16, since it's linear whatever the sensor's
 /// depth.
-pub const Depth = enum { eight, sixteen };
+pub const Depth = image.Depth;
 
 /// A file read into a scan.
 pub const Read = struct {
@@ -181,20 +190,14 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
     switch (kind) {
         .pnm => {
             const decoded = try pnm.decode(gpa, bytes);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = switch (decoded.depth) {
-                .eight => .eight,
-                .sixteen => .sixteen,
-            } };
+            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
         },
         .tiff => {
             const decoded = try tiff.read(gpa, bytes);
             // A profile says how to show the file's colours, but the density stage works in the
             // scanner's own channels, so we don't use it.
             if (decoded.icc_profile) |profile| gpa.free(profile);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = switch (decoded.depth) {
-                .eight => .eight,
-                .sixteen => .sixteen,
-            } };
+            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
         },
         .jpeg => {
             var decoded = try jpeg.read(gpa, bytes);
@@ -330,13 +333,9 @@ test "a camera's white level becomes full scale" {
     try std.testing.expectEqual(@as([3]u16, @splat(image.full_scale)), scan.pixels[2]);
 }
 
-/// The environment variable that names a camera RAW file for the test below, which is skipped
-/// without it. It's the same one `raw.zig`'s test reads.
-const raw_sample_variable = "MINILAB_RAW_SAMPLE";
-
 test "a camera RAW file reads as a linear scan up to full scale" {
     const gpa = std.testing.allocator;
-    const path = std.testing.environ.getAlloc(gpa, raw_sample_variable) catch |err| switch (err) {
+    const path = std.testing.environ.getAlloc(gpa, raw.sample_variable) catch |err| switch (err) {
         error.EnvironmentVariableMissing => return error.SkipZigTest,
         else => return err,
     };
@@ -348,4 +347,8 @@ test "a camera RAW file reads as a linear scan up to full scale" {
     var brightest: u16 = 0;
     for (scan.scan.pixels) |pixel| brightest = @max(brightest, pixel[0], pixel[1], pixel[2]);
     try std.testing.expect(brightest > 0);
+}
+
+test "the file dialogs get every extension we read" {
+    try std.testing.expect(std.mem.startsWith(u8, extensions, "ppm;pnm;pgm;tif;tiff;jpg;jpeg;dng;"));
 }

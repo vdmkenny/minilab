@@ -36,17 +36,7 @@ pub const Format = enum {
     }
 };
 
-pub const Depth = enum {
-    eight,
-    sixteen,
-
-    pub fn bits(depth: Depth) u8 {
-        return switch (depth) {
-            .eight => 8,
-            .sixteen => 16,
-        };
-    }
-};
+pub const Depth = image.Depth;
 
 /// The colour spaces offered, in the order the interface lists them.
 pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
@@ -96,8 +86,6 @@ fn check(cancel: ?*const Cancel) error{Canceled}!void {
 
 /// How many rows we convert between checks for cancel.
 const band_rows = 64;
-/// How many rows we develop between checks for cancel: enough to give every core some work.
-const render_band_rows = 256;
 
 /// A developed frame in the output space, before it becomes a file.
 pub const Picture = struct {
@@ -175,7 +163,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     const scale = @as(f64, @floatFromInt(current.width)) / @as(f64, @floatFromInt(full_width));
 
     var developed = if (frame.developed)
-        try render(gpa, current, frame.settings, frame_look, cancel)
+        try look.renderBanded(gpa, current, frame.settings, frame_look, cancel)
     else
         try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, .{ .curves = frame.settings.curves(), .slide = frame.settings.slide_colour });
     defer developed.deinit(gpa);
@@ -185,21 +173,6 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     }
     try check(cancel);
     return .{ .pixels = try convert(gpa, &developed, options, cancel), .scale = scale };
-}
-
-/// Runs `look.render` a band of rows at a time, and stops when cancelled.
-fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.Settings, frame_look: look.Resolved, cancel: ?*const Cancel) error{ OutOfMemory, Canceled }!image.Rendered {
-    var rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
-    errdefer rendered.deinit(gpa);
-    const prepared: develop.Prepared = .init(frame_look.settingsFor(settings));
-    const band = @max(1, render_band_rows * scan.width);
-    var at: usize = 0;
-    while (at < scan.pixels.len) : (at += band) {
-        try check(cancel);
-        const n = @min(band, scan.pixels.len - at);
-        look.renderPixels(prepared, frame_look, scan.pixels[at..][0..n], rendered.pixels[at..][0..n]);
-    }
-    return rendered;
 }
 
 fn convert(gpa: std.mem.Allocator, linear: *image.Rendered, options: Options, cancel: ?*const Cancel) ConvertError!Picture.Pixels {
@@ -752,7 +725,7 @@ test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" 
     defer gpa.free(file);
     var decoded = try tiff.read(gpa, file);
     defer decoded.deinit(gpa);
-    try std.testing.expectEqual(tiff.Depth.sixteen, decoded.depth);
+    try std.testing.expectEqual(image.Depth.sixteen, decoded.depth);
     const profile = try icc.profileBytes(gpa, .adobe_rgb);
     defer gpa.free(profile);
     try std.testing.expect(icc.sameProfile(profile, decoded.icc_profile.?));

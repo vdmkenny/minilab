@@ -2,8 +2,10 @@
 
 const std = @import("std");
 const c = @import("c");
+const sdl = @import("sdl.zig");
 
-pub const Error = error{Sdl};
+pub const Error = sdl.Error;
+const fail = sdl.fail;
 
 pub const Pixel = [4]u8;
 const pixel_bytes = @sizeOf(Pixel);
@@ -63,8 +65,3 @@ pub const Texture = struct {
         return .{ ._TexData = null, ._TexID = @intFromPtr(texture.handle) };
     }
 };
-
-fn fail(what: []const u8) Error {
-    std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
-    return error.Sdl;
-}

@@ -187,13 +187,16 @@ const OptionDescriptor = extern struct {
         return option.constraint.word_list[1 .. count + 1];
     }
 
+    /// The values of a string list, one by one. An option without one has none.
+    fn strings(option: *const OptionDescriptor) Strings {
+        return .{ .list = if (option.constraint_type == .string_list) option.constraint.string_list else null };
+    }
+
     /// Whether `value` is in the option's string list.
     fn allows(option: *const OptionDescriptor, value: []const u8) bool {
         if (option.constraint_type != .string_list) return true;
-        var i: usize = 0;
-        while (option.constraint.string_list[i]) |s| : (i += 1) {
-            if (std.mem.eql(u8, std.mem.span(s), value)) return true;
-        }
+        var each = option.strings();
+        while (each.next()) |s| if (std.mem.eql(u8, s, value)) return true;
         return false;
     }
 
@@ -205,6 +208,19 @@ const OptionDescriptor = extern struct {
     /// Turns `value` into a word of the option's own type.
     fn word(option: *const OptionDescriptor, value: f64) Word {
         return if (option.type == .fixed) fix(value) else @intFromFloat(@round(value));
+    }
+};
+
+/// The values of a SANE string list, one by one (`OptionDescriptor.strings`).
+const Strings = struct {
+    list: ?[*]const ?[*:0]const u8,
+    at: usize = 0,
+
+    fn next(each: *Strings) ?[]const u8 {
+        const list = each.list orelse return null;
+        const value = list[each.at] orelse return null;
+        each.at += 1;
+        return std.mem.span(value);
     }
 };
 
@@ -467,10 +483,8 @@ pub const Scanner = struct {
     /// option, or no source of that kind.
     fn selectSource(scanner: *Scanner, source: interface.Source) Error!bool {
         const found = scanner.find("source") orelse return false;
-        if (found.option.constraint_type != .string_list) return false;
-        var i: usize = 0;
-        while (found.option.constraint.string_list[i]) |s| : (i += 1) {
-            const name = std.mem.span(s);
+        var each = found.option.strings();
+        while (each.next()) |name| {
             if (interface.Source.classify(name) == source) return scanner.setString("source", name);
         }
         return false;
@@ -480,12 +494,8 @@ pub const Scanner = struct {
         var sources: std.EnumSet(interface.Source) = .empty;
         var current: interface.Source = .flatbed;
         if (scanner.find("source")) |found| {
-            if (found.option.constraint_type == .string_list) {
-                var i: usize = 0;
-                while (found.option.constraint.string_list[i]) |s| : (i += 1) {
-                    if (interface.Source.classify(std.mem.span(s))) |kind| sources.insert(kind);
-                }
-            }
+            var each = found.option.strings();
+            while (each.next()) |name| if (interface.Source.classify(name)) |kind| sources.insert(kind);
         }
         if (sources.count() == 0) sources.insert(.flatbed);
         if (wanted) |w| {
@@ -553,10 +563,8 @@ pub const Scanner = struct {
                 else => .other,
             };
             var choices: std.ArrayList([]const u8) = .empty;
-            if (option.constraint_type == .string_list) {
-                var k: usize = 0;
-                while (option.constraint.string_list[k]) |s| : (k += 1) try choices.append(arena, try arena.dupe(u8, std.mem.span(s)));
-            }
+            var each = option.strings();
+            while (each.next()) |s| try choices.append(arena, try arena.dupe(u8, s));
             const range: ?[2]f64 = if (option.constraint_type == .range) .{ option.number(option.constraint.range.min), option.number(option.constraint.range.max) } else null;
             try list.append(arena, .{ .name = try arena.dupe(u8, name), .kind = kind, .choices = choices.items, .range = range });
         }
@@ -604,12 +612,12 @@ pub const Scanner = struct {
     /// The value of the film option `name` for `film`, from its list of values.
     fn filmValue(scanner: *Scanner, name: []const u8, film: interface.Film) ?[]const u8 {
         const found = scanner.find(name) orelse return null;
-        if (found.option.constraint_type != .string_list) return null;
         var choices: [max_choices][]const u8 = undefined;
         var n: usize = 0;
-        while (found.option.constraint.string_list[n]) |s| : (n += 1) {
+        var each = found.option.strings();
+        while (each.next()) |s| : (n += 1) {
             if (n == choices.len) break;
-            choices[n] = std.mem.span(s);
+            choices[n] = s;
         }
         return interface.filmChoice(choices[0..n], film);
     }
@@ -727,7 +735,7 @@ pub const Scanner = struct {
         var pixels: std.ArrayList([3]u16) = .empty;
         defer pixels.deinit(gpa);
         var width: usize = 0;
-        var depth: u8 = 8;
+        var depth: image.Depth = .eight;
         var rows: usize = 0;
         // Three-pass scanners send red, green and blue as separate frames.
         var frame: usize = 0;
@@ -762,9 +770,7 @@ pub const Scanner = struct {
         if (rows == 0 or width == 0) return error.Failed;
         pixels.shrinkRetainingCapacity(rows * width);
         return .{
-            .width = width,
-            .height = rows,
-            .pixels = try pixels.toOwnedSlice(gpa),
+            .scan = .{ .width = width, .height = rows, .pixels = try pixels.toOwnedSlice(gpa) },
             .depth = depth,
             .dpi = .{ x_dpi, y_dpi },
             .area = area,
@@ -837,14 +843,14 @@ const read_size = 64 * 1024;
 /// How the samples are laid out in a frame's lines.
 const Layout = struct {
     width: usize,
-    depth: u8,
-    /// Gray data fills all three channels.
+    depth: image.Depth,
+    /// Grey data fills all three channels.
     gray: bool,
     /// For three-pass frames, the one channel this frame holds.
     channel: ?usize,
 
     fn of(parameters: Parameters) Error!Layout {
-        if (parameters.depth != 8 and parameters.depth != 16) return error.Unsupported;
+        const depth = std.enums.fromInt(image.Depth, parameters.depth) orelse return error.Unsupported;
         if (parameters.pixels_per_line <= 0) return error.Failed;
         const width: usize = @intCast(parameters.pixels_per_line);
         const channels: usize = switch (parameters.format) {
@@ -852,10 +858,10 @@ const Layout = struct {
             .gray, .red, .green, .blue => 1,
             _ => return error.Unsupported,
         };
-        if (parameters.bytes_per_line < width * channels * @as(usize, @intCast(@divExact(parameters.depth, 8)))) return error.Failed;
+        if (parameters.bytes_per_line < width * channels * depth.bytes()) return error.Failed;
         return .{
             .width = width,
-            .depth = @intCast(parameters.depth),
+            .depth = depth,
             .gray = parameters.format == .gray,
             .channel = switch (parameters.format) {
                 .red => 0,
@@ -869,8 +875,7 @@ const Layout = struct {
     /// Returns the sample at `index` in a line, scaled to 16 bits. SANE sends 16-bit samples in
     /// the machine's own byte order.
     fn sample(layout: Layout, line: []const u8, index: usize) u16 {
-        if (layout.depth == 8) return @as(u16, line[index]) * image.widen_8_to_16;
-        return std.mem.readInt(u16, line[index * 2 ..][0..2], builtin.cpu.arch.endian());
+        return image.sampleAt(line, index, layout.depth, builtin.cpu.arch.endian());
     }
 
     /// Decodes line `row` into `pixels`. The first pass appends the pixels, and the other passes
@@ -952,13 +957,13 @@ test "lines decode at 8 and 16 bits, colour and grey" {
     var pixels: std.ArrayList([3]u16) = .empty;
     defer pixels.deinit(gpa);
 
-    const rgb16: Layout = .{ .width = 1, .depth = 16, .gray = false, .channel = null };
+    const rgb16: Layout = .{ .width = 1, .depth = .sixteen, .gray = false, .channel = null };
     var line16: [6]u8 = undefined;
     for (0..3) |i| std.mem.writeInt(u16, line16[i * 2 ..][0..2], @intCast(1000 * (i + 1)), builtin.cpu.arch.endian());
     try rgb16.decode(gpa, &line16, 0, &pixels);
     try std.testing.expectEqual([3]u16{ 1000, 2000, 3000 }, pixels.items[0]);
 
-    const gray8: Layout = .{ .width = 2, .depth = 8, .gray = true, .channel = null };
+    const gray8: Layout = .{ .width = 2, .depth = .eight, .gray = true, .channel = null };
     try gray8.decode(gpa, &.{ 0, 255 }, 1, &pixels);
     try std.testing.expectEqual([3]u16{ 0, 0, 0 }, pixels.items[1]);
     try std.testing.expectEqual([3]u16{ 65535, 65535, 65535 }, pixels.items[2]);
@@ -969,7 +974,7 @@ test "three-pass frames fill one channel each" {
     var pixels: std.ArrayList([3]u16) = .empty;
     defer pixels.deinit(gpa);
     for ([_]usize{ 0, 1, 2 }) |channel| {
-        const layout: Layout = .{ .width = 1, .depth = 8, .gray = false, .channel = channel };
+        const layout: Layout = .{ .width = 1, .depth = .eight, .gray = false, .channel = channel };
         try layout.decode(gpa, &.{@intCast(channel + 1)}, 0, &pixels);
     }
     try std.testing.expectEqual(@as(usize, 1), pixels.items.len);
@@ -991,9 +996,9 @@ test "SANE's test backend scans, where libsane is installed" {
     var progress: interface.Progress = .{};
     var picture = try scanner.scan(gpa, .{ .source = capabilities.source, .dpi = 25, .area = .{ .x = 0, .y = 0, .width = 20, .height = 10 } }, &progress);
     defer picture.deinit(gpa);
-    try std.testing.expect(picture.width > 0 and picture.height > 0);
-    try std.testing.expectEqual(picture.width * picture.height, picture.pixels.len);
-    try std.testing.expectEqual(@as(u32, @intCast(picture.height)), progress.lines.load(.acquire));
+    try std.testing.expect(picture.scan.width > 0 and picture.scan.height > 0);
+    try std.testing.expectEqual(picture.scan.width * picture.scan.height, picture.scan.pixels.len);
+    try std.testing.expectEqual(@as(u32, @intCast(picture.scan.height)), progress.lines.load(.acquire));
 }
 
 test "every function compiles, on every platform" {

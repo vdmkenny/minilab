@@ -90,6 +90,35 @@ const FilmName = enum {
 const negative_films: std.EnumSet(FilmName) = .initMany(&.{ .colour, .bw });
 
 /// Returns the film kind `--film <value>` names, as long as it's one the command `takes`.
+/// A command's arguments, read one at a time: flags, the values that follow them, and the rest. A
+/// mistake in them, such as a flag with no value or one the command doesn't know, is
+/// `error.Usage`, which prints the usage.
+const Args = struct {
+    list: []const [:0]const u8,
+    at: usize = 0,
+
+    fn next(args: *Args) ?[:0]const u8 {
+        if (args.at == args.list.len) return null;
+        const arg = args.list[args.at];
+        args.at += 1;
+        return arg;
+    }
+
+    /// The value after the flag just read.
+    fn value(args: *Args) error{Usage}![:0]const u8 {
+        return args.next() orelse error.Usage;
+    }
+
+    /// Whether `arg` is a flag, such as `--dpi`, rather than a path or a name.
+    fn isFlag(arg: []const u8) bool {
+        return std.mem.startsWith(u8, arg, "--");
+    }
+};
+
+fn eql(a: []const u8, b: []const u8) bool {
+    return std.mem.eql(u8, a, b);
+}
+
 fn parseFilm(value: []const u8, takes: std.EnumSet(FilmName)) error{Usage}!minilab.develop.FilmKind {
     const name = std.meta.stringToEnum(FilmName, value) orelse return error.Usage;
     if (!takes.contains(name)) return error.Usage;
@@ -109,7 +138,7 @@ fn parseNumbers(comptime count: usize, value: []const u8) error{Usage}![count]f3
 }
 
 const Format = enum { tiff, ppm };
-const Depth = enum { eight, sixteen };
+const Depth = minilab.image.Depth;
 
 const Options = struct {
     input: []const u8,
@@ -132,10 +161,8 @@ const Options = struct {
 fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) minilab.stock_curves.Curves {
     for (minilab.stocks.stocks) |stock| {
         if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
-        // The presets' kinds have the same names as Develop's.
-        const stock_kind = std.meta.stringToEnum(minilab.develop.FilmKind, @tagName(stock.kind)).?;
-        if (stock_kind != kind) {
-            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock_kind, kind });
+        if (stock.kind != kind) {
+            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock.kind, kind });
             std.process.exit(usage_status);
         }
         const curves = minilab.stock_curves.of(stock, @splat(1)) orelse {
@@ -175,7 +202,7 @@ fn freeLook(gpa: std.mem.Allocator, look: minilab.look.Resolved, name: []const u
 }
 
 fn isCubeFile(name: []const u8) bool {
-    return std.ascii.endsWithIgnoreCase(name, ".cube");
+    return std.ascii.endsWithIgnoreCase(name, minilab.look.cube_extension);
 }
 
 /// `minilab looks`: lists the looks `--look` takes by name, each with its human-readable name.
@@ -200,28 +227,22 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var area: ?scan.Area = null;
     var film: scan.Film = .positive;
     var flatbed = false;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        const value = if (i + 1 < args.len) args[i + 1] else "";
-        if (std.mem.eql(u8, arg, "--list")) {
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--list")) {
             list = true;
-        } else if (std.mem.eql(u8, arg, "--flatbed")) {
+        } else if (eql(arg, "--flatbed")) {
             flatbed = true;
-        } else if (std.mem.eql(u8, arg, "--device") and value.len > 0) {
-            wanted = value;
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "--dpi") and value.len > 0) {
-            dpi = std.fmt.parseInt(u32, value, 10) catch return error.Usage;
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "--film") and value.len > 0) {
-            film = std.meta.stringToEnum(scan.Film, value) orelse return error.Usage;
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "--area") and value.len > 0) {
-            const x, const y, const width, const height = try parseNumbers(4, value);
+        } else if (eql(arg, "--device")) {
+            wanted = try each.value();
+        } else if (eql(arg, "--dpi")) {
+            dpi = std.fmt.parseInt(u32, try each.value(), 10) catch return error.Usage;
+        } else if (eql(arg, "--film")) {
+            film = std.meta.stringToEnum(scan.Film, try each.value()) orelse return error.Usage;
+        } else if (eql(arg, "--area")) {
+            const x, const y, const width, const height = try parseNumbers(4, try each.value());
             area = .{ .x = x, .y = y, .width = width, .height = height };
-            i += 1;
-        } else if (output == null and arg.len > 0 and arg[0] != '-') {
+        } else if (output == null and !Args.isFlag(arg)) {
             output = arg;
         } else return error.Usage;
     }
@@ -257,10 +278,10 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var progress: scan.Progress = .{};
     var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = area }, &progress);
     defer image.deinit(gpa);
-    const ppm = try minilab.pnm.write(gpa, u16, .{ .width = image.width, .height = image.height, .pixels = image.pixels });
+    const ppm = try minilab.pnm.write(gpa, u16, image.scan);
     defer gpa.free(ppm);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output.?, .data = ppm });
-    std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.width, image.height, image.depth, image.area.width, image.area.height, image.area.x, image.area.y });
+    std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.scan.width, image.scan.height, image.depth.bits(), image.area.width, image.area.height, image.area.x, image.area.y });
 }
 
 /// The resolution `minilab scan` uses when none is given, good for a quick preview.
@@ -336,30 +357,22 @@ fn homeFolder(environ: *const std.process.Environ.Map) ?[]const u8 {
 fn parseOpen(arena: std.mem.Allocator, library: []const u8, home: ?[]const u8, args: []const [:0]const u8) !app.Options {
     var options: app.Options = .{ .library = library, .home = home };
     var paths: std.ArrayList([]const u8) = .empty;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        const takes_value = for ([_][]const u8{ "--screenshot", "--library", "--roll", "--workspace" }) |flag| {
-            if (std.mem.eql(u8, arg, flag)) break true;
-        } else false;
-        if (std.mem.eql(u8, arg, "--shortcuts")) {
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--shortcuts")) {
             options.shortcuts = true;
-            continue;
-        }
-        if (!takes_value) {
-            try paths.append(arena, arg);
-            continue;
-        }
-        i += 1;
-        if (i == args.len) return error.MissingValue;
-        const value = args[i];
-        if (std.mem.eql(u8, arg, "--screenshot")) options.screenshot = value;
-        if (std.mem.eql(u8, arg, "--library")) options.library = value;
-        if (std.mem.eql(u8, arg, "--roll")) {
-            options.roll = value;
+        } else if (eql(arg, "--screenshot")) {
+            options.screenshot = try each.value();
+        } else if (eql(arg, "--library")) {
+            options.library = try each.value();
+        } else if (eql(arg, "--roll")) {
+            options.roll = try each.value();
             options.workspace = .develop;
-        }
-        if (std.mem.eql(u8, arg, "--workspace")) options.workspace = std.meta.stringToEnum(app.Workspace, value) orelse return error.UnknownWorkspace;
+        } else if (eql(arg, "--workspace")) {
+            options.workspace = std.meta.stringToEnum(app.Workspace, try each.value()) orelse return error.Usage;
+        } else if (Args.isFlag(arg)) {
+            return error.Usage;
+        } else try paths.append(arena, arg);
     }
     options.open = paths.items;
     if (paths.items.len > 0 and options.roll == null) options.workspace = .develop;
@@ -376,21 +389,18 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var kind: minilab.develop.FilmKind = .colour_negative;
     var given_base: ?[3]f32 = null;
     var stock_name: ?[]const u8 = null;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--look") and i + 1 < args.len) {
-            i += 1;
-            look_name = args[i];
-        } else if (std.mem.eql(u8, arg, "--stock") and i + 1 < args.len) {
-            i += 1;
-            stock_name = args[i];
-        } else if (std.mem.eql(u8, arg, "--film") and i + 1 < args.len) {
-            i += 1;
-            kind = try parseFilm(args[i], negative_films);
-        } else if (std.mem.eql(u8, arg, "--base") and i + 1 < args.len) {
-            i += 1;
-            given_base = try parseNumbers(minilab.image.channel_count, args[i]);
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--look")) {
+            look_name = try each.value();
+        } else if (eql(arg, "--stock")) {
+            stock_name = try each.value();
+        } else if (eql(arg, "--film")) {
+            kind = try parseFilm(try each.value(), negative_films);
+        } else if (eql(arg, "--base")) {
+            given_base = try parseNumbers(minilab.image.channel_count, try each.value());
+        } else if (Args.isFlag(arg)) {
+            return error.Usage;
         } else try paths.append(gpa, arg);
     }
     if (paths.items.len < 2) return error.Usage;
@@ -404,41 +414,31 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         for (frames.items) |*f| f.deinit(gpa);
         frames.deinit(gpa);
     }
-    var bases: [3]std.ArrayList(f32) = .{ .empty, .empty, .empty };
-    defer for (&bases) |*b| b.deinit(gpa);
-    const format = minilab.formats.Standard.default.format();
+    var bases: std.ArrayList([3]f32) = .empty;
+    defer bases.deinit(gpa);
     for (inputs) |path| {
         var full = (try minilab.input.read(gpa, io, path)).scan;
         defer full.deinit(gpa);
-        var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
-        defer reduced.deinit(gpa);
         const stem = std.fs.path.stem(path);
-        const found = minilab.framing.findAll(gpa, reduced, full.width, full.height, null, format, kind) catch |err| {
-            std.log.warn("{s}: no frame found ({t}); using all of the scan", .{ path, err });
+        const found = try framesOn(gpa, full, kind, path);
+        defer gpa.free(found);
+        if (found.len == 0) {
             try frames.ensureUnusedCapacity(gpa, 1);
             frames.appendAssumeCapacity(try .of(gpa, full, .whole(full.width, full.height), try gpa.dupe(u8, stem)));
             continue;
-        };
-        defer gpa.free(found);
+        }
         for (found, 1..) |f, number| {
-            if (try minilab.framing.measureBase(gpa, full, f.gaps)) |b| {
-                for (&bases, b) |*list, v| try list.append(gpa, v);
-            }
+            if (try minilab.framing.measureBase(gpa, full, f.gaps)) |b| try bases.append(gpa, b);
             const name = if (found.len == 1) try gpa.dupe(u8, stem) else try std.fmt.allocPrint(gpa, "{s}-{d}", .{ stem, number });
             try frames.ensureUnusedCapacity(gpa, 1);
             frames.appendAssumeCapacity(try .of(gpa, full, f.frame, name));
         }
     }
-    var base: [3]f32 = given_base orelse base: {
-        if (bases[0].items.len == 0) return error.NoFilmBase;
-        var b: [3]f32 = undefined;
-        for (&b, &bases) |*v, *list| {
-            std.mem.sort(f32, list.items, {}, std.sort.asc(f32));
-            v.* = list.items[list.items.len / 2];
-        }
-        break :base b;
+    const base: [3]f32 = given_base orelse base: {
+        const scratch = try gpa.alloc(f32, bases.items.len);
+        defer gpa.free(scratch);
+        break :base minilab.stats.channelMedian(bases.items, scratch) orelse return error.NoFilmBase;
     };
-    _ = &base;
     std.log.info("roll film base: {d:.4} {d:.4} {d:.4}", .{ base[0], base[1], base[2] });
 
     var catalog: minilab.look.Catalog = try .init(gpa, null);
@@ -492,15 +492,15 @@ fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) 
     var path: ?[]const u8 = null;
     var dpi: ?f32 = null;
     var kind: minilab.develop.FilmKind = .colour_negative;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--dpi") and i + 1 < args.len) {
-            i += 1;
-            dpi = std.fmt.parseFloat(f32, args[i]) catch return error.Usage;
-        } else if (std.mem.eql(u8, args[i], "--film") and i + 1 < args.len) {
-            i += 1;
-            kind = try parseFilm(args[i], .full);
-        } else path = args[i];
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--dpi")) {
+            dpi = std.fmt.parseFloat(f32, try each.value()) catch return error.Usage;
+        } else if (eql(arg, "--film")) {
+            kind = try parseFilm(try each.value(), .full);
+        } else if (path == null and !Args.isFlag(arg)) {
+            path = arg;
+        } else return error.Usage;
     }
     const scan_path = path orelse return error.Usage;
     const resolution = dpi orelse return error.Usage;
@@ -539,22 +539,23 @@ const ImportOptions = struct {
 fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]const u8) !ImportOptions {
     var options: ImportOptions = .{ .library = library, .roll = undefined, .scans = undefined };
     var positional: std.ArrayList([]const u8) = .empty;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--library") or std.mem.eql(u8, arg, "--stock") or std.mem.eql(u8, arg, "--film") or std.mem.eql(u8, arg, "--flat")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            const value = args[i];
-            if (std.mem.eql(u8, arg, "--library")) options.library = value;
-            if (std.mem.eql(u8, arg, "--stock")) options.stock = value;
-            if (std.mem.eql(u8, arg, "--flat")) options.flat = value;
-            if (std.mem.eql(u8, arg, "--film")) options.kind = try parseFilm(value, .full);
-        } else if (std.mem.eql(u8, arg, "--move")) {
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--library")) {
+            options.library = try each.value();
+        } else if (eql(arg, "--stock")) {
+            options.stock = try each.value();
+        } else if (eql(arg, "--flat")) {
+            options.flat = try each.value();
+        } else if (eql(arg, "--film")) {
+            options.kind = try parseFilm(try each.value(), .full);
+        } else if (eql(arg, "--move")) {
             options.transfer = .move;
+        } else if (Args.isFlag(arg)) {
+            return error.Usage;
         } else try positional.append(arena, arg);
     }
-    if (positional.items.len < 2) return error.MissingArgument;
+    if (positional.items.len < 2) return error.Usage;
     options.roll = positional.items[0];
     options.scans = positional.items[1..];
     return options;
@@ -597,38 +598,29 @@ fn parse(args: []const [:0]const u8) !Options {
     var count: usize = 0;
     var options: Options = .{ .input = undefined, .output = undefined };
     var stock_name: ?[]const u8 = null;
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        const arg = args[i];
-        if (std.mem.eql(u8, arg, "--look")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            options.look = args[i];
-        } else if (std.mem.eql(u8, arg, "--film")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            options.kind = try parseFilm(args[i], negative_films);
-        } else if (std.mem.eql(u8, arg, "--whole")) {
+    var each: Args = .{ .list = args };
+    while (each.next()) |arg| {
+        if (eql(arg, "--look")) {
+            options.look = try each.value();
+        } else if (eql(arg, "--film")) {
+            options.kind = try parseFilm(try each.value(), negative_films);
+        } else if (eql(arg, "--whole")) {
             options.whole = true;
-        } else if (std.mem.eql(u8, arg, "--stock")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            stock_name = args[i];
-        } else if (std.mem.eql(u8, arg, "--base")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            options.base = try parseNumbers(minilab.image.channel_count, args[i]);
-        } else if (std.mem.eql(u8, arg, "--depth")) {
-            i += 1;
-            if (i == args.len) return error.MissingValue;
-            options.depth = if (std.mem.eql(u8, args[i], "8")) .eight else if (std.mem.eql(u8, args[i], "16")) .sixteen else return error.UnknownDepth;
+        } else if (eql(arg, "--stock")) {
+            stock_name = try each.value();
+        } else if (eql(arg, "--base")) {
+            options.base = try parseNumbers(minilab.image.channel_count, try each.value());
+        } else if (eql(arg, "--depth")) {
+            const bits = std.fmt.parseInt(u8, try each.value(), 10) catch return error.Usage;
+            options.depth = std.enums.fromInt(Depth, bits) orelse return error.Usage;
+        } else if (Args.isFlag(arg) or count == positional.len) {
+            return error.Usage;
         } else {
-            if (count == positional.len) return error.TooManyArguments;
             positional[count] = arg;
             count += 1;
         }
     }
-    if (count != positional.len) return error.MissingArgument;
+    if (count != positional.len) return error.Usage;
     options.input = positional[0];
     options.output = positional[1];
     if (stock_name) |name| options.curves = stockNamed(name, options.kind);
@@ -644,18 +636,27 @@ fn formatOf(path: []const u8) !Format {
 
 /// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame
 /// of a strip as `<out>-1.tif`, `<out>-2.tif` and so on.
+/// The frames on `full`, the scan at `path`, found the way the app finds them. None means use all
+/// of the scan. The caller frees the list.
+fn framesOn(gpa: std.mem.Allocator, full: minilab.image.Scan, kind: minilab.develop.FilmKind, path: []const u8) ![]const minilab.framing.Found {
+    var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
+    defer reduced.deinit(gpa);
+    return minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), kind) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            std.log.warn("{s}: no frame found ({t}); using all of the scan", .{ path, err });
+            return &.{};
+        },
+    };
+}
+
 fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     var full = (try minilab.input.read(gpa, io, options.input)).scan;
     defer full.deinit(gpa);
     const format = try formatOf(options.output);
 
     // Find the frames on the scan the way the app does, unless the whole scan was asked for.
-    var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
-    defer reduced.deinit(gpa);
-    const found: []const minilab.framing.Found = if (options.whole) &.{} else minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), options.kind) catch |err| found: {
-        std.log.warn("no frame found ({t}); developing all of the scan", .{err});
-        break :found &.{};
-    };
+    const found: []const minilab.framing.Found = if (options.whole) &.{} else try framesOn(gpa, full, options.kind, options.input);
     defer gpa.free(found);
 
     var catalog: minilab.look.Catalog = try .init(gpa, null);
@@ -761,4 +762,14 @@ test {
 test {
     _ = version;
     _ = @import("platform/icon.zig");
+}
+
+test "a command's flags take the value after them, and a mistake is a usage error" {
+    const parsed = try parse(&.{ "in.ppm", "out.tif", "--film", "bw", "--depth", "8", "--whole" });
+    try std.testing.expectEqual(minilab.develop.FilmKind.bw_negative, parsed.kind);
+    try std.testing.expectEqual(Depth.eight, parsed.depth);
+    try std.testing.expect(parsed.whole);
+    try std.testing.expectError(error.Usage, parse(&.{ "in.ppm", "out.tif", "--look" }));
+    try std.testing.expectError(error.Usage, parse(&.{ "in.ppm", "out.tif", "--bogus" }));
+    try std.testing.expectError(error.Usage, parse(&.{ "in.ppm", "out.tif", "third.tif" }));
 }

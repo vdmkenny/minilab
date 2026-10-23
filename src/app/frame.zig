@@ -287,9 +287,7 @@ pub const Frame = struct {
         } else {
             var linear = try look.render(gpa, turned, frame.settings, try catalog.resolve(gpa, io, frame.look));
             defer linear.deinit(gpa);
-            var encoded = try minilab.encode.toSrgb8(gpa, linear);
-            defer encoded.deinit(gpa);
-            for (pixels, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+            minilab.encode.toRgba8(linear, pixels);
         }
         return .{ .pixels = pixels, .width = turned.width, .height = turned.height };
     }

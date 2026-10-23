@@ -27,6 +27,7 @@ const std = @import("std");
 const curve = @import("curve.zig");
 const model_ = @import("model.zig");
 const colour = @import("colour.zig");
+const stats = @import("../core/stats.zig");
 const linear = @import("linear.zig");
 
 const Model = model_.Model;
@@ -342,24 +343,11 @@ fn fitLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, 
             if (side != f.which) continue;
         }
         const o = model.curved(s.density, balance[s.pair]);
-        var base: [3]usize = undefined;
-        var frac: [3]f32 = undefined;
-        for (&base, &frac, o) |*b, *fr, v| {
-            const t = std.math.clamp(v, 0, 1) * (size - 1);
-            b.* = @min(@as(usize, @intFromFloat(t)), size - 2);
-            fr.* = t - @as(f32, @floatFromInt(b.*));
-        }
-        for (0..8) |corner| {
-            const dr = corner & 1;
-            const dg = corner >> 1 & 1;
-            const db = corner >> 2 & 1;
-            const w: f64 = s.weight * (if (dr == 1) frac[0] else 1 - frac[0]) *
-                (if (dg == 1) frac[1] else 1 - frac[1]) *
-                (if (db == 1) frac[2] else 1 - frac[2]);
+        for (Lut.corners(o)) |corner| {
+            const w: f64 = s.weight * corner.weight;
             if (w == 0) continue;
-            const i = Lut.index(base[0] + dr, base[1] + dg, base[2] + db);
-            for (&sum[i], s.target, o) |*acc, t, v| acc.* += w * (t - v);
-            weight[i] += w;
+            for (&sum[corner.index], s.target, o) |*acc, t, v| acc.* += w * (t - v);
+            weight[corner.index] += w;
         }
         total += s.weight;
         used += 1;
@@ -446,11 +434,11 @@ fn report(gpa: std.mem.Allocator, result: *Result, samples: []const Sample, held
         const e = colour.deltaE2000(colour.lab(out), colour.lab(s.target));
         try (if (held_out[s.pair]) &checked else &fitted).append(gpa, e);
     }
-    result.report.fitted_median = colour.percentile(fitted.items, 0.5);
+    result.report.fitted_median = stats.median(fitted.items) orelse 0;
     if (weights > 0) result.report.fitted_rms = @floatCast(@sqrt(squares / weights));
     if (checked.items.len > 0) {
-        result.report.median = colour.percentile(checked.items, 0.5);
-        result.report.p95 = colour.percentile(checked.items, 0.95);
+        result.report.median = stats.median(checked.items);
+        result.report.p95 = stats.percentile(checked.items, 0.95);
     }
 }
 

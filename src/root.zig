@@ -12,6 +12,8 @@ pub const look = @import("core/look.zig");
 pub const calibration = @import("core/calibration.zig");
 /// Changes to how a scanner is set up for raw scans, per scanner.
 pub const scanner_settings = @import("core/scanner_settings.zig");
+/// Medians, percentiles and histogram ranks.
+pub const stats = @import("core/stats.zig");
 /// Straightening each layer's density by its stock's datasheet curve.
 pub const stock_curves = @import("core/stock_curves.zig");
 /// .cube LUTs, for looks.

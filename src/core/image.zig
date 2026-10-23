@@ -11,6 +11,30 @@ pub const full_scale = std.math.maxInt(u16);
 /// 255 becomes 65535.
 pub const widen_8_to_16 = full_scale / std.math.maxInt(u8);
 
+/// Bits per channel, in a file or from a scanner.
+pub const Depth = enum(u8) {
+    eight = 8,
+    sixteen = 16,
+
+    pub fn bits(depth: Depth) u8 {
+        return @backingInt(depth);
+    }
+
+    /// Bytes per sample.
+    pub fn bytes(depth: Depth) usize {
+        return depth.bits() / 8;
+    }
+};
+
+/// Sample number `index` of `data`, which holds `depth`-bit samples in `endian` byte order, as a
+/// 16-bit sample. An 8-bit sample is widened (`widen_8_to_16`).
+pub fn sampleAt(data: []const u8, index: usize, depth: Depth, endian: std.builtin.Endian) u16 {
+    return switch (depth) {
+        .eight => @as(u16, data[index]) * widen_8_to_16,
+        .sixteen => std.mem.readInt(u16, data[index * 2 ..][0..2], endian),
+    };
+}
+
 /// An image of `Pixel`s, row by row.
 pub fn Image(comptime Pixel: type) type {
     return struct {

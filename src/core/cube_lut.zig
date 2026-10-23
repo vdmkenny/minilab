@@ -54,18 +54,18 @@ pub const Lut = struct {
             } else if (std.mem.eql(u8, keyword, "LUT_1D_SIZE")) {
                 one_size = try sizeOf(fields.next(), 2, max_size_1d);
             } else if (std.mem.eql(u8, keyword, "DOMAIN_MIN")) {
-                const v = try triple(&fields);
+                const v = try numbers(3, &fields);
                 one_range[0] = v;
                 three_range[0] = v;
             } else if (std.mem.eql(u8, keyword, "DOMAIN_MAX")) {
-                const v = try triple(&fields);
+                const v = try numbers(3, &fields);
                 one_range[1] = v;
                 three_range[1] = v;
             } else if (std.mem.eql(u8, keyword, "LUT_1D_INPUT_RANGE")) {
-                const range = try pair(&fields);
+                const range = try numbers(2, &fields);
                 one_range = .{ @splat(range[0]), @splat(range[1]) };
             } else if (std.mem.eql(u8, keyword, "LUT_3D_INPUT_RANGE")) {
-                const range = try pair(&fields);
+                const range = try numbers(2, &fields);
                 three_range = .{ @splat(range[0]), @splat(range[1]) };
             }
             // Other keywords, like LUT_IN_VIDEO_RANGE, don't change anything here.
@@ -89,7 +89,7 @@ pub const Lut = struct {
             const line = std.mem.trim(u8, raw, " \t");
             if (line.len == 0 or line[0] == '#' or !isDataLine(line)) continue;
             var fields = std.mem.tokenizeAny(u8, line, " \t");
-            const v = try triple(&fields);
+            const v = try numbers(3, &fields);
             if (filled < one_count) lut.one.?.values[filled] = v else lut.three.?.values[filled - one_count] = v;
             filled += 1;
         }
@@ -142,18 +142,9 @@ fn sizeOf(field: ?[]const u8, min: usize, max: usize) ParseError!usize {
     return size;
 }
 
-fn triple(fields: *std.mem.TokenIterator(u8, .any)) ParseError![3]f32 {
-    var v: [3]f32 = undefined;
-    for (&v) |*x| {
-        const field = fields.next() orelse return error.Truncated;
-        x.* = std.fmt.parseFloat(f32, field) catch return error.InvalidNumber;
-        if (!std.math.isFinite(x.*)) return error.InvalidNumber;
-    }
-    return v;
-}
-
-fn pair(fields: *std.mem.TokenIterator(u8, .any)) ParseError![2]f32 {
-    var v: [2]f32 = undefined;
+/// The next `n` numbers of a line.
+fn numbers(comptime n: usize, fields: *std.mem.TokenIterator(u8, .any)) ParseError![n]f32 {
+    var v: [n]f32 = undefined;
     for (&v) |*x| {
         const field = fields.next() orelse return error.Truncated;
         x.* = std.fmt.parseFloat(f32, field) catch return error.InvalidNumber;
