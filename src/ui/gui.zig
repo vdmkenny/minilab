@@ -460,6 +460,28 @@ pub fn turnIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, clockwise: bool,
     c.ImDrawList_AddLineEx(list, tip, vec2(tip.x - along * head, tip.y + head), ink, thickness);
 }
 
+/// Draws a five-pointed star centred on `centre`, with its points `radius` from the centre: filled,
+/// or just its outline.
+pub fn star(list: *c.ImDrawList, centre: Vec2, radius: f32, filled: bool, colour: theme.Color) void {
+    var points: [10]Vec2 = undefined;
+    for (&points, 0..) |*p, i| {
+        // The points and the notches between them take turns, starting with the top point.
+        const r = if (i % 2 == 0) radius else radius * star_notch;
+        const angle = -std.math.pi / 2.0 + @as(f32, @floatFromInt(i)) * std.math.pi / 5.0;
+        p.* = vec2(centre.x + r * @cos(angle), centre.y + r * @sin(angle));
+    }
+    const ink = theme.imU32(colour);
+    if (filled) {
+        c.ImDrawList_AddConcavePolyFilled(list, &points, points.len, ink);
+    } else {
+        c.ImDrawList_AddPolyline(list, &points, points.len, ink, @max(1, radius / 6), c.ImDrawFlags_Closed);
+    }
+}
+
+/// How far in a star's notches are, as a share of its radius. A regular star's are at 0.38, and a
+/// little more fills out a small one.
+const star_notch = 0.45;
+
 /// Prints `v` with `format`, using a real minus sign as the design does.
 pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
     const shown = print(format, .{@abs(v)});

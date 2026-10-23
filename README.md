@@ -50,9 +50,12 @@ The app has five workspaces, roughly one per step:
   frame's box, then queue the frames up and scan them into a roll.
 - **Develop** is where a negative becomes a picture. You see the negative and the positive side
   by side, and you set the film base, density, inversion curve, colour balance, saturation and a
-  look. Sync copies some or all of those settings to the roll's other frames.
+  look. Sync copies some or all of those settings to the roll's other frames. You can also give a
+  frame 1 to 5 stars or reject it, in the bar under the picture or with Lightroom's keys: 0 to 5
+  for stars, X to reject, U to take the reject back.
 - **Export** saves TIFF or JPEG files in sRGB, Display P3, Adobe RGB or ProPhoto RGB, with the
-  roll's metadata in them.
+  roll's metadata in them, at full size or with the long edge cut down to a size you pick. A star
+  filter picks the frames by rating, and rejected frames start out unticked.
 - **Looks** lists the looks you can develop with, and lets you make your own (see below).
 
 Picking a film stock in Develop does more than label the roll. Film doesn't respond to light in a

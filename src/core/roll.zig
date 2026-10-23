@@ -113,6 +113,30 @@ pub const FrameSettings = struct {
     look: look.Id = .neutral,
     settings: develop.Settings = .{},
     developed: bool = false,
+    /// The stars and the reject flag you give the frame in Develop. Export starts with rejected
+    /// frames unchecked.
+    rating: Rating = .{},
+};
+
+/// A frame's rating: up to five stars, and whether it's rejected. Rejecting a frame keeps its
+/// stars, as Lightroom does, so they come back if you take the reject back.
+pub const Rating = struct {
+    /// 0 for none, up to `max_stars`.
+    stars: u8 = 0,
+    rejected: bool = false,
+
+    pub const max_stars = 5;
+
+    /// The rating with its stars brought into range, for one read from a file.
+    pub fn valid(rating: Rating) Rating {
+        return .{ .stars = @min(rating.stars, max_stars), .rejected = rating.rejected };
+    }
+
+    /// The rating as XMP's `xmp:Rating` gives it: -1 for rejected, otherwise the stars, with 0
+    /// for none.
+    pub fn xmp(rating: Rating) i8 {
+        return if (rating.rejected) -1 else @intCast(@min(rating.stars, max_stars));
+    }
 };
 
 pub const Roll = struct {
@@ -173,6 +197,7 @@ pub const Roll = struct {
                 break :frame FrameSettings{ .scan = "" };
             };
             upgrade(&frame.settings);
+            frame.rating = frame.rating.valid();
             try roll.frames.append(arena, frame);
         }
         return roll;
@@ -567,6 +592,7 @@ test "a roll round-trips through its folder" {
     const index = try roll.addScan(gpa, io, "P6 1 1 255\n\x00\x00\x00");
     roll.frames.items[index].settings.contrast = 3.5;
     roll.frames.items[index].developed = true;
+    roll.frames.items[index].rating = .{ .stars = 4, .rejected = true };
     try roll.saveFrame(io, index);
     roll.close();
 
@@ -581,7 +607,18 @@ test "a roll round-trips through its folder" {
     try std.testing.expectEqual(@as(usize, 1), again.frames.items.len);
     try std.testing.expectEqual(@as(f32, 3.5), again.frames.items[0].settings.contrast);
     try std.testing.expectEqual(@as(usize, 1), again.developedCount());
+    try std.testing.expectEqual(Rating{ .stars = 4, .rejected = true }, again.frames.items[0].rating);
     try std.testing.expectEqual(@as(usize, "2026-10-22".len), again.info.created.?.len);
+}
+
+test "a frame saved before ratings has none, and too many stars come down to five" {
+    const gpa = std.testing.allocator;
+    const old = try std.json.parseFromSlice(FrameSettings, gpa, "{\"scan\":\"01.ppm\",\"developed\":true}", .{ .ignore_unknown_fields = true });
+    defer old.deinit();
+    try std.testing.expectEqual(Rating{}, old.value.rating);
+    try std.testing.expectEqual(Rating{ .stars = 5 }, (Rating{ .stars = 9 }).valid());
+    try std.testing.expectEqual(@as(i8, -1), (Rating{ .stars = 3, .rejected = true }).xmp());
+    try std.testing.expectEqual(@as(i8, 3), (Rating{ .stars = 3 }).xmp());
 }
 
 const synthetic = @import("../frames/synthetic.zig");

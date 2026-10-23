@@ -43,6 +43,14 @@ pub const Command = enum {
     sync,
     reset,
     automatic,
+    no_stars,
+    one_star,
+    two_stars,
+    three_stars,
+    four_stars,
+    five_stars,
+    reject,
+    unreject,
     new_roll,
     find,
     import,
@@ -87,6 +95,14 @@ pub const Command = enum {
             .sync => "Sync settings to roll",
             .reset => "Reset settings",
             .automatic => "Automatic settings",
+            .no_stars => "No stars",
+            .one_star => "1 star",
+            .two_stars => "2 stars",
+            .three_stars => "3 stars",
+            .four_stars => "4 stars",
+            .five_stars => "5 stars",
+            .reject => "Reject",
+            .unreject => "Clear reject",
             .new_roll => "New roll",
             .find => "Find rolls",
             .import => "Import (Scan)",
@@ -98,6 +114,18 @@ pub const Command = enum {
             .help => "Keyboard shortcuts",
             .quit => "Quit",
             .cancel => "Cancel a pick, close a panel",
+        };
+    }
+
+    /// The command that gives a frame `count` stars, up to five.
+    pub fn stars(count: usize) Command {
+        return switch (count) {
+            0 => .no_stars,
+            1 => .one_star,
+            2 => .two_stars,
+            3 => .three_stars,
+            4 => .four_stars,
+            else => .five_stars,
         };
     }
 };
@@ -162,6 +190,15 @@ pub const bindings = [_]Binding{
     bind(.sync, command_key | shift | c.ImGuiKey_S),
     bind(.reset, command_key | shift | c.ImGuiKey_R),
     bind(.automatic, command_key | c.ImGuiKey_U),
+    // Rating: Lightroom's 0 to 5 for stars, X to reject and U to take the reject back.
+    bind(.no_stars, c.ImGuiKey_0),
+    bind(.one_star, c.ImGuiKey_1),
+    bind(.two_stars, c.ImGuiKey_2),
+    bind(.three_stars, c.ImGuiKey_3),
+    bind(.four_stars, c.ImGuiKey_4),
+    bind(.five_stars, c.ImGuiKey_5),
+    bind(.reject, c.ImGuiKey_X),
+    bind(.unreject, c.ImGuiKey_U),
     // The library.
     bind(.new_roll, command_key | c.ImGuiKey_N),
     bind(.find, command_key | c.ImGuiKey_F),
@@ -272,6 +309,7 @@ const groups = [_]struct { []const u8, []const Command }{
     .{ "VIEWER", &.{ .zoom_toggle, .zoom_in, .zoom_out, .clipping, .before, .split } },
     .{ "TOOLS", &.{ .white_balance, .base, .crop, .turn_left, .turn_right, .mirror, .confirm } },
     .{ "SETTINGS", &.{ .undo, .redo, .copy_settings, .paste_settings, .paste_previous, .sync, .reset, .automatic } },
+    .{ "RATING", &.{ .no_stars, .one_star, .two_stars, .three_stars, .four_stars, .five_stars, .reject, .unreject } },
     .{ "LIBRARY", &.{ .new_roll, .find, .import } },
     .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .help, .quit, .cancel } },
 };
