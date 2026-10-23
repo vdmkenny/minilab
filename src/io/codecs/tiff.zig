@@ -9,19 +9,13 @@ const native_endian = @import("builtin").cpu.arch.endian();
 const c = @import("codecs");
 const image = @import("../../core/image.zig");
 
-/// Bits per sample.
-pub const Depth = enum(u16) {
-    eight = 8,
-    sixteen = 16,
-};
-
 /// A TIFF after reading it into a scan.
 pub const Decoded = struct {
     /// The pixels. An 8-bit file's samples are widened to 16 bits (255 becomes 65535). No transfer
     /// function is undone, so the scan is only linear if the file was.
     scan: image.Scan,
     /// The file's bits per sample.
-    depth: Depth,
+    depth: image.Depth,
     /// The file's embedded ICC profile, if it has one.
     icc_profile: ?[]u8,
 
@@ -120,7 +114,7 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
         return error.InvalidTiff;
     if (width == 0 or height == 0) return error.InvalidTiff;
 
-    const depth = std.enums.fromInt(Depth, bits) orelse return error.UnsupportedTiff;
+    const depth = std.enums.fromInt(image.Depth, bits) orelse return error.UnsupportedTiff;
     const sample_format: SampleFormat = @fromBackingInt(format_number);
     if (sample_format != .unsigned) return error.UnsupportedTiff;
     const planar_config: PlanarConfig = @fromBackingInt(planar_number);
@@ -256,21 +250,22 @@ fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layou
 /// Returns sample number `index` in `bytes`, as 16 bits. LibTIFF has already put the samples in
 /// the host's byte order.
 fn sampleAt(comptime Sample: type, bytes: []const u8, index: usize) u16 {
+    return image.sampleAt(bytes, index, depthOf(Sample), native_endian);
+}
+
+/// The depth of samples of type `Sample`.
+fn depthOf(comptime Sample: type) image.Depth {
     return switch (Sample) {
-        u8 => @as(u16, bytes[index]) * image.widen_8_to_16,
-        u16 => std.mem.readInt(u16, bytes[index * @sizeOf(u16) ..][0..@sizeOf(u16)], native_endian),
-        else => @compileError("samples are 8 or 16 bits"),
+        u8 => .eight,
+        u16 => .sixteen,
+        else => @compileError("TIFF samples are 8 or 16 bits"),
     };
 }
 
 /// Writes `encoded` (RGB, with 8-bit or 16-bit `Sample`s) as a TIFF file with Deflate. The caller
 /// owns the bytes.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), options: WriteOptions) WriteError![]u8 {
-    const depth: Depth = switch (Sample) {
-        u8 => .eight,
-        u16 => .sixteen,
-        else => @compileError("TIFFs are written with 8- or 16-bit samples"),
-    };
+    const depth = depthOf(Sample);
     const width = std.math.cast(u32, encoded.width) orelse return error.ImageTooLarge;
     const height = std.math.cast(u32, encoded.height) orelse return error.ImageTooLarge;
     const row_bytes = encoded.width * @sizeOf([image.channel_count]Sample);
@@ -494,7 +489,7 @@ test "16-bit RGB comes back as written, with its ICC profile" {
 
     var decoded = try read(gpa, file);
     defer decoded.deinit(gpa);
-    try std.testing.expectEqual(Depth.sixteen, decoded.depth);
+    try std.testing.expectEqual(image.Depth.sixteen, decoded.depth);
     try std.testing.expectEqual(encoded.width, decoded.scan.width);
     try std.testing.expectEqual(encoded.height, decoded.scan.height);
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, decoded.scan.pixels);
@@ -511,7 +506,7 @@ test "8-bit RGB comes back widened to 16 bits, without a profile" {
 
     var decoded = try read(gpa, file);
     defer decoded.deinit(gpa);
-    try std.testing.expectEqual(Depth.eight, decoded.depth);
+    try std.testing.expectEqual(image.Depth.eight, decoded.depth);
     try std.testing.expectEqual(null, decoded.icc_profile);
     for (encoded.pixels, decoded.scan.pixels) |written, read_back| {
         for (written, read_back) |w, r| try std.testing.expectEqual(@as(u16, w) * image.widen_8_to_16, r);

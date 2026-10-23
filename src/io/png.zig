@@ -54,7 +54,7 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocat
     }
     const h = header orelse return error.InvalidHeader;
 
-    const pixel_bytes = h.channels * h.sample_bytes;
+    const pixel_bytes = h.channels * h.depth.bytes();
     const row_bytes = std.math.mul(usize, h.width, pixel_bytes) catch return error.InvalidHeader;
     const raw_len = std.math.mul(usize, h.height, row_bytes + 1) catch return error.InvalidHeader;
     const raw = try gpa.alloc(u8, raw_len);
@@ -75,10 +75,7 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocat
         for (scan.pixels[y * h.width ..][0..h.width], 0..) |*p, x| {
             const pixel = row[x * pixel_bytes ..][0..pixel_bytes];
             var samples: [4]u16 = undefined;
-            for (samples[0..h.channels], 0..) |*s, c| s.* = switch (h.sample_bytes) {
-                1 => @as(u16, pixel[c]) * image.widen_8_to_16,
-                else => std.mem.readInt(u16, pixel[c * 2 ..][0..2], .big),
-            };
+            for (samples[0..h.channels], 0..) |*s, c| s.* = image.sampleAt(pixel, c, h.depth, .big);
             p.* = if (h.channels < 3) @splat(samples[0]) else samples[0..3].*;
         }
     }
@@ -102,24 +99,24 @@ const Header = struct {
     width: usize,
     height: usize,
     channels: usize,
-    sample_bytes: usize,
+    depth: image.Depth,
 
     fn parse(data: []const u8) Error!Header {
         if (data.len != 13) return error.InvalidHeader;
         const width = std.mem.readInt(u32, data[0..4], .big);
         const height = std.mem.readInt(u32, data[4..8], .big);
-        const depth = data[8];
+        const bits = data[8];
         const colour: ColourType = @fromBackingInt(@intCast(data[9]));
         const compression = data[10];
         const filtering = data[11];
         const interlace = data[12];
         if (width == 0 or height == 0 or compression != 0 or filtering != 0) return error.InvalidHeader;
-        if (interlace != 0 or (depth != 8 and depth != 16)) return error.UnsupportedFormat;
+        if (interlace != 0) return error.UnsupportedFormat;
         return .{
             .width = width,
             .height = height,
             .channels = colour.channels() orelse return error.UnsupportedFormat,
-            .sample_bytes = depth / 8,
+            .depth = std.enums.fromInt(image.Depth, bits) orelse return error.UnsupportedFormat,
         };
     }
 };

@@ -36,17 +36,7 @@ pub const Format = enum {
     }
 };
 
-pub const Depth = enum {
-    eight,
-    sixteen,
-
-    pub fn bits(depth: Depth) u8 {
-        return switch (depth) {
-            .eight => 8,
-            .sixteen => 16,
-        };
-    }
-};
+pub const Depth = image.Depth;
 
 /// The colour spaces offered, in the order the interface lists them.
 pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
@@ -735,7 +725,7 @@ test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" 
     defer gpa.free(file);
     var decoded = try tiff.read(gpa, file);
     defer decoded.deinit(gpa);
-    try std.testing.expectEqual(tiff.Depth.sixteen, decoded.depth);
+    try std.testing.expectEqual(image.Depth.sixteen, decoded.depth);
     const profile = try icc.profileBytes(gpa, .adobe_rgb);
     defer gpa.free(profile);
     try std.testing.expect(icc.sameProfile(profile, decoded.icc_profile.?));

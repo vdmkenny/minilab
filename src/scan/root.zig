@@ -23,6 +23,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const image = @import("../core/image.zig");
 
 pub const sane = @import("sane.zig");
 pub const twain = @import("twain.zig");
@@ -268,20 +269,18 @@ pub const Request = struct {
 
 /// A scan as the scanner delivered it: RGB, and linear if the scanner's profile makes it so.
 pub const Image = struct {
-    width: usize,
-    height: usize,
-    /// Row by row. 8-bit data is scaled to the full 16-bit range.
-    pixels: [][3]u16,
-    /// The bits per channel the scanner delivered: 8 or 16.
-    depth: u8,
+    /// The pixels. 8-bit data is scaled to the full 16-bit range.
+    scan: image.Scan,
+    /// The bits per channel the scanner delivered.
+    depth: image.Depth,
     /// The resolution the scanner used, across and down.
     dpi: [2]f32,
     /// The area the scanner used. It may have rounded the area we asked for.
     area: Area,
 
-    pub fn deinit(image: *Image, gpa: std.mem.Allocator) void {
-        gpa.free(image.pixels);
-        image.* = undefined;
+    pub fn deinit(picture: *Image, gpa: std.mem.Allocator) void {
+        picture.scan.deinit(gpa);
+        picture.* = undefined;
     }
 };
 

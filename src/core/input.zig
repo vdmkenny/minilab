@@ -143,7 +143,7 @@ pub const raw_extensions = "dng;nef;nrw;cr2;cr3;crw;arw;srf;sr2;raf;orf;rw2;rwl;
 
 /// Bits per sample in the file. Camera RAW counts as 16, since it's linear whatever the sensor's
 /// depth.
-pub const Depth = enum { eight, sixteen };
+pub const Depth = image.Depth;
 
 /// A file read into a scan.
 pub const Read = struct {
@@ -181,20 +181,14 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
     switch (kind) {
         .pnm => {
             const decoded = try pnm.decode(gpa, bytes);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = switch (decoded.depth) {
-                .eight => .eight,
-                .sixteen => .sixteen,
-            } };
+            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
         },
         .tiff => {
             const decoded = try tiff.read(gpa, bytes);
             // A profile says how to show the file's colours, but the density stage works in the
             // scanner's own channels, so we don't use it.
             if (decoded.icc_profile) |profile| gpa.free(profile);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = switch (decoded.depth) {
-                .eight => .eight,
-                .sixteen => .sixteen,
-            } };
+            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
         },
         .jpeg => {
             var decoded = try jpeg.read(gpa, bytes);

@@ -109,7 +109,7 @@ fn parseNumbers(comptime count: usize, value: []const u8) error{Usage}![count]f3
 }
 
 const Format = enum { tiff, ppm };
-const Depth = enum { eight, sixteen };
+const Depth = minilab.image.Depth;
 
 const Options = struct {
     input: []const u8,
@@ -257,10 +257,10 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var progress: scan.Progress = .{};
     var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = area }, &progress);
     defer image.deinit(gpa);
-    const ppm = try minilab.pnm.write(gpa, u16, .{ .width = image.width, .height = image.height, .pixels = image.pixels });
+    const ppm = try minilab.pnm.write(gpa, u16, image.scan);
     defer gpa.free(ppm);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output.?, .data = ppm });
-    std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.width, image.height, image.depth, image.area.width, image.area.height, image.area.x, image.area.y });
+    std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.scan.width, image.scan.height, image.depth.bits(), image.area.width, image.area.height, image.area.x, image.area.y });
 }
 
 /// The resolution `minilab scan` uses when none is given, good for a quick preview.
