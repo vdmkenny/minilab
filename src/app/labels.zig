@@ -178,6 +178,14 @@ pub fn stockGamma(name: ?[]const u8) ?[3]f32 {
     return preset.gamma;
 }
 
+/// Bytes in a megabyte, as sizes on screen count them.
+const bytes_per_megabyte = 1_000_000;
+
+/// `bytes` in whole megabytes.
+pub fn megabytes(bytes: u64) u64 {
+    return bytes / bytes_per_megabyte;
+}
+
 /// Why a .cube file couldn't be imported, for the notice.
 pub fn importError(err: anyerror) []const u8 {
     return switch (err) {

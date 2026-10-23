@@ -763,6 +763,8 @@ test {
     _ = @import("platform/trash.zig");
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
+    _ = @import("app/update_view.zig");
+    _ = @import("app/update_worker.zig");
     _ = @import("app/looks_view.zig");
     _ = @import("app/export_view.zig");
     _ = @import("app/rolls_view.zig");

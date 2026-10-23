@@ -66,9 +66,10 @@ pub fn verifyResponse(gpa: std.mem.Allocator, response: []const u8, name: []cons
     const Response = struct { attestations: []const struct { bundle: Bundle } };
     const parsed = parse(Response, arena, response) catch |err| return mapParse(err);
     if (parsed.attestations.len == 0) return error.NotForThisFile;
+    const root = parse(TrustedRoot, arena, trusted_root_json) catch |err| return mapParse(err);
     var first: ?Error = null;
     for (parsed.attestations) |attestation| {
-        verifyBundle(arena, attestation.bundle, name, digest, signer) catch |err| {
+        verifyBundle(arena, root, attestation.bundle, name, digest, signer) catch |err| {
             if (err == error.OutOfMemory) return err;
             if (first == null) first = err;
             continue;
@@ -107,8 +108,8 @@ const LogEntry = struct {
     canonicalizedBody: []const u8,
 };
 
-/// Checks one bundle, allocating in `arena`.
-fn verifyBundle(arena: std.mem.Allocator, bundle: Bundle, name: []const u8, digest: [Sha256.digest_length]u8, signer: Signer) Error!void {
+/// Checks one bundle against the trusted root, allocating in `arena`.
+fn verifyBundle(arena: std.mem.Allocator, root: TrustedRoot, bundle: Bundle, name: []const u8, digest: [Sha256.digest_length]u8, signer: Signer) Error!void {
     if (!std.mem.startsWith(u8, bundle.mediaType, bundle_type)) return error.Unsupported;
 
     // The statement names the file.
@@ -138,7 +139,7 @@ fn verifyBundle(arena: std.mem.Allocator, bundle: Bundle, name: []const u8, dige
     // Rekor logged this signature and certificate, at a time it vouches for.
     if (material.tlogEntries.len == 0) return error.NotInLog;
     const entry = material.tlogEntries[0];
-    const log = try findLog(arena, try decode(arena, entry.logId.keyId));
+    const log = try findLog(arena, root, try decode(arena, entry.logId.keyId));
     const time = std.fmt.parseInt(i64, entry.integratedTime, 10) catch return error.Malformed;
     const body = try decode(arena, entry.canonicalizedBody);
     try checkBody(arena, entry, body, payload, signature, certificate_der);
@@ -146,7 +147,7 @@ fn verifyBundle(arena: std.mem.Allocator, bundle: Bundle, name: []const u8, dige
     try checkInclusion(arena, entry, body, log);
 
     // The certificate was Fulcio's, valid then, and given to the signer.
-    try checkChain(arena, leaf, time);
+    try checkChain(arena, root, leaf, time);
     try checkSigner(certificate_der, signer);
 }
 
@@ -296,13 +297,8 @@ const TrustedRoot = struct {
     },
 };
 
-fn trustedRoot(arena: std.mem.Allocator) Error!TrustedRoot {
-    return parse(TrustedRoot, arena, trusted_root_json) catch |err| mapParse(err);
-}
-
 /// The trusted root's Rekor log with key ID `id`, if it's one we can check.
-fn findLog(arena: std.mem.Allocator, id: []const u8) Error!Log {
-    const root = try trustedRoot(arena);
+fn findLog(arena: std.mem.Allocator, root: TrustedRoot, id: []const u8) Error!Log {
     for (root.tlogs) |tlog| {
         const tlog_id = try decode(arena, tlog.logId.keyId);
         if (tlog_id.len != Sha256.digest_length or !std.mem.eql(u8, tlog_id, id)) continue;
@@ -321,8 +317,7 @@ fn findLog(arena: std.mem.Allocator, id: []const u8) Error!Log {
 }
 
 /// Checks `leaf` chains to one of the trusted root's certificate authorities at `time`.
-fn checkChain(arena: std.mem.Allocator, leaf: Certificate.Parsed, time: i64) Error!void {
-    const root = try trustedRoot(arena);
+fn checkChain(arena: std.mem.Allocator, root: TrustedRoot, leaf: Certificate.Parsed, time: i64) Error!void {
     for (root.certificateAuthorities) |authority| {
         const start = epochSeconds(authority.validFor.start) orelse return error.Malformed;
         if (time < start) continue;
@@ -356,8 +351,7 @@ fn checkSigner(certificate_der: []const u8, signer: Signer) Error!void {
             while (at < names.end) {
                 const general_name = try Der.read(extension.value, at);
                 at = general_name.end;
-                // A uniformResourceIdentifier is context-specific tag 6.
-                if (general_name.tag == 0x86 and std.mem.eql(u8, extension.value[general_name.start..general_name.end], signer.workflow)) workflow = true;
+                if (general_name.tag == @backingInt(Der.Tag.uri) and std.mem.eql(u8, extension.value[general_name.start..general_name.end], signer.workflow)) workflow = true;
             }
         } else if (std.mem.eql(u8, extension.oid, &issuer_oid)) {
             const string = try Der.read(extension.value, 0);
@@ -384,8 +378,7 @@ const Extensions = struct {
         while (at < tbs.end) {
             const element = try Der.read(bytes, at);
             at = element.end;
-            // The extensions are wrapped in context-specific tag 3.
-            if (element.tag != 0xA3) continue;
+            if (element.tag != @backingInt(Der.Tag.extensions)) continue;
             const list = try Der.read(bytes, element.start);
             return .{ .bytes = bytes, .at = list.start, .end = list.end };
         }
@@ -399,8 +392,8 @@ const Extensions = struct {
         const oid = try Der.read(e.bytes, extension.start);
         var value = try Der.read(e.bytes, oid.end);
         // The critical flag is optional.
-        if (value.tag == 0x01) value = try Der.read(e.bytes, value.end);
-        if (value.tag != 0x04) return error.Malformed;
+        if (value.tag == @backingInt(Der.Tag.boolean)) value = try Der.read(e.bytes, value.end);
+        if (value.tag != @backingInt(Der.Tag.octet_string)) return error.Malformed;
         return .{ .oid = e.bytes[oid.start..oid.end], .value = e.bytes[value.start..value.end] };
     }
 };
@@ -411,7 +404,7 @@ fn publicKeyPoint(spki: []const u8) Error![]const u8 {
     const algorithm = try Der.read(spki, info.start);
     const key = try Der.read(spki, algorithm.end);
     // A bit string starts with how many bits of its last byte are unused, which is 0 for a key.
-    if (key.tag != 0x03 or key.end - key.start < 2 or spki[key.start] != 0) return error.Malformed;
+    if (key.tag != @backingInt(Der.Tag.bit_string) or key.end - key.start < 2 or spki[key.start] != 0) return error.Malformed;
     return spki[key.start + 1 .. key.end];
 }
 
@@ -421,14 +414,31 @@ const Der = struct {
     start: u32,
     end: u32,
 
+    /// The tags we look for.
+    const Tag = enum(u8) {
+        boolean = 0x01,
+        bit_string = 0x03,
+        octet_string = 0x04,
+        /// A certificate's extensions, wrapped in context-specific tag 3.
+        extensions = 0xA3,
+        /// A uniformResourceIdentifier in a list of general names: context-specific tag 6.
+        uri = 0x86,
+    };
+    /// A length's first byte has this bit set when the length's bytes follow it, and the rest of
+    /// it counts them. Lengths of more than this many bytes are more than we read.
+    const long_length = 0x80;
+    const max_length_bytes = 4;
+    /// A tag with this bit set holds other elements.
+    const constructed = 0x20;
+
     fn read(bytes: []const u8, at: u32) Error!Der {
         if (at + 2 > bytes.len) return error.Malformed;
         const tag = bytes[at];
         var start = at + 2;
         var length: u32 = bytes[at + 1];
-        if (length & 0x80 != 0) {
-            const count = length & 0x7f;
-            if (count == 0 or count > 4 or start + count > bytes.len) return error.Malformed;
+        if (length & long_length != 0) {
+            const count = length & ~@as(u32, long_length);
+            if (count == 0 or count > max_length_bytes or start + count > bytes.len) return error.Malformed;
             length = 0;
             for (bytes[start..][0..count]) |byte| length = (std.math.shlExact(u32, length, 8) catch return error.Malformed) | byte;
             start += count;
@@ -445,8 +455,7 @@ const Der = struct {
         var at = start;
         while (at < end) {
             const element = read(bytes[0..end], at) catch return false;
-            const constructed = element.tag & 0x20 != 0;
-            if (constructed and !wellFormed(bytes, element.start, element.end, depth + 1)) return false;
+            if (element.tag & constructed != 0 and !wellFormed(bytes, element.start, element.end, depth + 1)) return false;
             at = element.end;
         }
         return at == end;
@@ -507,14 +516,20 @@ fn epochSeconds(text: []const u8) ?i64 {
     const minute = std.fmt.parseInt(i64, text[14..16], 10) catch return null;
     const second = std.fmt.parseInt(i64, text[17..19], 10) catch return null;
     if (month < 1 or month > 12 or day < 1 or day > 31) return null;
-    // Days from 1970-01-01 to the date, by Howard Hinnant's days_from_civil.
+    // Days from 1970-01-01 to the date, by Howard Hinnant's days_from_civil: count years from
+    // March, so the leap day comes last, in 400-year eras of the Gregorian calendar.
+    const years_per_era = 400;
+    const days_per_era = 146097;
+    // Days from 0000-03-01, where the eras start, to 1970-01-01.
+    const days_to_1970 = 719468;
     const y = if (month <= 2) year - 1 else year;
-    const era = @divFloor(y, 400);
-    const year_of_era = y - era * 400;
-    const shifted_month: i64 = if (month > 2) month - 3 else month + 9;
-    const day_of_year = @divFloor(153 * shifted_month + 2, 5) + day - 1;
+    const era = @divFloor(y, years_per_era);
+    const year_of_era = y - era * years_per_era;
+    const month_from_march: i64 = if (month > 2) month - 3 else month + 9;
+    // The days before each month from March: 0, 31, 61, 92 and so on.
+    const day_of_year = @divFloor(153 * month_from_march + 2, 5) + day - 1;
     const day_of_era = year_of_era * 365 + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100) + day_of_year;
-    const days = era * 146097 + day_of_era - 719468;
+    const days = era * days_per_era + day_of_era - days_to_1970;
     return days * std.time.s_per_day + hour * std.time.s_per_hour + minute * std.time.s_per_min + second;
 }
 
@@ -612,8 +627,9 @@ test "the certificate is only trusted while it was valid, and only for its signe
     const certificate_der = try decode(arena, bundle.verificationMaterial.certificate.?.rawBytes);
     const leaf = try parseCertificate(certificate_der);
     const logged = try std.fmt.parseInt(i64, bundle.verificationMaterial.tlogEntries[0].integratedTime, 10);
-    try checkChain(arena, leaf, logged);
-    try std.testing.expectError(error.UntrustedCertificate, checkChain(arena, leaf, logged + std.time.s_per_day));
+    const root = try parse(TrustedRoot, arena, trusted_root_json);
+    try checkChain(arena, root, leaf, logged);
+    try std.testing.expectError(error.UntrustedCertificate, checkChain(arena, root, leaf, logged + std.time.s_per_day));
     try std.testing.expectError(error.WrongSigner, checkSigner(certificate_der, .{ .workflow = test_signer.workflow, .issuer = "https://accounts.google.com" }));
 }
 

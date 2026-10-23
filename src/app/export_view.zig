@@ -671,8 +671,7 @@ fn showFolder(folder: []const u8) void {
             url.print(std.heap.page_allocator, "%{X:0>2}", .{ch}) catch return;
         }
     }
-    url.append(std.heap.page_allocator, 0) catch return;
-    if (!c.SDL_OpenURL(url.items[0 .. url.items.len - 1 :0])) std.log.err("can't open {s}: {s}", .{ folder, c.SDL_GetError() });
+    gui.openUrl(url.items);
 }
 
 // The settings panel ----------------------------------------------------------------------------

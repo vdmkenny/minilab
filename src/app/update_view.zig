@@ -9,18 +9,15 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const version = @import("../version.zig");
 const context = @import("context.zig");
+const labels = @import("labels.zig");
 const Worker = @import("update_worker.zig").Worker;
 
 const update = minilab.update;
 
-/// The window's padding, the gap between its parts, the width its text wraps at, the tallest its
-/// release notes get before they scroll, and its buttons' height.
-const padding_x = 20;
-const padding_y = 16;
-const gap = 8;
+/// The width the window's text wraps at, and the tallest its release notes get before they
+/// scroll, in the design's pixels.
 const text_width = 440;
 const notes_height = 180;
-const button_height = 32;
 
 pub const State = struct {
     open: bool = false,
@@ -43,14 +40,8 @@ pub fn draw(state: *State, worker: *Worker, ctx: context.Context, busy: bool) bo
     const phase = worker.phase.load(.acquire);
     if (phase == .installed) return true;
     if (!state.open) return false;
-    const release = &(worker.release orelse return false);
-
-    if (!c.ImGui_IsPopupOpen("update", 0)) _ = c.ImGui_OpenPopup("update", 0);
-    // Centred every frame: it sizes itself to what it shows, which changes as an update goes on.
-    c.ImGui_SetNextWindowPosEx(c.ImGuiViewport_GetCenter(c.ImGui_GetMainViewport()), c.ImGuiCond_Always, gui.vec2(0.5, 0.5));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(padding_x), gui.px(padding_y)));
-    defer c.ImGui_PopStyleVar();
-    if (!c.ImGui_BeginPopupModal("update", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
+    const release = if (worker.release) |*r| r else return false;
+    if (!gui.beginDialog("update")) {
         state.open = false;
         return false;
     }
@@ -60,13 +51,13 @@ pub fn draw(state: *State, worker: *Worker, ctx: context.Context, busy: bool) bo
 
     gui.title(gui.print("minilab {s}", .{release.version}), fonts.title_size);
     gui.textColored(theme.text_tertiary, gui.print("Installed {s}", .{version.string}));
-    c.ImGui_Dummy(gui.vec2(0, gui.px(gap)));
+    gap();
     drawNotes(release.notes);
-    c.ImGui_Dummy(gui.vec2(0, gui.px(gap)));
+    gap();
 
     const working = phase == .downloading or phase == .installing;
     switch (phase) {
-        .downloading => gui.textColored(theme.text_secondary, gui.print("Downloading {d} of {d} MB", .{ worker.downloaded.load(.acquire) / bytes_per_mb, release.archive.size / bytes_per_mb })),
+        .downloading => gui.textColored(theme.text_secondary, gui.print("Downloading {d} of {d} MB", .{ labels.megabytes(worker.downloaded.load(.acquire)), labels.megabytes(release.archive.size) })),
         .installing => gui.textColored(theme.text_secondary, "Installing"),
         .failed => gui.paragraph(theme.accent, gui.print("Update failed · {s}", .{failureLabel(worker.failure)})),
         else => if (!worker.writable) {
@@ -76,24 +67,27 @@ pub fn draw(state: *State, worker: *Worker, ctx: context.Context, busy: bool) bo
         },
     }
     if (builtin.os.tag == .macos and !worker.signed) drawUnquarantine(ctx, worker.folder);
-    c.ImGui_Dummy(gui.vec2(0, gui.px(gap)));
+    gap();
 
+    const button = gui.vec2(0, gui.button_height);
     if (worker.writable) {
         c.ImGui_BeginDisabled(busy or working);
-        if (gui.buttonOf(.primary, "Update and restart", gui.vec2(0, button_height))) worker.install();
+        if (gui.buttonOf(.primary, "Update and restart", button)) worker.install();
         c.ImGui_EndDisabled();
-        c.ImGui_SameLineEx(0, gui.px(gap));
-        if (gui.buttonOf(.normal, "Release notes", gui.vec2(0, button_height))) openPage(release.page);
-    } else if (gui.buttonOf(.primary, "Download", gui.vec2(0, button_height))) openPage(release.page);
-    c.ImGui_SameLineEx(0, gui.px(gap));
-    if (gui.buttonOf(.normal, if (working) "Hide" else "Later", gui.vec2(0, button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
+        c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
+        if (gui.buttonOf(.normal, "Release notes", button)) gui.openUrl(release.page);
+    } else if (gui.buttonOf(.primary, "Download", button)) gui.openUrl(release.page);
+    c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
+    if (gui.buttonOf(.normal, if (working) "Hide" else "Later", button) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
         state.open = false;
         c.ImGui_CloseCurrentPopup();
     }
     return false;
 }
 
-const bytes_per_mb = 1_000_000;
+fn gap() void {
+    c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
+}
 
 /// The release notes: headings, and each change after a dot. They scroll when there are many.
 fn drawNotes(notes: []const update.Note) void {
@@ -114,29 +108,36 @@ fn drawUnquarantine(ctx: context.Context, folder: []const u8) void {
     fonts.pushSized(.mono, fonts.small_size);
     gui.paragraph(theme.text_tertiary, command);
     fonts.pop();
-    if (gui.buttonOf(.normal, "Copy", gui.vec2(0, 0))) {
-        _ = c.SDL_SetClipboardText(command);
-        ctx.notice.set("Copied", .{});
-    }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("For Terminal");
-}
-
-fn openPage(url: []const u8) void {
-    const page = gui.print("{s}", .{url});
-    if (!c.SDL_OpenURL(page)) std.log.err("can't open {s}: {s}", .{ url, c.SDL_GetError() });
+    context.copyButton(ctx.notice, command, gui.vec2(0, 0));
 }
 
 /// Why an update failed, in a few words.
 fn failureLabel(failure: ?anyerror) []const u8 {
     const err = failure orelse return "unknown";
+    if (err == error.OutOfMemory) return "out of memory";
+    if (inSet(update.sigstore.Error, err)) return "attestation doesn't verify";
     return switch (err) {
         error.Offline, error.BadStatus => "no connection to GitHub",
         error.ChecksumMissing, error.ChecksumMismatch => "checksum doesn't match",
-        error.Malformed, error.Unsupported, error.NotForThisFile, error.BadSignature, error.UntrustedCertificate, error.WrongSigner, error.NotInLog => "attestation doesn't verify",
-        error.NotWritable, error.AccessDenied, error.PermissionDenied => "can't write to minilab's folder",
+        error.NotWritable, error.AccessDenied, error.PermissionDenied => "folder not writable",
         error.NotABuild, error.BadArchive => "download isn't a minilab build",
         error.TooLarge => "download too large",
         error.Cancelled => "cancelled",
         else => @errorName(err),
     };
+}
+
+/// Whether `err` is one of the errors in `Set`.
+fn inSet(comptime Set: type, err: anyerror) bool {
+    inline for (@typeInfo(Set).error_set.error_names.?) |name| {
+        if (err == @field(anyerror, name)) return true;
+    }
+    return false;
+}
+
+test "failures get a few words each" {
+    try std.testing.expectEqualStrings("attestation doesn't verify", failureLabel(error.WrongSigner));
+    try std.testing.expectEqualStrings("checksum doesn't match", failureLabel(error.ChecksumMismatch));
+    try std.testing.expectEqualStrings("out of memory", failureLabel(error.OutOfMemory));
+    try std.testing.expectEqualStrings("unknown", failureLabel(null));
 }

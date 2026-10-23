@@ -47,10 +47,17 @@ const previous_folder = ".previous";
 /// The most an answer from GitHub's API can be, and the most a release archive can be.
 const max_answer_bytes = 4 * 1024 * 1024;
 const max_archive_bytes = 512 * 1024 * 1024;
+/// Room for a redirect's address, which release downloads go through, and how much of a download
+/// is read at a time.
+const redirect_bytes = 8 * 1024;
+const chunk_bytes = 64 * 1024;
+/// How much of a zip archive is read at a time while unpacking it.
+const zip_read_bytes = 16 * 1024;
 
 /// A release that's newer than this build, with what installing it takes.
 pub const Release = struct {
-    arena: std.heap.ArenaAllocator,
+    /// Holds the release's strings. It's on the heap, so the release can be passed around.
+    arena: *std.heap.ArenaAllocator,
     version: []const u8,
     /// Its page on GitHub.
     page: []const u8,
@@ -59,7 +66,9 @@ pub const Release = struct {
     checksums: Asset,
 
     pub fn deinit(release: *Release) void {
+        const gpa = release.arena.child_allocator;
         release.arena.deinit();
+        gpa.destroy(release.arena);
     }
 };
 
@@ -79,7 +88,9 @@ pub fn newerRelease(gpa: std.mem.Allocator, client: *std.http.Client, current: [
     defer answer.deinit(gpa);
     try fetch(gpa, client, api ++ "/releases/latest", "application/vnd.github+json", max_answer_bytes, &answer, null, null);
 
-    var arena: std.heap.ArenaAllocator = .init(gpa);
+    const arena = try gpa.create(std.heap.ArenaAllocator);
+    errdefer gpa.destroy(arena);
+    arena.* = .init(gpa);
     errdefer arena.deinit();
     const a = arena.allocator();
     const Latest = struct {
@@ -94,6 +105,7 @@ pub fn newerRelease(gpa: std.mem.Allocator, client: *std.http.Client, current: [
     const offered = std.SemanticVersion.parse(version) catch return error.BadAnswer;
     if (offered.order(installed) != .gt) {
         arena.deinit();
+        gpa.destroy(arena);
         return null;
     }
     const archive_name = try std.fmt.allocPrint(a, "minilab-{s}-{s}{s}", .{ latest.tag_name, name, archive_extension });
@@ -213,12 +225,12 @@ fn fetch(gpa: std.mem.Allocator, client: *std.http.Client, url: []const u8, acce
     }) catch return error.Offline;
     defer request.deinit();
     request.sendBodiless() catch return error.Offline;
-    var redirects: [8 * 1024]u8 = undefined;
+    var redirects: [redirect_bytes]u8 = undefined;
     var response = request.receiveHead(&redirects) catch return error.Offline;
     if (response.head.status != .ok) return error.BadStatus;
-    var transfer: [64 * 1024]u8 = undefined;
+    var transfer: [chunk_bytes]u8 = undefined;
     const body = response.reader(&transfer);
-    var chunk: [64 * 1024]u8 = undefined;
+    var chunk: [chunk_bytes]u8 = undefined;
     while (true) {
         if (cancel) |c| if (c.load(.acquire)) return error.Cancelled;
         const n = body.readSliceShort(&chunk) catch return error.Offline;
@@ -296,7 +308,7 @@ fn unpack(io: Io, archive: []const u8, staging: Io.Dir) InstallError!Io.Dir {
         staging.writeFile(io, .{ .sub_path = "archive.zip", .data = archive }) catch return error.NotWritable;
         var file = staging.openFile(io, "archive.zip", .{}) catch return error.NotWritable;
         defer file.close(io);
-        var buffer: [16 * 1024]u8 = undefined;
+        var buffer: [zip_read_bytes]u8 = undefined;
         var reader = file.reader(io, &buffer);
         var files = staging.createDirPathOpen(io, "files", .{ .open_options = .{ .iterate = true } }) catch return error.NotWritable;
         defer files.close(io);
@@ -340,12 +352,6 @@ pub fn restart(io: Io, folder: []const u8, argv: []const []const u8) !void {
         return;
     }
     return std.process.replace(io, .{ .exe = exe, .argv = argv });
-}
-
-/// The command that takes macOS's quarantine off the files in `folder`, for when it won't open an
-/// unsigned build.
-pub fn unquarantineCommand(arena: std.mem.Allocator, folder: []const u8) error{OutOfMemory}![]const u8 {
-    return std.fmt.allocPrint(arena, "xattr -dr com.apple.quarantine \"{s}\"", .{folder});
 }
 
 /// Whether the program at `path` carries a Developer ID signature, which macOS opens without
