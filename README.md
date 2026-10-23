@@ -18,16 +18,15 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 
 ## Features
 
-- **Raw scanning:** drives your scanner directly for linear 16-bit scans and finds the frames on
-  the preview. The Mac download comes with SANE's drivers; on Windows it uses the maker's TWAIN
-  driver.
-- **One workflow:** frame detection, inversion, colour correction and batch export in one app.
-- **Datasheet corrections:** for stocks with a published datasheet, minilab uses the maker's
-  curves to open up the shadows the film squeezes together and keep them from tinting.
+- **Raw scanning:** linear 16-bit scans straight from your scanner. The Mac download comes with
+  SANE's drivers. On Windows, minilab uses the maker's TWAIN driver.
+- **Frame detection:** finds the frames on a scanner preview, a strip scan or a camera shot.
+- **One workflow:** scanning, inversion, colour correction and batch export in one app.
+- **Datasheet corrections:** the film maker's published curves open up crushed shadows and keep
+  them neutral.
 - **Film looks:** Frontier lab emulation, 85 film looks from three free collections, and your own
   `.cube` LUTs (3D or 1D).
-- **Fitted looks:** give minilab pairs of its scans and a lab's scans of the same negatives, and
-  it works out a look that matches the lab.
+- **Fitted looks:** a look that matches your lab, made from a few frames scanned by both.
 - **Metadata:** camera, lens, film stock, date, copyright, star ratings and fields of your own,
   written into the exports as EXIF and XMP.
 - **Command line:** import, scan and develop from the terminal as well as in the app.
