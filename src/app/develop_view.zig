@@ -313,7 +313,7 @@ pub const State = struct {
     /// The crop being drawn, while the crop tool is on.
     cropping: ?CropEdit = null,
 
-    compare: Compare = .split,
+    compare: Compare = .positive,
     /// Where the split is, as a share of the frame's width.
     split: f32 = 0.5,
     zoom: Zoom = .fit,
@@ -727,7 +727,7 @@ pub const State = struct {
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
         if (!gui.beginCombo("look", frame.look.label(), 0, .tall)) return;
-        defer c.ImGui_EndCombo();
+        defer gui.endCombo();
         if (c.ImGui_IsWindowAppearing()) {
             state.look_choices.deinit(gpa);
             state.look_choices = library.looks.choices(gpa, io) catch .empty;
