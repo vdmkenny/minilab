@@ -77,6 +77,8 @@ pub fn build(b: *std.Build) void {
 
     // The Windows program gets the same icon the window shows.
     if (target.result.os.tag == .windows) app.addWin32ResourceFile(.{ .file = windowsIcon(b) });
+    // Moving rolls to the Trash goes through Foundation's file manager (`platform/trash.zig`).
+    if (target.result.os.tag == .macos) app.linkFramework("Foundation", .{});
     const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
 

@@ -51,6 +51,8 @@ pub const State = struct {
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
     flat_dialog: Dialog = .{ .filters = &flat_files },
+    /// The roll whose Delete was clicked, waiting for the confirmation.
+    deleting: ?usize = null,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
         state.flat_dialog.deinit(gpa);
@@ -85,6 +87,8 @@ pub const Action = union(enum) {
     created: usize,
     /// Files were dropped on this roll's row.
     dropped_on: usize,
+    /// Move this roll to the Trash, after it was confirmed.
+    trash: usize,
 };
 
 /// The film sizes a roll can have, in the order the form lists them.
@@ -124,7 +128,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         if (!matches(state, r.info)) continue;
         shown += 1;
         c.ImGui_PushIDInt(@intCast(i));
-        if (drawRow(library, gpa, r, i, drop)) |row_action| action = row_action;
+        if (drawRow(state, library, gpa, r, i, drop)) |row_action| action = row_action;
         c.ImGui_PopID();
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
@@ -135,6 +139,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
     gui.paragraph(theme.text_tertiary, "Undeveloped frames: raw scan");
+    if (drawDeleteConfirmation(state, library)) |index| action = .{ .trash = index };
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
@@ -212,8 +217,42 @@ fn drawTitleRow(state: *State, library: *Library) void {
     fonts.pop();
 }
 
+/// Asks whether to delete the roll whose Delete was clicked. Returns its index once confirmed.
+fn drawDeleteConfirmation(state: *State, library: *const Library) ?usize {
+    const index = state.deleting orelse return null;
+    if (index >= library.rolls.items.len) {
+        state.deleting = null;
+        return null;
+    }
+    const r = library.rolls.items[index];
+    if (!c.ImGui_IsPopupOpen("delete roll", 0)) _ = c.ImGui_OpenPopup("delete roll", 0);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(20), gui.px(16)));
+    defer c.ImGui_PopStyleVar();
+    if (!c.ImGui_BeginPopupModal("delete roll", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
+        state.deleting = null;
+        return null;
+    }
+    defer c.ImGui_EndPopup();
+    gui.title(gui.print("Delete {s}?", .{r.info.name}), 15);
+    const frames = r.frames.items.len;
+    gui.textColored(theme.text_tertiary, gui.print("{d} {s} · scans, settings, exports · to the Trash", .{ frames, if (frames == 1) "frame" else "frames" }));
+    c.ImGui_Dummy(gui.vec2(0, gui.px(8)));
+    var confirmed: ?usize = null;
+    if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, 32))) confirmed = index;
+    c.ImGui_SameLineEx(0, gui.px(8));
+    const cancelled = gui.buttonOf(.normal, "Cancel", gui.vec2(0, 32)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
+    if (confirmed != null or cancelled) {
+        state.deleting = null;
+        c.ImGui_CloseCurrentPopup();
+    }
+    return confirmed;
+}
+
+/// The Delete button on a roll's card: a small bin, shown while the card is hovered.
+const delete_size = 22;
+
 /// Draws one roll: its card, then its filmstrip.
-fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
+fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
     var action: ?Action = null;
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
@@ -221,7 +260,8 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
     const card_height = gui.px(card_padding_y * 2 + 21 + 17 + 3 * 3 + 6 + 3 + 3) + line * 3;
     const format = r.info.format.format();
 
-    // The card.
+    // The card. Its Delete button sits on top of it.
+    c.ImGui_SetNextItemAllowOverlap();
     if (c.ImGui_InvisibleButton("card", gui.vec2(gui.px(card_width), card_height), 0)) action = .{ .open = .{ .roll = index } };
     const hovered = c.ImGui_IsItemHovered(0);
     c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + gui.px(card_width), origin.y + card_height), theme.imU32(if (hovered) theme.control else theme.panel), gui.px(6), 0);
@@ -248,6 +288,22 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
     if (total > 0 and developed > 0) {
         const done = bar_width * @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
+    }
+
+    // Delete, in the card's top right corner while the mouse is over the card.
+    const mouse = c.ImGui_GetMousePos();
+    const over_card = mouse.x >= origin.x and mouse.x < origin.x + gui.px(card_width) and mouse.y >= origin.y and mouse.y < origin.y + card_height;
+    if (over_card or state.deleting == index) {
+        const size = gui.px(delete_size);
+        const corner = gui.vec2(origin.x + gui.px(card_width) - size - gui.px(6), origin.y + gui.px(6));
+        c.ImGui_SetCursorScreenPos(corner);
+        if (c.ImGui_InvisibleButton("delete", gui.vec2(size, size), 0)) state.deleting = index;
+        const on_button = c.ImGui_IsItemHovered(0);
+        if (on_button) {
+            c.ImGui_SetTooltip("Delete roll");
+            c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.control_hover), gui.px(4), 0);
+        }
+        drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(7), if (on_button) theme.red else theme.text_tertiary);
     }
 
     // The filmstrip: the film drawn to its own proportions, centred in the row's height, with the
@@ -323,6 +379,25 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
         }
     }
     return action;
+}
+
+/// Draws a waste bin about `half` × 2 high, centred on `centre`: a lid with a handle, and a body
+/// with two lines down it.
+fn drawBin(list: *c.ImDrawList, centre: gui.Vec2, half: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    const thickness = gui.px(1.4);
+    const top = centre.y - half;
+    const lid = top + half * 0.35;
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - half, lid), gui.vec2(centre.x + half, lid), ink, thickness);
+    c.ImDrawList_AddRectEx(list, gui.vec2(centre.x - half * 0.3, top), gui.vec2(centre.x + half * 0.3, lid), ink, gui.px(1), thickness, 0);
+    const body_left = centre.x - half * 0.75;
+    const body_right = centre.x + half * 0.75;
+    const bottom = centre.y + half;
+    c.ImDrawList_AddRectEx(list, gui.vec2(body_left, lid), gui.vec2(body_right, bottom), ink, gui.px(1.5), thickness, 0);
+    for ([_]f32{ -0.28, 0.28 }) |at| {
+        const x = centre.x + half * at;
+        c.ImDrawList_AddLineEx(list, gui.vec2(x, lid + half * 0.35), gui.vec2(x, bottom - half * 0.3), ink, thickness);
+    }
 }
 
 /// Punches the film's holes into a strip from `left` to `right`, `band` high: rows along both
