@@ -71,12 +71,33 @@ const FileChoice = enum {
     }
 };
 
-const space_names = [_][]const u8{ "Display P3", "sRGB", "Adobe RGB", "ProPhoto RGB" };
-/// The sizes Size offers, by long edge, with null for full resolution. The last choice is
-/// Custom, which takes its long edge from `State.custom_edge`.
-const sizes = [_]?usize{ null, 4000, 2048 };
-const size_names = [_][]const u8{ "Full resolution", "Long edge 4000 px", "Long edge 2048 px", "Custom long edge" };
-const custom_size = sizes.len;
+fn spaceLabel(space: icc.Space) []const u8 {
+    return switch (space) {
+        .display_p3 => "Display P3",
+        .srgb => "sRGB",
+        .adobe_rgb => "Adobe RGB",
+        .prophoto => "ProPhoto RGB",
+        .rec2020_linear => "Rec. 2020 linear",
+    };
+}
+
+/// The sizes Size offers.
+const SizeChoice = enum {
+    full,
+    long_edge_4000,
+    long_edge_2048,
+    /// Takes its long edge from `State.custom_edge`.
+    custom,
+
+    fn label(choice: SizeChoice) []const u8 {
+        return switch (choice) {
+            .full => "Full resolution",
+            .long_edge_4000 => "Long edge 4000 px",
+            .long_edge_2048 => "Long edge 2048 px",
+            .custom => "Custom long edge",
+        };
+    }
+};
 /// The range a custom long edge can take, in pixels.
 const min_custom_edge = 64;
 const max_custom_edge = 65535;
@@ -131,9 +152,8 @@ pub const State = struct {
     anchor: ?usize = null,
     file: FileChoice = .tiff16,
     quality: f32 = 92,
-    /// Indices in `minilab.export.spaces` and `sizes`.
-    space: usize = 0,
-    size: usize = 0,
+    space: icc.Space = .display_p3,
+    size: SizeChoice = .full,
     /// The long edge for Custom, in pixels, as typed.
     custom_edge: [8:0]u8 = gui.initText(8, "3000"),
     pattern: [gui.text_capacity:0]u8 = gui.initText(gui.text_capacity, default_pattern),
@@ -175,11 +195,23 @@ pub const State = struct {
 
     fn options(state: *const State) exporting.Options {
         return .{
-            .format = if (state.file == .jpeg) .jpeg else .tiff,
-            .depth = if (state.file == .tiff8) .eight else .sixteen,
+            .format = switch (state.file) {
+                .jpeg => .jpeg,
+                // HEIC can't be written yet, and Export is off while it's chosen.
+                .tiff16, .tiff8, .heic => .tiff,
+            },
+            .depth = switch (state.file) {
+                .tiff8, .jpeg => .eight,
+                .tiff16, .heic => .sixteen,
+            },
             .quality = @intFromFloat(std.math.clamp(@round(state.quality), 1, 100)),
-            .space = exporting.spaces[state.space],
-            .long_edge = if (state.size == custom_size) state.customEdge() else sizes[state.size],
+            .space = state.space,
+            .long_edge = switch (state.size) {
+                .full => null,
+                .long_edge_4000 => 4000,
+                .long_edge_2048 => 2048,
+                .custom => state.customEdge(),
+            },
         };
     }
 
@@ -732,16 +764,16 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     rowLabel(list, x, y, "Color space");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (row - c.ImGui_GetFontSize()) / 2));
-    if (gui.combo("space", &space_names, state.space, control_width / gui.scale)) |picked| state.space = picked;
+    if (gui.comboOf(icc.Space, "space", &exporting.spaces, state.space, spaceLabel, control_width / gui.scale)) |picked| state.space = picked;
     y += row + gui.px(grid_gap);
 
     rowLabel(list, x, y, "Size");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-    if (gui.combo("size", &size_names, state.size, control_width / gui.scale)) |picked| state.size = picked;
+    if (gui.comboOf(SizeChoice, "size", std.enums.values(SizeChoice), state.size, SizeChoice.label, control_width / gui.scale)) |picked| state.size = picked;
     c.ImGui_PopStyleVar();
     y += row + gui.px(grid_gap);
 
-    if (state.size == custom_size) {
+    if (state.size == .custom) {
         rowLabel(list, x, y, "Long edge");
         c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
         fonts.pushSized(.mono, 12);
@@ -1007,7 +1039,7 @@ fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
         return;
     };
     var running: Running = .{ .batch = batch, .future = future };
-    running.what.set("{s}, {s}", .{ state.file.label(), space_names[state.space] });
+    running.what.set("{s}, {s}", .{ state.file.label(), spaceLabel(state.space) });
     state.running = running;
 }
 

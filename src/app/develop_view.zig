@@ -41,7 +41,19 @@ const kelvin_step = 50;
 const pack_menu_height = 480;
 
 /// What the viewer shows.
-const Compare = enum { split, negative, positive };
+const Compare = enum {
+    split,
+    negative,
+    positive,
+
+    fn label(compare: Compare) [:0]const u8 {
+        return switch (compare) {
+            .split => "Split",
+            .negative => "Negative",
+            .positive => "Positive",
+        };
+    }
+};
 /// How big the viewer shows the frame.
 const Zoom = enum { fit, actual };
 /// What a click on the frame does.
@@ -986,7 +998,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));
     c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + size.x, origin.y + toolbar_height - 1), theme.imU32(theme.divider));
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(12), origin.y + gui.px(8)));
-    if (gui.segmented("compare", &.{ "Split", "Negative", "Positive" }, @backingInt(state.compare))) |picked| state.compare = @fromBackingInt(@intCast(picked));
+    if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
     c.ImGui_SameLineEx(0, gui.px(12));
     c.ImGui_SetCursorScreenPos(gui.vec2(c.ImGui_GetCursorScreenPos().x, controls_y));
@@ -1484,10 +1496,9 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(8)));
         defer c.ImGui_PopStyleVar();
         gui.rowLabel("Film type");
-        const kind_index = std.mem.indexOfScalar(develop.FilmKind, &labels.film_kinds, s.kind) orelse 0;
-        if (gui.combo("film type", &labels.film_kind_labels, kind_index, 0)) |picked| {
-            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, labels.film_kinds[picked]);
-            frame.measure(labels.film_kinds[picked]);
+        if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
+            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
+            frame.measure(picked);
             state.changed();
         }
         gui.rowLabel("Stock");
@@ -1496,11 +1507,8 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         state.drawLook(gpa, io, library);
         gui.rowLabel("Tone");
         c.ImGui_BeginDisabled(fitted);
-        const tones = comptime std.enums.values(develop.Tone);
-        var tone_names: [tones.len][]const u8 = undefined;
-        for (&tone_names, tones) |*n, t| n.* = t.label();
-        if (gui.combo("tone", &tone_names, @backingInt(s.tone), 0)) |picked| {
-            s.tone = tones[picked];
+        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
+            s.tone = picked;
             state.changed();
         }
         c.ImGui_EndDisabled();
@@ -1509,7 +1517,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         var mode_names: [modes.len][]const u8 = undefined;
         const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
         for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
-        if (gui.combo("white balance", &mode_names, @backingInt(s.white_balance), 0)) |picked| {
+        if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
             switch (modes[picked]) {
                 .picked => state.picking = .neutral,
                 .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),

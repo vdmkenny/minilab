@@ -120,7 +120,10 @@ pub const Id = struct {
     }
 
     pub fn isNeutral(id: *const Id) bool {
-        return id.kind() == .builtin and id.kind().builtin == .neutral;
+        return switch (id.kind()) {
+            .builtin => |b| b == .neutral,
+            .bundled, .cube, .fitted => false,
+        };
     }
 
     /// The look's name, for people to read.
@@ -155,7 +158,10 @@ pub const Resolved = union(enum) {
     /// Returns the settings to render with for this look. A fitted look starts from the Log tone.
     pub fn settingsFor(look: Resolved, settings: develop.Settings) develop.Settings {
         var out = settings;
-        if (look == .fitted) out.tone = .log;
+        switch (look) {
+            .fitted => out.tone = .log,
+            .neutral, .lut => {},
+        }
         return out;
     }
 

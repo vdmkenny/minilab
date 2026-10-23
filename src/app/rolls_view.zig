@@ -44,8 +44,8 @@ const flat_files = [_]c.SDL_DialogFileFilter{
 
 pub const State = struct {
     search: [gui.text_capacity:0]u8 = @splat(0),
-    /// 0 for all film sizes, otherwise the size's index in `film_sizes` plus one.
-    size_filter: usize = 0,
+    /// The film size shown, or null for all of them.
+    size_filter: ?formats.FilmSize = null,
     show_form: bool = false,
     form: Form = .{},
     /// Move the keyboard focus to the search field on the next frame.
@@ -81,15 +81,16 @@ pub const State = struct {
 /// The fields for the new roll.
 const Form = struct {
     name: [gui.text_capacity:0]u8 = @splat(0),
-    kind: usize = 0,
+    kind: develop.FilmKind = .colour_negative,
+    /// Indices in the lists of stocks and formats, which depend on the film type and size.
     stock: usize = 0,
-    size: usize = 0,
+    size: formats.FilmSize = .@"135",
     format: usize = 0,
     camera: [gui.text_capacity:0]u8 = @splat(0),
     lens: [gui.text_capacity:0]u8 = @splat(0),
     copyright: [gui.text_capacity:0]u8 = @splat(0),
     notes: [gui.text_capacity * 4:0]u8 = @splat(0),
-    input: usize = 0,
+    input: roll.Input = .scanner,
     /// The flat field for a camera roll: a file with a shot of the light source and no film.
     flat: [path_field:0]u8 = @splat(0),
     /// Whether the default name has been filled in since the form was last opened.
@@ -117,12 +118,9 @@ pub const Created = struct {
     flat_failed: bool = false,
 };
 
-/// The film sizes a roll can have, in the order the form lists them.
-const film_sizes = [_]formats.FilmSize{ .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet };
-const film_size_names = [_][]const u8{ "135 (35mm)", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
-const filter_names = [_][]const u8{ "All film sizes", "135", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
-const inputs = [_]roll.Input{ .scanner, .camera_raw, .tiff_files };
-const input_names = [_][]const u8{ "Scanner", "Camera RAW", "TIFF files" };
+const film_sizes = std.enums.values(formats.FilmSize);
+/// The inputs the form offers.
+const form_inputs = [_]roll.Input{ .scanner, .camera_raw, .tiff_files };
 
 /// The standard formats for film size `size`.
 fn formatsOf(size: formats.FilmSize, buffer: []formats.Standard) []formats.Standard {
@@ -181,7 +179,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
 }
 
 fn matches(state: *const State, info: roll.Info) bool {
-    if (state.size_filter > 0 and info.format.format().size != film_sizes[state.size_filter - 1]) return false;
+    if (state.size_filter) |size| if (info.format.format().size != size) return false;
     const query = std.mem.sliceTo(&state.search, 0);
     if (query.len == 0) return true;
     for ([_]?[]const u8{ info.name, info.stock, info.camera }) |field| {
@@ -221,7 +219,14 @@ fn drawTitleRow(state: *State, library: *Library) void {
     _ = gui.textField("search", &state.search, "Search name, stock, camera", search_width);
     shortcuts.tooltip("Search rolls", .find);
     c.ImGui_SameLineEx(0, gui.px(10));
-    if (gui.combo("film size", &filter_names, state.size_filter, filter_width / gui.scale)) |picked| state.size_filter = picked;
+    // All film sizes, then each size.
+    var filter_names: [film_sizes.len + 1][]const u8 = undefined;
+    filter_names[0] = "All film sizes";
+    for (filter_names[1..], film_sizes) |*name, size| name.* = size.label();
+    const filter_index = if (state.size_filter) |size| gui.indexIn(formats.FilmSize, film_sizes, size) + 1 else 0;
+    if (gui.combo("film size", &filter_names, filter_index, filter_width / gui.scale)) |picked| {
+        state.size_filter = if (picked == 0) null else film_sizes[picked - 1];
+    }
     c.ImGui_SameLineEx(0, gui.px(10));
     const corner = c.ImGui_GetCursorScreenPos();
     if (gui.buttonOf(.primary, "##new roll", gui.vec2(new_width / gui.scale, height / gui.scale))) {
@@ -452,22 +457,22 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         gui.paragraph(theme.text_tertiary, problem);
     }
     gui.rowLabel("Film type");
-    if (gui.combo("film type", &labels.film_kind_labels, form.kind, 0)) |picked| {
+    if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, form.kind, labels.filmKind, 0)) |picked| {
         form.kind = picked;
         form.stock = 0;
     }
     gui.rowLabel("Stock");
     var stock_buffer: [labels.stock_choices.len + 1][]const u8 = undefined;
-    const stock_names = labels.stockNames(labels.film_kinds[form.kind], "Other", &stock_buffer);
+    const stock_names = labels.stockNames(form.kind, "Other", &stock_buffer);
     if (form.stock >= stock_names.len) form.stock = 0;
     if (gui.searchCombo("stock", stock_names, form.stock, 0, "Search stocks")) |picked| form.stock = picked;
     gui.rowLabel("Film size");
-    if (gui.combo("film size", &film_size_names, form.size, 0)) |picked| {
+    if (gui.comboOf(formats.FilmSize, "film size", film_sizes, form.size, labels.filmSizeChoice, 0)) |picked| {
         form.size = picked;
         form.format = 0;
     }
     var buffer: [std.enums.values(formats.Standard).len]formats.Standard = undefined;
-    const choices = formatsOf(film_sizes[form.size], &buffer);
+    const choices = formatsOf(form.size, &buffer);
     var names: [buffer.len][]const u8 = undefined;
     for (choices, 0..) |id, i| names[i] = labels.format(id);
     gui.rowLabel("Format");
@@ -483,14 +488,14 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * 3 + gui.px(12)), 0, null, null);
     gui.rowLabel("Input");
-    if (gui.combo("input", &input_names, form.input, 0)) |picked| form.input = picked;
+    if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, roll.Input.label, 0)) |picked| form.input = picked;
     const chosen = state.flat_dialog.take(gpa, io);
     defer Dialog.free(gpa, chosen);
     if (chosen.len > 0) {
         const path = chosen[chosen.len - 1];
         gui.setText(&form.flat, path) catch std.log.err("the flat field's path is too long: {s}", .{path});
     }
-    const camera = inputs[form.input] == .camera_raw;
+    const camera = form.input == .camera_raw;
     if (camera) {
         gui.rowLabel("Flat field");
         const flat = std.mem.sliceTo(&form.flat, 0);
@@ -510,15 +515,18 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     const name = std.mem.sliceTo(&form.name, 0);
     c.ImGui_BeginDisabled(name.len == 0 or choices.len == 0);
     defer c.ImGui_EndDisabled();
-    if (!gui.buttonOf(.primary, if (inputs[form.input] == .scanner) "Create roll and scan" else "Create roll", gui.vec2(c.ImGui_GetContentRegionAvail().x / gui.scale, button_height))) return null;
+    if (!gui.buttonOf(.primary, switch (form.input) {
+        .scanner => "Create roll and scan",
+        .camera_raw, .tiff_files, .finished => "Create roll",
+    }, gui.vec2(c.ImGui_GetContentRegionAvail().x / gui.scale, button_height))) return null;
 
     const stock_count = stock_names.len - 1;
     var made = roll.Roll.create(gpa, io, library.path, .{
         .name = name,
-        .kind = labels.film_kinds[form.kind],
+        .kind = form.kind,
         .stock = if (form.stock < stock_count) stock_names[form.stock] else null,
         .format = choices[form.format],
-        .input = inputs[form.input],
+        .input = form.input,
         .camera = optional(&form.camera),
         .lens = optional(&form.lens),
         .copyright = optional(&form.copyright),

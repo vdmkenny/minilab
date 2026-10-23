@@ -1343,7 +1343,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     const combo_width = widest + gui.px(8 + 30);
     c.ImGui_SetCursorScreenPos(gui.vec2(x, at.y));
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (height - c.ImGui_GetFontSize()) / 2));
-    if (gui.combo("references", &names, @backingInt(own.references), combo_width / gui.scale)) |picked| {
+    if (gui.combo("references", &names, gui.indexIn(draft.Source, sources, own.references), combo_width / gui.scale)) |picked| {
         own.references = sources[picked];
         own.save(ctx);
     }
@@ -1374,7 +1374,44 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     return at.y + height;
 }
 
-const Column = enum { ours, theirs, stock, registration, use };
+/// The pairs table's columns.
+const Column = enum {
+    ours,
+    theirs,
+    stock,
+    registration,
+    use,
+
+    fn header(column: Column, own: *const Own) []const u8 {
+        return switch (column) {
+            .ours => "Our raw scan",
+            .theirs => own.references.one(),
+            .stock => "Stock",
+            .registration => "Registration",
+            .use => "Use",
+        };
+    }
+
+    /// What the column shows for pair `index`.
+    fn text(column: Column, own: *const Own, index: usize) []const u8 {
+        const pair = own.pairs.items[index];
+        return switch (column) {
+            .ours => pair.label,
+            .theirs => std.fs.path.basename(pair.theirs),
+            .stock => stockName(pair.stock),
+            .registration => registrationText(own, index),
+            .use => useLabel(pair),
+        };
+    }
+
+    /// The file names are in the monospaced font.
+    fn mono(column: Column) bool {
+        return switch (column) {
+            .theirs => true,
+            .ours, .stock, .registration, .use => false,
+        };
+    }
+};
 
 /// Draws the table of pairs. Returns the y below.
 fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, available: f32) f32 {
@@ -1391,34 +1428,30 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
 
     // Column widths work like a browser's automatic table layout: each column gets its widest
     // content, then the room that's left is shared out in proportion.
-    const headers = [_][]const u8{ "Our raw scan", own.references.one(), "Stock", "Registration", "Use" };
-    var widths: [headers.len]f32 = undefined;
+    const columns = std.enums.values(Column);
+    var widths: std.EnumArray(Column, f32) = .initUndefined();
     fonts.pushSized(.semibold, 12);
-    for (&widths, headers) |*w, h| w.* = textWidth(h);
+    for (columns) |column| widths.set(column, textWidth(column.header(own)));
     fonts.pop();
-    for (own.pairs.items, 0..) |p, i| {
-        widths[0] = @max(widths[0], textWidth(p.label));
-        fonts.pushSized(.mono, 12);
-        widths[1] = @max(widths[1], textWidth(std.fs.path.basename(p.theirs)));
-        fonts.pop();
-        widths[2] = @max(widths[2], textWidth(stockName(p.stock)));
-        widths[3] = @max(widths[3], textWidth(registrationText(own, i)));
-        widths[4] = @max(widths[4], textWidth(useLabel(p)));
-    }
+    for (0..n) |i| for (columns) |column| {
+        if (column.mono()) fonts.pushSized(.mono, 12);
+        defer if (column.mono()) fonts.pop();
+        widths.set(column, @max(widths.get(column), textWidth(column.text(own, i))));
+    };
     var total: f32 = 0;
-    for (&widths) |*w| {
+    for (&widths.values) |*w| {
         w.* += gui.px(24);
         total += w.*;
     }
     const room = width - 2 - total;
-    for (&widths) |*w| w.* += room * w.* / total;
+    for (&widths.values) |*w| w.* += room * w.* / total;
 
     // The header, in the design's medium weight.
     fonts.pushSized(.semibold, 12);
     var x = at.x + 1;
-    for (headers, widths) |h, w| {
-        gui.textIn(list, x + gui.px(12), at.y + 1 + gui.px(8), gui.lineFor(12), theme.text_secondary, h);
-        x += w;
+    for (columns) |column| {
+        gui.textIn(list, x + gui.px(12), at.y + 1 + gui.px(8), gui.lineFor(12), theme.text_secondary, column.header(own));
+        x += widths.get(column);
     }
     fonts.pop();
     c.ImDrawList_AddLine(list, gui.vec2(at.x + 1, at.y + 1 + header_height - 0.5), gui.vec2(far.x - 1, at.y + 1 + header_height - 0.5), theme.imU32(theme.divider));
@@ -1433,7 +1466,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         defer c.ImGui_PopID();
 
         // The Use cell toggles, and the rest of the row selects the pair.
-        const use_x = far.x - 1 - widths[4];
+        const use_x = far.x - 1 - widths.get(.use);
         c.ImGui_SetCursorScreenPos(row_min);
         if (c.ImGui_InvisibleButton("row", gui.vec2(use_x - row_min.x, row_height), 0)) state.pair = i;
         const row_hovered = c.ImGui_IsItemHovered(0);
@@ -1445,7 +1478,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
             c.ImGui_EndPopup();
         }
         c.ImGui_SetCursorScreenPos(gui.vec2(use_x, top));
-        if (c.ImGui_InvisibleButton("use", gui.vec2(widths[4], row_height), 0) and state.job == null) own.toggleHeldOut(ctx, i);
+        if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.job == null) own.toggleHeldOut(ctx, i);
         const use_hovered = c.ImGui_IsItemHovered(0);
         if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
 
@@ -1458,20 +1491,24 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
 
         const text_top = top + gui.px(8);
         x = at.x + 1;
-        for (std.enums.values(Column), widths) |column, w| {
-            const cell = gui.vec2(x + gui.px(12), text_top);
+        for (columns) |column| {
+            const w = widths.get(column);
             const room_in_cell = w - gui.px(24);
-            switch (column) {
-                .ours => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text, gui.elideEnd(p.label, room_in_cell)),
-                .theirs => {
-                    fonts.pushSized(.mono, 12);
-                    gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text_secondary, gui.elideStart(std.fs.path.basename(p.theirs), room_in_cell));
-                    fonts.pop();
-                },
-                .stock => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text_secondary, gui.elideEnd(stockName(p.stock), room_in_cell)),
-                .registration => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text_secondary, registrationText(own, i)),
-                .use => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), if (use_hovered) theme.text else theme.text_secondary, useLabel(p.*)),
-            }
+            const value = column.text(own, i);
+            // File names lose their start, which says the least, and the rest lose their end.
+            const shown = switch (column) {
+                .ours, .stock => gui.elideEnd(value, room_in_cell),
+                .theirs => gui.elideStart(value, room_in_cell),
+                .registration, .use => value,
+            };
+            const ink = switch (column) {
+                .ours => theme.text,
+                .use => if (use_hovered) theme.text else theme.text_secondary,
+                .theirs, .stock, .registration => theme.text_secondary,
+            };
+            if (column.mono()) fonts.pushSized(.mono, 12);
+            gui.textIn(list, x + gui.px(12), text_top, gui.lineFor(13), ink, shown);
+            if (column.mono()) fonts.pop();
             x += w;
         }
         if (row_hovered and p.alignment != null) {

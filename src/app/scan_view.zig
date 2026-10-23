@@ -729,20 +729,14 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     // Film type.
     y += gui.lineAt(list, x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
     c.ImGui_PushID("film");
-    {
-        var labels_: [std.enums.values(FilmType).len][:0]const u8 = undefined;
-        for (std.enums.values(FilmType), 0..) |f, i| labels_[i] = f.label();
-        if (pills(&labels_, @backingInt(state.film), x, &y, width, false)) |picked| state.film = @fromBackingInt(@intCast(picked));
-    }
+    if (pillsOf(FilmType, state.film, &labelsOf(FilmType), x, &y, width)) |picked| state.film = picked;
     c.ImGui_PopID();
     y += gui.px(group_gap);
     // Slides can come as a strip or in mounts, which detection finds differently.
     if (state.film == .positive) {
         c.ImGui_PushID("holder");
-        var labels_: [std.enums.values(frames.Holder).len][:0]const u8 = undefined;
-        for (std.enums.values(frames.Holder), 0..) |h, i| labels_[i] = h.label();
-        if (pills(&labels_, @backingInt(state.holder_choice), x, &y, width, false)) |picked| {
-            state.holder_choice = @fromBackingInt(@intCast(picked));
+        if (pillsOf(frames.Holder, state.holder_choice, &labelsOf(frames.Holder), x, &y, width)) |picked| {
+            state.holder_choice = picked;
             state.boxes_dirty = true;
         }
         c.ImGui_PopID();
@@ -1437,9 +1431,14 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     // Shape.
     y += gui.lineAt(list, x, y, theme.text_secondary, "Shape") + gui.px(group_gap);
     c.ImGui_PushID("shape");
-    const shape_labels = [_][:0]const u8{ gui.print("Roll format, {s}", .{labels.ratio(format.ratio())}), "Free", "Custom ratio" };
-    if (pills(&shape_labels, @backingInt(box.shape), x, &y, width, false)) |picked| {
-        box.shape = @fromBackingInt(@intCast(picked));
+    var shape_labels: [std.enums.values(Shape).len][:0]const u8 = undefined;
+    for (&shape_labels, std.enums.values(Shape)) |*label, shape| label.* = switch (shape) {
+        .roll => gui.print("Roll format, {s}", .{labels.ratio(format.ratio())}),
+        .free => "Free",
+        .custom => "Custom ratio",
+    };
+    if (pillsOf(Shape, box.shape, &shape_labels, x, &y, width)) |picked| {
+        box.shape = picked;
         if (box.shape == .custom) box.ratio = box.length / box.height;
         reshape(box, preview, format);
         markEdited(state, box);
@@ -2169,6 +2168,20 @@ fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:
 
 /// Draws a row of choices that wraps at `width`, or with `fill`, a single row whose choices share
 /// the width. Moves `y` past it and returns the choice that was clicked.
+/// `pills` for every value of enum `T`, in order, labelled by `labels_`. Returns the value clicked.
+fn pillsOf(comptime T: type, chosen: T, labels_: *const [std.enums.values(T).len][:0]const u8, x: f32, y: *f32, width: f32) ?T {
+    const choices = std.enums.values(T);
+    const picked = pills(labels_, gui.indexIn(T, choices, chosen), x, y, width, false) orelse return null;
+    return choices[picked];
+}
+
+/// The labels of every value of enum `T`, in order, from its `label` function.
+fn labelsOf(comptime T: type) [std.enums.values(T).len][:0]const u8 {
+    var out: [std.enums.values(T).len][:0]const u8 = undefined;
+    for (&out, std.enums.values(T)) |*label, value| label.* = value.label();
+    return out;
+}
+
 fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f32, fill: bool) ?usize {
     var clicked: ?usize = null;
     const gap = gui.px(pill_gap);

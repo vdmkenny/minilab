@@ -55,7 +55,10 @@ pub const Options = struct {
 
     /// The bits per sample of the file.
     pub fn bits(options: Options) Depth {
-        return if (options.format == .jpeg) .eight else options.depth;
+        return switch (options.format) {
+            .jpeg => .eight,
+            .tiff => options.depth,
+        };
     }
 };
 

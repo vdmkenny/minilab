@@ -330,6 +330,33 @@ pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: 
     return picked;
 }
 
+/// The most choices `comboOf` and `segmentedOf` take.
+const max_choices = 64;
+
+/// A drop-down of `choices`, each labelled by `labelOf`, showing `chosen`. Returns the choice
+/// picked.
+pub fn comboOf(comptime T: type, id: [:0]const u8, choices: []const T, chosen: T, comptime labelOf: fn (T) []const u8, width: f32) ?T {
+    var labels: [max_choices][]const u8 = undefined;
+    for (labels[0..choices.len], choices) |*label, choice| label.* = labelOf(choice);
+    const picked = combo(id, labels[0..choices.len], indexIn(T, choices, chosen), width) orelse return null;
+    return choices[picked];
+}
+
+/// A `segmented` set of `choices`, each labelled by `labelOf`, with `chosen` marked. Returns the
+/// choice clicked.
+pub fn segmentedOf(comptime T: type, id: [:0]const u8, choices: []const T, chosen: T, comptime labelOf: fn (T) [:0]const u8) ?T {
+    var labels: [max_choices][:0]const u8 = undefined;
+    for (labels[0..choices.len], choices) |*label, choice| label.* = labelOf(choice);
+    const picked = segmented(id, labels[0..choices.len], indexIn(T, choices, chosen)) orelse return null;
+    return choices[picked];
+}
+
+/// Where `value` is in `choices`, or past the end when it isn't there, so nothing shows as chosen.
+pub fn indexIn(comptime T: type, choices: []const T, value: T) usize {
+    std.debug.assert(choices.len <= max_choices);
+    return std.mem.indexOfScalar(T, choices, value) orelse choices.len;
+}
+
 /// What's typed into the open searchable drop-down. Only one can be open at a time.
 var search_buffer: [64:0]u8 = @splat(0);
 
