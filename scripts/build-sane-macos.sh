@@ -8,7 +8,8 @@
 # Homebrew:
 #
 # - sane-backends: libsane and every backend that builds on macOS. The ones that need libraries
-#   macOS doesn't have (escl, gphoto2, v4l and a few more) don't;
+#   macOS doesn't have (escl, gphoto2, v4l and a few more) don't. escl, for network scanners,
+#   needs Avahi (https://github.com/vdmkenny/minilab/issues/17);
 # - libusb, which the backends reach USB scanners through, as a library of its own (LGPL-2.1);
 # - libjpeg-turbo, built into the backends that need JPEG, like pixma. It's the version minilab
 #   builds for itself (`deps/libjpeg-turbo`).
