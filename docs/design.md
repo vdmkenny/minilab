@@ -296,6 +296,7 @@ measures them. Nominal picture sizes, in mm:
 | APS | H 30.2 × 16.7, C 25.1 × 16.7, P 30.2 × 9.5 |
 | Minox | 8 × 11 |
 | Sheet film | 4×5 in, 5×7 in, 8×10 in, 9×12 cm, 13×18 cm; the picture area depends on the holder |
+| Glass plate | quarter, half and whole plate; 6.5×9, 9×12 and 13×18 cm; lantern slides, 3¼×3¼ in and 3¼×4 in |
 
 The pitch is the distance from one frame to the next. The V200's 33.02 mm window takes 35 mm wide
 film (135 and 126), and narrower film (110 at 16 mm, APS at 24 mm, Minox at 9.2 mm) if a holder

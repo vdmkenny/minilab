@@ -1534,14 +1534,13 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     const box = &state.boxes.items[index];
 
     // The title: which frame, and its format.
-    const film = labels.filmSize(format.size);
     const shape_text = switch (box.shape) {
         .roll => labels.ratio(format.ratio()),
         .free => "measured",
         .custom => labels.ratio(box.ratio),
     };
     const rotated: []const u8 = if (preview.axis == .y) ", shown rotated" else "";
-    y += titleAt(list, x, y, gui.print("Frame {d}", .{index + 1}), gui.print("{s} {s} · {s}{s}", .{ film, format.name, shape_text, rotated })) + gui.px(section_gap);
+    y += titleAt(list, x, y, gui.print("Frame {d}", .{index + 1}), gui.print("{s} · {s}{s}", .{ labels.filmAndName(format), shape_text, rotated })) + gui.px(section_gap);
 
     y += drawFrameView(state, preview, index, list, x, y, width) + gui.px(section_gap);
 

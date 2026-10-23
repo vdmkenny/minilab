@@ -8,10 +8,13 @@ const formats = minilab.formats;
 const develop = minilab.develop;
 
 /// The format's name and its size in mm, along the film × across it, like "Full frame, 36 × 24".
-/// Sheet film names already include their size.
+/// Sheet film and plate names already include their size.
 pub fn format(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    if (f.size == .sheet) return gui.print("{s}", .{f.name});
+    switch (f.size) {
+        .sheet, .plate => return gui.print("{s}", .{f.name}),
+        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => {},
+    }
     var name_buffer: [32]u8 = undefined;
     const name = capitalised(&name_buffer, f.name);
     return gui.print("{s}, {d} × {d}", .{ name, f.width_mm, f.height_mm });
@@ -20,7 +23,10 @@ pub fn format(id: formats.Standard) [:0]const u8 {
 /// The film size and the format, like "135 · full frame, 36 × 24", for the roll cards.
 pub fn filmAndFormat(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    if (f.size == .sheet) return gui.print("Sheet film · {s}", .{f.name});
+    switch (f.size) {
+        .sheet, .plate => return gui.print("{s} · {s}", .{ f.size.label(), f.name }),
+        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => {},
+    }
     return gui.print("{s} · {s}, {d} × {d}", .{ f.size.label(), f.name, f.width_mm, f.height_mm });
 }
 
@@ -50,7 +56,15 @@ pub fn rollFrame(roll_name: []const u8, index: usize) [:0]const u8 {
 /// The note under the frames, like "35mm full frame · 3:2 · whole roll".
 pub fn rollFormatNote(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    return gui.print("{s} {s} · {s} · whole roll", .{ filmSize(f.size), f.name, ratio(f.ratio()) });
+    return gui.print("{s} · {s} · whole roll", .{ filmAndName(f), ratio(f.ratio()) });
+}
+
+/// The film and the format's name, like "35mm full frame" or "Glass plate · Half plate, 4¾×6½ in".
+pub fn filmAndName(f: formats.Format) [:0]const u8 {
+    return switch (f.size) {
+        .sheet, .plate => gui.print("{s} · {s}", .{ f.size.label(), f.name }),
+        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => gui.print("{s} {s}", .{ filmSize(f.size), f.name }),
+    };
 }
 
 /// The film size as people say it: "35mm" rather than "135".
@@ -183,7 +197,10 @@ test "formats, sizes and ratios read the way people say them" {
     try std.testing.expectEqualStrings("135 · full frame, 36 × 24", filmAndFormat(.@"135_full_frame"));
     try std.testing.expectEqualStrings("36 × 24 mm · 3:2", sizeAndRatio(.@"135_full_frame"));
     try std.testing.expectEqualStrings("35mm full frame · 3:2 · whole roll", rollFormatNote(.@"135_full_frame"));
+    try std.testing.expectEqualStrings("Glass plate · Half plate, 4¾×6½ in", filmAndName(formats.Standard.plate_half.format()));
     try std.testing.expectEqualStrings("Sheet film · 4×5 in", filmAndFormat(.sheet_4x5in));
+    try std.testing.expectEqualStrings("Glass plate · Quarter plate, 3¼×4¼ in", filmAndFormat(.plate_quarter));
+    try std.testing.expectEqualStrings("Lantern slide, 3¼×3¼ in", format(.lantern_slide));
     try std.testing.expectEqualStrings("4:5", ratio(0.8));
     try std.testing.expectEqualStrings("1.85:1", ratio(1.85));
     try std.testing.expectEqualStrings("135 (35mm)", filmSizeChoice(.@"135"));

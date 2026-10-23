@@ -21,6 +21,8 @@ pub const FilmSize = enum {
     aps,
     minox,
     sheet,
+    /// Photographic glass plates, and lantern slides.
+    plate,
 
     pub fn label(size: FilmSize) []const u8 {
         return switch (size) {
@@ -32,6 +34,7 @@ pub const FilmSize = enum {
             .aps => "APS",
             .minox => "Minox",
             .sheet => "Sheet film",
+            .plate => "Glass plate",
         };
     }
 
@@ -44,7 +47,7 @@ pub const FilmSize = enum {
             .@"110" => 16,
             .aps => 24,
             .minox => 9.2,
-            .sheet => null,
+            .sheet, .plate => null,
         };
     }
 
@@ -56,7 +59,7 @@ pub const FilmSize = enum {
     }
 
     /// Returns the holes the film has: rows along both edges, a few holes per frame along one
-    /// edge, or none at all (paper-backed roll film and sheet film have none).
+    /// edge, or none at all (paper-backed roll film, sheet film and plates have none).
     pub fn holes(size: FilmSize) Holes {
         return switch (size) {
             .@"135" => .{ .rows = size.perforations().? },
@@ -64,7 +67,7 @@ pub const FilmSize = enum {
             // (IX240) has two close together. They're all along one edge.
             .@"126", .@"110" => .{ .per_frame = 1 },
             .aps => .{ .per_frame = 2 },
-            .@"120", .@"127", .minox, .sheet => .none,
+            .@"120", .@"127", .minox, .sheet, .plate => .none,
         };
     }
 
@@ -73,7 +76,7 @@ pub const FilmSize = enum {
     pub fn perforations(size: FilmSize) ?Perforations {
         return switch (size) {
             .@"135" => .{ .pitch_mm = 4.75, .length_mm = 1.98, .height_mm = 2.8, .inset_mm = 2.0 },
-            .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet => null,
+            .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet, .plate => null,
         };
     }
 
@@ -85,7 +88,7 @@ pub const FilmSize = enum {
             .@"120", .@"126" => 4,
             .@"127", .@"110" => 3,
             .minox => 1,
-            .sheet => 0,
+            .sheet, .plate => 0,
         };
     }
 };
@@ -176,6 +179,14 @@ pub const Standard = enum {
     sheet_8x10in,
     sheet_9x12cm,
     sheet_13x18cm,
+    plate_quarter,
+    plate_half,
+    plate_whole,
+    plate_6_5x9cm,
+    plate_9x12cm,
+    plate_13x18cm,
+    lantern_slide,
+    lantern_slide_us,
 
     /// The default format of a new roll.
     pub const default: Standard = .@"135_full_frame";
@@ -207,6 +218,16 @@ pub const Standard = enum {
             .sheet_8x10in => .{ .size = .sheet, .name = "8×10 in", .width_mm = 10 * mm_per_inch, .height_mm = 8 * mm_per_inch },
             .sheet_9x12cm => .{ .size = .sheet, .name = "9×12 cm", .width_mm = 120, .height_mm = 90 },
             .sheet_13x18cm => .{ .size = .sheet, .name = "13×18 cm", .width_mm = 180, .height_mm = 130 },
+            // The plate sizes British and American makers sold, and the European metric ones.
+            .plate_quarter => .{ .size = .plate, .name = "Quarter plate, 3¼×4¼ in", .width_mm = 4.25 * mm_per_inch, .height_mm = 3.25 * mm_per_inch },
+            .plate_half => .{ .size = .plate, .name = "Half plate, 4¾×6½ in", .width_mm = 6.5 * mm_per_inch, .height_mm = 4.75 * mm_per_inch },
+            .plate_whole => .{ .size = .plate, .name = "Whole plate, 6½×8½ in", .width_mm = 8.5 * mm_per_inch, .height_mm = 6.5 * mm_per_inch },
+            .plate_6_5x9cm => .{ .size = .plate, .name = "6.5×9 cm", .width_mm = 90, .height_mm = 65 },
+            .plate_9x12cm => .{ .size = .plate, .name = "9×12 cm", .width_mm = 120, .height_mm = 90 },
+            .plate_13x18cm => .{ .size = .plate, .name = "13×18 cm", .width_mm = 180, .height_mm = 130 },
+            // Lantern slides: square in Britain, a little longer in America.
+            .lantern_slide => .{ .size = .plate, .name = "Lantern slide, 3¼×3¼ in", .width_mm = 3.25 * mm_per_inch, .height_mm = 3.25 * mm_per_inch },
+            .lantern_slide_us => .{ .size = .plate, .name = "Lantern slide, 3¼×4 in", .width_mm = 4 * mm_per_inch, .height_mm = 3.25 * mm_per_inch },
         };
     }
 };
@@ -232,4 +253,13 @@ test "120 has no fixed pitch and falls back to the film's typical gap" {
     const f = Standard.@"120_6x6".format();
     try std.testing.expectEqual(null, f.pitch_mm);
     try std.testing.expectEqual(FilmSize.@"120".typicalGapMm(), f.gapMm());
+}
+
+test "glass plates are listed under their own size, with no film width or holes" {
+    const quarter = Standard.plate_quarter.format();
+    try std.testing.expectEqual(FilmSize.plate, quarter.size);
+    try std.testing.expectApproxEqAbs(@as(f32, 107.95), quarter.width_mm, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), Standard.lantern_slide.format().ratio(), 1e-6);
+    try std.testing.expectEqual(@as(?f32, null), FilmSize.plate.filmWidthMm());
+    try std.testing.expect(FilmSize.plate.holes() == .none);
 }
