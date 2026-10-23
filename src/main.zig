@@ -414,41 +414,31 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         for (frames.items) |*f| f.deinit(gpa);
         frames.deinit(gpa);
     }
-    var bases: [3]std.ArrayList(f32) = .{ .empty, .empty, .empty };
-    defer for (&bases) |*b| b.deinit(gpa);
-    const format = minilab.formats.Standard.default.format();
+    var bases: std.ArrayList([3]f32) = .empty;
+    defer bases.deinit(gpa);
     for (inputs) |path| {
         var full = (try minilab.input.read(gpa, io, path)).scan;
         defer full.deinit(gpa);
-        var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
-        defer reduced.deinit(gpa);
         const stem = std.fs.path.stem(path);
-        const found = minilab.framing.findAll(gpa, reduced, full.width, full.height, null, format, kind) catch |err| {
-            std.log.warn("{s}: no frame found ({t}); using all of the scan", .{ path, err });
+        const found = try framesOn(gpa, full, kind, path);
+        defer gpa.free(found);
+        if (found.len == 0) {
             try frames.ensureUnusedCapacity(gpa, 1);
             frames.appendAssumeCapacity(try .of(gpa, full, .whole(full.width, full.height), try gpa.dupe(u8, stem)));
             continue;
-        };
-        defer gpa.free(found);
+        }
         for (found, 1..) |f, number| {
-            if (try minilab.framing.measureBase(gpa, full, f.gaps)) |b| {
-                for (&bases, b) |*list, v| try list.append(gpa, v);
-            }
+            if (try minilab.framing.measureBase(gpa, full, f.gaps)) |b| try bases.append(gpa, b);
             const name = if (found.len == 1) try gpa.dupe(u8, stem) else try std.fmt.allocPrint(gpa, "{s}-{d}", .{ stem, number });
             try frames.ensureUnusedCapacity(gpa, 1);
             frames.appendAssumeCapacity(try .of(gpa, full, f.frame, name));
         }
     }
-    var base: [3]f32 = given_base orelse base: {
-        if (bases[0].items.len == 0) return error.NoFilmBase;
-        var b: [3]f32 = undefined;
-        for (&b, &bases) |*v, *list| {
-            std.mem.sort(f32, list.items, {}, std.sort.asc(f32));
-            v.* = list.items[list.items.len / 2];
-        }
-        break :base b;
+    const base: [3]f32 = given_base orelse base: {
+        const scratch = try gpa.alloc(f32, bases.items.len);
+        defer gpa.free(scratch);
+        break :base minilab.stats.channelMedian(bases.items, scratch) orelse return error.NoFilmBase;
     };
-    _ = &base;
     std.log.info("roll film base: {d:.4} {d:.4} {d:.4}", .{ base[0], base[1], base[2] });
 
     var catalog: minilab.look.Catalog = try .init(gpa, null);
@@ -646,18 +636,27 @@ fn formatOf(path: []const u8) !Format {
 
 /// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame
 /// of a strip as `<out>-1.tif`, `<out>-2.tif` and so on.
+/// The frames on `full`, the scan at `path`, found the way the app finds them. None means use all
+/// of the scan. The caller frees the list.
+fn framesOn(gpa: std.mem.Allocator, full: minilab.image.Scan, kind: minilab.develop.FilmKind, path: []const u8) ![]const minilab.framing.Found {
+    var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
+    defer reduced.deinit(gpa);
+    return minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), kind) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => {
+            std.log.warn("{s}: no frame found ({t}); using all of the scan", .{ path, err });
+            return &.{};
+        },
+    };
+}
+
 fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     var full = (try minilab.input.read(gpa, io, options.input)).scan;
     defer full.deinit(gpa);
     const format = try formatOf(options.output);
 
     // Find the frames on the scan the way the app does, unless the whole scan was asked for.
-    var reduced = try minilab.image.downscale(gpa, full, minilab.framing.detection_longest);
-    defer reduced.deinit(gpa);
-    const found: []const minilab.framing.Found = if (options.whole) &.{} else minilab.framing.findAll(gpa, reduced, full.width, full.height, null, minilab.formats.Standard.default.format(), options.kind) catch |err| found: {
-        std.log.warn("no frame found ({t}); developing all of the scan", .{err});
-        break :found &.{};
-    };
+    const found: []const minilab.framing.Found = if (options.whole) &.{} else try framesOn(gpa, full, options.kind, options.input);
     defer gpa.free(found);
 
     var catalog: minilab.look.Catalog = try .init(gpa, null);
