@@ -1838,7 +1838,7 @@ fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matri
         for (row, 0..) |v, col| {
             const min = gui.vec2(at.x + (cell_width + gap) * @as(f32, @floatFromInt(col)), at.y + (cell_height + gap) * @as(f32, @floatFromInt(r)));
             c.ImDrawList_AddRectFilledEx(list, min, gui.vec2(min.x + cell_width, min.y + cell_height), theme.imU32(theme.raised), gui.px(3), 0);
-            const shown = if (v < -0.0005) gui.print("−{d:.3}", .{-v}) else gui.print("{d:.3}", .{@abs(v)});
+            const shown = gui.formatSigned("{d:.3}", v);
             const size = c.ImGui_CalcTextSize(shown);
             gui.textIn(list, min.x + (cell_width - size.x) / 2, min.y + gui.px(6), gui.lineFor(12), if (r == col) theme.text else theme.text_tertiary, shown);
         }

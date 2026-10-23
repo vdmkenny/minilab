@@ -492,15 +492,20 @@ pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format
     rowLabel(label);
     var changed = slider("slider", v, min, max, 0);
     if (options.help) |help| if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
-    const shown = formatSigned(format, v.*);
-    valueText(shown);
-    c.ImGui_SameLineEx(0, px(reset_space - reset_size));
-    const at = c.ImGui_GetCursorScreenPos();
-    if (resetButton("reset", vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - px(reset_size)) / 2), shown, formatSigned(format, options.default))) {
+    if (valueAndReset(formatSigned(format, v.*), formatSigned(format, options.default))) {
         v.* = options.default;
         changed = true;
     }
     return changed;
+}
+
+/// The end of a slider row: the value as `shown`, and a reset button that's disabled while it
+/// reads as `default_shown`. Returns true when the reset button was clicked.
+pub fn valueAndReset(shown: []const u8, default_shown: []const u8) bool {
+    valueText(shown);
+    c.ImGui_SameLineEx(0, px(reset_space - reset_size));
+    const at = c.ImGui_GetCursorScreenPos();
+    return resetButton("reset", vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - px(reset_size)) / 2), shown, default_shown);
 }
 
 /// What a slider row needs besides its value.
@@ -568,7 +573,7 @@ pub fn star(list: *c.ImDrawList, centre: Vec2, radius: f32, filled: bool, colour
 const star_notch = 0.45;
 
 /// Prints `v` with `format`, using a real minus sign as the design does.
-pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
+pub fn formatSigned(comptime format: []const u8, v: f32) [:0]const u8 {
     const shown = print(format, .{@abs(v)});
     // −0.00 looks like a mistake, so a value that prints as zero gets no sign.
     const zero = for (shown) |ch| {

@@ -1623,11 +1623,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Shooting light");
-    const shown = gui.print("{d:.0} K", .{kelvin.*});
-    gui.valueText(shown);
-    c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
-    const at = c.ImGui_GetCursorScreenPos();
-    if (gui.resetButton("reset", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
+    if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
         changed = true;
     }

@@ -2245,27 +2245,19 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     c.ImGui_SetCursorScreenPos(gui.vec2(slider_x, y.*));
     var changed = gui.slider(gui.print("{s}", .{label}), value, min, max, slider_width / gui.scale);
     fonts.push(.mono);
-    const shown = signed(format, value.*);
+    const shown = gui.formatSigned(format, value.*);
     const shown_width = c.ImGui_CalcTextSize(shown).x;
     const value_right = x + width - gui.px(gui.reset_space);
     c.ImDrawList_AddText(list, gui.vec2(value_right - shown_width, y.* + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text), shown);
     fonts.pop();
     const reset_at = gui.vec2(x + width - gui.px(gui.reset_size), y.* + (height - gui.px(gui.reset_size)) / 2);
-    if (gui.resetButton(gui.print("reset {s}", .{label}), reset_at, shown, signed(format, default))) {
+    if (gui.resetButton(gui.print("reset {s}", .{label}), reset_at, shown, gui.formatSigned(format, default))) {
         value.* = default;
         changed = true;
     }
     y.* += height;
     return changed;
 }
-
-/// Formats `v` with `format`, without a minus sign on values that round to zero.
-fn signed(comptime format: []const u8, v: f32) [:0]const u8 {
-    return if (v < -0.05) gui.print("−" ++ format, .{-v}) else gui.print(format, .{@abs(v)});
-}
-
-/// A check box drawn the way the design has it here: the label in the text colour, 8 pixels after
-/// the box.
 
 /// A button with a border, secondary text and no fill, for the design's less important actions.
 fn quietButton(label: [:0]const u8, size: gui.Vec2) bool {
