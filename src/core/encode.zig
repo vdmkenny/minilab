@@ -54,15 +54,36 @@ fn quantise(comptime T: type, v: f32) T {
 /// shadows, where the curve is steepest, are off by at most one step in 255.
 const table_entries = 1 << 14;
 
+/// 8-bit sRGB from linear values, by table: a few times faster than the power function, and 8
+/// bits don't need more.
+const Srgb8 = struct {
+    table: [table_entries + 1]u8,
+
+    fn init() Srgb8 {
+        var t: Srgb8 = undefined;
+        for (&t.table, 0..) |*entry, i| entry.* = quantise(u8, srgb(@as(f32, @floatFromInt(i)) / table_entries));
+        return t;
+    }
+
+    fn of(t: *const Srgb8, linear: f32) u8 {
+        return t.table[@intFromFloat(@round(std.math.clamp(linear, 0, 1) * table_entries))];
+    }
+};
+
 pub fn toSrgb8(gpa: std.mem.Allocator, rendered: image.Rendered) !image.Encoded8 {
     const out: image.Encoded8 = try .init(gpa, rendered.width, rendered.height);
-    // A table is a few times faster than the power function, and 8 bits don't need more.
-    var table: [table_entries + 1]u8 = undefined;
-    for (&table, 0..) |*t, i| t.* = quantise(u8, srgb(@as(f32, @floatFromInt(i)) / table_entries));
+    const table: Srgb8 = .init();
     for (out.pixels, rendered.pixels) |*o, p| {
-        for (o, p) |*c, v| c.* = table[@intFromFloat(@round(std.math.clamp(v, 0, 1) * table_entries))];
+        for (o, p) |*c, v| c.* = table.of(v);
     }
     return out;
+}
+
+/// sRGB-encodes `rendered` into `out` as opaque 8-bit RGBA, the way textures are uploaded.
+pub fn toRgba8(rendered: image.Rendered, out: [][4]u8) void {
+    std.debug.assert(out.len == rendered.pixels.len);
+    const table: Srgb8 = .init();
+    for (out, rendered.pixels) |*o, p| o.* = .{ table.of(p[0]), table.of(p[1]), table.of(p[2]), std.math.maxInt(u8) };
 }
 
 pub fn toSrgb16(gpa: std.mem.Allocator, rendered: image.Rendered) !image.Encoded16 {

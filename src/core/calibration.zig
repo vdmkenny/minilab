@@ -170,7 +170,6 @@ fn datasheetSlopes(gamma: [3]f32) [3]f32 {
     return .{ gamma[1] / gamma[0], 1, gamma[1] / gamma[2] };
 }
 
-
 /// More frames than any roll has, and more rolls than anyone calibrates from.
 const max_frames = 512;
 const max_rolls = 256;

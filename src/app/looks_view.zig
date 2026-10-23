@@ -289,11 +289,9 @@ fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: mini
     const gpa = ctx.gpa;
     var linear = try minilab.look.render(gpa, small, settings, try ctx.library.looks.resolve(gpa, ctx.io, id));
     defer linear.deinit(gpa);
-    var encoded = try minilab.encode.toSrgb8(gpa, linear);
-    defer encoded.deinit(gpa);
-    const rgba = try gpa.alloc([4]u8, encoded.pixels.len);
+    const rgba = try gpa.alloc([4]u8, linear.pixels.len);
     defer gpa.free(rgba);
-    for (rgba, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+    minilab.encode.toRgba8(linear, rgba);
     return .upload(ctx.gpu, @intCast(small.width), @intCast(small.height), rgba);
 }
 
@@ -830,7 +828,7 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
         errors[covered] = e;
         covered += 1;
     };
-    state.figures.median = if (covered > 0) looks.colour.percentile(errors[0..covered], 0.5) else null;
+    state.figures.median = minilab.stats.median(errors[0..covered]);
 }
 
 /// A colour for a ΔE2000 value: near black where the look matches, through grey and amber, to

@@ -103,7 +103,6 @@ fn hue(b: f64, a: f64) f64 {
     return if (h < 0) h + 360 else h;
 }
 
-
 test "CIEDE2000 matches Sharma's test data" {
     // Pairs 1, 2, 7, 17, 25 and 34 from the table in Sharma, Wu and Dalal.
     const cases = [_]struct { [3]f32, [3]f32, f32 }{

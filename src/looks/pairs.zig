@@ -225,10 +225,10 @@ fn developPlaced(gpa: std.mem.Allocator, scan: image.Scan, longest: usize, gap_b
         if (!std.math.isFinite(low.*) or low.* <= 0) low.* = 1;
     }
 
-    var standard = try develop.render(gpa, work, settings);
+    var standard = try minilab.look.render(gpa, work, settings, .neutral);
     defer standard.deinit(gpa);
     settings.tone = .log;
-    var log = try develop.render(gpa, work, settings);
+    var log = try minilab.look.render(gpa, work, settings, .neutral);
     defer log.deinit(gpa);
 
     const density = try gpa.alloc([3]f32, work.pixels.len);

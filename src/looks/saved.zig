@@ -77,8 +77,8 @@ pub const Look = struct {
         look.* = undefined;
     }
 
-    /// Applies the look in place to `pixels`, which hold the linear output of `develop.render`
-    /// with `.tone = .log`. Afterwards they're linear sRGB 0..1, ready for `encode`.
+    /// Applies the look in place to `pixels`, which hold the linear output of `look.render` in
+    /// Neutral with `.tone = .log`. Afterwards they're linear sRGB 0..1, ready for `encode`.
     pub fn apply(look: *const Look, pixels: [][3]f32) void {
         var m = look.model;
         m.lut = look.lut;

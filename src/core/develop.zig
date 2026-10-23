@@ -371,7 +371,6 @@ fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
     return y;
 }
 
-
 /// Changes the saturation of linear `pixels` in place. Each pixel is mixed with its own luminance
 /// in linear light, which keeps its hue and its luminance. Colours pushed outside sRGB are cut off
 /// at 0.
@@ -398,14 +397,6 @@ pub fn pixel(prepared: Prepared, raw: [3]u16) [3]f32 {
         return t;
     }
     return invert(prepared, density(prepared, t));
-}
-
-/// Develops the whole scan.
-pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings) !image.Rendered {
-    const rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
-    const prepared: Prepared = .init(settings);
-    for (rendered.pixels, scan.pixels) |*out, raw| out.* = pixel(prepared, raw);
-    return rendered;
 }
 
 /// The smallest density range, in D, that the automatic settings will work from.

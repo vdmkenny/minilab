@@ -205,6 +205,25 @@ pub fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.Settin
     return rendered;
 }
 
+/// How many rows `renderBanded` renders between checks for cancel: enough to give every core some
+/// work.
+const render_band_rows = 256;
+
+/// Like `render`, a band of rows at a time, giving `error.Canceled` once `cancel` is set.
+pub fn renderBanded(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.Settings, look: Resolved, cancel: ?*const std.atomic.Value(bool)) error{ OutOfMemory, Canceled }!image.Rendered {
+    var rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
+    errdefer rendered.deinit(gpa);
+    const prepared: develop.Prepared = .init(look.settingsFor(settings));
+    const band = @max(1, render_band_rows * scan.width);
+    var at: usize = 0;
+    while (at < scan.pixels.len) : (at += band) {
+        if (cancel) |flag| if (flag.load(.acquire)) return error.Canceled;
+        const n = @min(band, scan.pixels.len - at);
+        renderPixels(prepared, look, scan.pixels[at..][0..n], rendered.pixels[at..][0..n]);
+    }
+    return rendered;
+}
+
 /// The most threads a render uses.
 const max_threads = 16;
 /// Below this many pixels, starting threads costs more than it saves.
