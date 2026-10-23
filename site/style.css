@@ -1,0 +1,304 @@
+/* The app's own colours, from src/ui/theme.zig. */
+:root {
+  --page: #1d1d1f;
+  --header: #161617;
+  --panel: #232325;
+  --control: #2d2d30;
+  --border: #3b3b3f;
+  --text: #ececee;
+  --text-secondary: #b4b4b8;
+  --text-tertiary: #8f8f95;
+  --accent: #e8a33d;
+  --on-accent: #1a1206;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--header);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", "IBM Plex Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.hero {
+  text-align: center;
+  padding: 96px 24px 56px;
+}
+
+.icon {
+  display: block;
+  margin: 0 auto 24px;
+}
+
+h1 {
+  margin: 0;
+  color: var(--accent);
+  font-size: 48px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.lead {
+  margin: 12px 0 4px;
+  font-size: 22px;
+  color: var(--text);
+}
+
+.facts {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 15px;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 32px;
+}
+
+.button {
+  display: inline-block;
+  padding: 10px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--control);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.button:hover {
+  text-decoration: none;
+  border-color: var(--text-tertiary);
+}
+
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+
+.shot {
+  margin: 0;
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--page);
+}
+
+.shot.wide img {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+
+.intro {
+  max-width: 680px;
+  margin: 56px auto 96px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 19px;
+}
+
+.feature {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 48px;
+  align-items: center;
+  margin-bottom: 96px;
+}
+
+.feature:nth-of-type(even) {
+  grid-template-columns: 2fr 3fr;
+}
+
+.feature:nth-of-type(even) .shot {
+  order: 2;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.text p {
+  margin: 0 0 12px;
+  color: var(--text-secondary);
+}
+
+.more {
+  margin-bottom: 96px;
+}
+
+.more ul {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.more li {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text-secondary);
+  font-size: 15px;
+}
+
+.more strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.download {
+  max-width: 720px;
+  margin: 0 auto 96px;
+}
+
+.release {
+  color: var(--text-secondary);
+}
+
+.files {
+  margin: 16px 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.files:empty {
+  display: none;
+}
+
+.files li + li {
+  border-top: 1px solid var(--border);
+}
+
+.files a {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  color: var(--text);
+}
+
+.files a:hover {
+  background: var(--control);
+  text-decoration: none;
+}
+
+.files .name {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-align: right;
+}
+
+.extras {
+  color: var(--text-tertiary);
+  font-size: 15px;
+}
+
+.setup {
+  margin-top: 40px;
+}
+
+h3 {
+  margin: 28px 0 8px;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.setup p {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+}
+
+pre {
+  margin: 8px 0 0;
+  padding: 14px 20px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--page);
+  overflow-x: auto;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+footer {
+  display: flex;
+  gap: 24px;
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 32px 24px 48px;
+  border-top: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 14px;
+}
+
+@media (max-width: 860px) {
+  .hero {
+    padding-top: 64px;
+  }
+
+  .feature,
+  .feature:nth-of-type(even) {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .feature:nth-of-type(even) .shot {
+    order: 0;
+  }
+
+  .more ul {
+    grid-template-columns: 1fr;
+  }
+
+  .files a {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .files .name {
+    text-align: left;
+  }
+}

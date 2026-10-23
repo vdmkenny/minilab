@@ -23,3 +23,7 @@ zig-pkg/
 
 # The pictures minilab takes of its screens with --screenshot.
 /shots/
+
+# The website's screenshots and icon, which the Pages workflow adds when it publishes it.
+/site/images/
+/site/icon.svg
