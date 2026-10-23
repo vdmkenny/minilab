@@ -81,6 +81,10 @@ pub const Include = struct {
     settings: bool = true,
     /// The frame's stars, or that it's rejected.
     rating: bool = true,
+    /// The roll's notes, as the caption.
+    notes: bool = true,
+    /// The roll's own fields.
+    fields: bool = true,
 };
 
 /// Set from another thread to stop an export at its next check.
@@ -309,6 +313,8 @@ pub fn describe(info: roll.Info, frame: roll.FrameSettings, include: Include, op
         .width = picture.width(),
         .height = picture.height(),
         .rating = if (include.rating and (frame.rating.rejected or frame.rating.stars > 0)) frame.rating.xmp() else null,
+        .notes = if (include.notes) info.notes else null,
+        .fields = if (include.fields) info.fields else &.{},
     };
 }
 
@@ -653,6 +659,9 @@ fn copyInfo(arena: std.mem.Allocator, info: roll.Info) !roll.Info {
     inline for (.{ "stock", "created", "camera", "lens", "shot", "copyright", "notes", "scanner" }) |field| {
         if (@field(info, field)) |text| @field(copy, field) = try arena.dupe(u8, text);
     }
+    const own = try arena.alloc(roll.Field, info.fields.len);
+    for (own, info.fields) |*copied, f| copied.* = .{ .name = try arena.dupe(u8, f.name), .value = try arena.dupe(u8, f.value) };
+    copy.fields = own;
     return copy;
 }
 

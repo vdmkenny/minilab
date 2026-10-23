@@ -25,6 +25,7 @@ const formats = @import("../frames/formats.zig");
 const framing = @import("framing.zig");
 const file_input = @import("input.zig");
 const FlatField = @import("flat_field.zig").FlatField;
+pub const Field = @import("export_metadata.zig").Field;
 
 pub const info_file = "roll.json";
 pub const scans_dir = "scans";
@@ -90,7 +91,12 @@ pub const Info = struct {
     copyright: ?[]const u8 = null,
     notes: ?[]const u8 = null,
     scanner: ?[]const u8 = null,
+    /// Metadata fields of your own, written into exported files.
+    fields: []const Field = &.{},
 };
+
+/// The roll's details you can edit after making it, by their names in `Info`.
+pub const Detail = enum { camera, lens, shot, copyright, notes };
 
 /// One frame: which scan it comes from, its crop, and how it's developed.
 pub const FrameSettings = struct {
@@ -214,6 +220,37 @@ pub const Roll = struct {
         const a = temporary.allocator();
         const bytes = try std.json.Stringify.valueAlloc(a, roll.info, json_options);
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, info_file }), .data = bytes });
+    }
+
+    /// One of the roll's editable details, or null when it isn't set.
+    pub fn detail(roll: *const Roll, which: Detail) ?[]const u8 {
+        return switch (which) {
+            inline else => |d| @field(roll.info, @tagName(d)),
+        };
+    }
+
+    /// Sets one of the roll's details to `value`, or clears it when `value` is blank, and saves
+    /// the roll.
+    pub fn setDetail(roll: *Roll, io: Io, which: Detail, value: []const u8) !void {
+        const trimmed = std.mem.trim(u8, value, " \t\r\n");
+        const kept: ?[]const u8 = if (trimmed.len == 0) null else try roll.arena.allocator().dupe(u8, trimmed);
+        switch (which) {
+            inline else => |d| @field(roll.info, @tagName(d)) = kept,
+        }
+        try roll.saveInfo(io);
+    }
+
+    /// Replaces the roll's own metadata fields with `fields` and saves the roll. A field with no
+    /// name yet is kept, so a new one can be filled in, but it doesn't go into exported files.
+    pub fn setFields(roll: *Roll, io: Io, fields: []const Field) !void {
+        const arena = roll.arena.allocator();
+        const kept = try arena.alloc(Field, fields.len);
+        for (kept, fields) |*k, f| k.* = .{
+            .name = try arena.dupe(u8, std.mem.trim(u8, f.name, " \t\r\n")),
+            .value = try arena.dupe(u8, std.mem.trim(u8, f.value, " \t\r\n")),
+        };
+        roll.info.fields = kept;
+        try roll.saveInfo(io);
     }
 
     /// An arena for things a call only needs while it runs, so the roll's own arena, which lives
@@ -504,7 +541,7 @@ fn finite(comptime T: type, value: *T, default: T) void {
             value.* = default;
         },
         .array => for (value, default) |*v, d| finite(@TypeOf(d), v, d),
-        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Field| finite(Field, &@field(value, name), @field(default, name)),
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Member| finite(Member, &@field(value, name), @field(default, name)),
         // An optional with anything that isn't finite in it is dropped, since there's no default
         // to use inside it.
         .optional => |o| if (value.*) |inner| {
@@ -528,8 +565,8 @@ fn allFinite(comptime T: type, value: T) bool {
         .array => for (value) |v| {
             if (!allFinite(@TypeOf(v), v)) break false;
         } else true,
-        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Field| {
-            if (!allFinite(Field, @field(value, name))) break false;
+        .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Member| {
+            if (!allFinite(Member, @field(value, name))) break false;
         } else true,
         else => true,
     };
@@ -609,6 +646,35 @@ test "a roll round-trips through its folder" {
     try std.testing.expectEqual(@as(usize, 1), again.developedCount());
     try std.testing.expectEqual(Rating{ .stars = 4, .rejected = true }, again.frames.items[0].rating);
     try std.testing.expectEqual(@as(usize, "2026-10-22".len), again.info.created.?.len);
+}
+
+test "a roll's details and fields can change after it's made, and blank ones clear" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+
+    var roll = try Roll.create(gpa, io, library, .{ .name = "Roll 1", .camera = "Nikon F3" });
+    try roll.setDetail(io, .camera, "  Pentax MX ");
+    try roll.setDetail(io, .lens, "");
+    try roll.setDetail(io, .notes, "Rainy day");
+    try roll.setFields(io, &.{ .{ .name = " Developer ", .value = "Cinestill Cs41" }, .{ .name = "", .value = "" } });
+    roll.close();
+
+    var rolls = try listRolls(gpa, io, library);
+    defer {
+        for (rolls.items) |*r| r.close();
+        rolls.deinit(gpa);
+    }
+    const again = rolls.items[0];
+    try std.testing.expectEqualStrings("Pentax MX", again.detail(.camera).?);
+    try std.testing.expectEqual(@as(?[]const u8, null), again.detail(.lens));
+    try std.testing.expectEqualStrings("Rainy day", again.detail(.notes).?);
+    try std.testing.expectEqual(@as(usize, 2), again.info.fields.len);
+    try std.testing.expectEqualStrings("Developer", again.info.fields[0].name);
+    try std.testing.expectEqualStrings("Cinestill Cs41", again.info.fields[0].value);
 }
 
 test "a frame saved before ratings has none, and too many stars come down to five" {

@@ -35,8 +35,12 @@ const pill_gap = 4;
 const control_height = 32;
 const label_width = 110;
 const grid_gap = 10;
-const metadata_row = 19;
-const metadata_gap = 8;
+/// A Metadata row, tall enough for a text field, and the gap between rows.
+const detail_row = 28;
+const metadata_gap = 6;
+/// The longest a detail or a field's value can be, in bytes, and a field's name.
+const detail_capacity = 256;
+const field_name_capacity = 64;
 const metadata_check = 13;
 const export_height = 40;
 const section_padding = 12;
@@ -78,6 +82,20 @@ const star_filters = [_][]const u8{ "Any rating", "1+ stars", "2+ stars", "3+ st
 const star_filter_width = 120;
 const default_pattern = "{roll}_{frame:02}";
 
+/// A field you can type in on Metadata: one of the roll's details, or the name or value of one of
+/// its own fields.
+const Editing = union(enum) {
+    detail: roll.Detail,
+    field_name: usize,
+    field_value: usize,
+};
+
+/// The boxes for one of the roll's own fields.
+const FieldBoxes = struct {
+    name: [field_name_capacity:0]u8 = @splat(0),
+    value: [detail_capacity:0]u8 = @splat(0),
+};
+
 /// An export that's running on its own thread.
 const Running = struct {
     batch: *exporting.Batch,
@@ -116,6 +134,14 @@ pub const State = struct {
     /// Where the files go: a path relative to the library's folder, or an absolute one.
     folder: [path_field:0]u8 = @splat(0),
     include: exporting.Include = .{},
+    /// What's in each detail's field. It follows the roll, except while you're typing in it.
+    details: std.EnumArray(roll.Detail, [detail_capacity:0]u8) = .initFill(@splat(0)),
+    /// The boxes for the roll's own fields, filled from the roll.
+    custom: std.ArrayList(FieldBoxes) = .empty,
+    /// The field being typed in, if any.
+    editing: ?Editing = null,
+    /// Put the keyboard in the newest field's name, after Add field.
+    focus_new_field: bool = false,
     dialog: Dialog = .{ .kind = .folder },
     running: ?Running = null,
     last: ?Summary = null,
@@ -132,6 +158,7 @@ pub const State = struct {
         }
         state.selected.deinit(gpa);
         state.seen.deinit(gpa);
+        state.custom.deinit(gpa);
         state.dialog.deinit(gpa);
         if (state.roll_path) |p| gpa.free(p);
     }
@@ -157,6 +184,11 @@ pub const State = struct {
         const typed = std.mem.trim(u8, std.mem.sliceTo(&state.custom_edge, 0), " ");
         const edge = std.fmt.parseInt(usize, typed, 10) catch return null;
         return std.math.clamp(edge, min_custom_edge, max_custom_edge);
+    }
+
+    fn isEditing(state: *const State, which: Editing) bool {
+        const editing = state.editing orelse return false;
+        return std.meta.eql(editing, which);
     }
 
     /// Whether a frame with `rating` passes the star filter. Rejected frames never do.
@@ -613,7 +645,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     y += gui.px(block_gap + 6);
     heading(list, gui.vec2(x, y), "METADATA");
     y += gui.px(small_line + block_gap);
-    y = drawMetadata(state, r.info, x, y, width);
+    y = drawMetadata(state, ctx, roll_index, x, y, width);
     y += gui.px(block_gap);
     y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · XMP sidecar beside each file");
 
@@ -823,41 +855,160 @@ fn chooseFolder(state: *State, ctx: context.Context) void {
 }
 
 /// Draws the roll details you can include, each with what it holds. Returns the y below them.
-fn drawMetadata(state: *State, info: roll.Info, x: f32, top: f32, width: f32) f32 {
+fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, top: f32, width: f32) f32 {
+    const r = &ctx.library.rolls.items[roll_index];
     const list = c.ImGui_GetWindowDrawList();
-    const unset = "Not set";
-    const Row = struct { label: [:0]const u8, flag: *bool, value: ?[]const u8, quiet: bool = false };
-    const rows = [_]Row{
-        .{ .label = "Camera", .flag = &state.include.camera, .value = info.camera },
-        .{ .label = "Lens", .flag = &state.include.lens, .value = info.lens },
-        .{ .label = "Film stock", .flag = &state.include.stock, .value = info.stock },
-        .{ .label = "Date shot", .flag = &state.include.shot, .value = info.shot },
-        .{ .label = "Copyright", .flag = &state.include.copyright, .value = info.copyright },
-        .{ .label = "Settings", .flag = &state.include.settings, .value = "Look, base, scanner", .quiet = true },
-        .{ .label = "Rating", .flag = &state.include.rating, .value = "Stars, rejected", .quiet = true },
-    };
     const value_x = x + gui.px(22 + 6 + 100 + 6);
+    const value_width = x + width - value_x;
+    const row = gui.px(detail_row);
     var y = top;
-    for (rows) |row| {
-        c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-        if (c.ImGui_InvisibleButton(row.label, gui.vec2(gui.px(22 + 6 + 100), gui.px(metadata_row)), 0)) row.flag.* = !row.flag.*;
-        const hovered = c.ImGui_IsItemHovered(0);
-        const box = gui.vec2(x + gui.px(4), y + gui.px((metadata_row - metadata_check) / 2.0));
-        if (row.flag.*) {
-            drawCheck(list, box, gui.px(metadata_check), true);
-        } else {
-            const far = gui.vec2(box.x + gui.px(metadata_check), box.y + gui.px(metadata_check));
-            c.ImDrawList_AddRectFilledEx(list, box, far, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
-            c.ImDrawList_AddRectEx(list, box, far, theme.imU32(theme.track), gui.px(3), 1, 0);
+
+    const rows = [_]MetadataRow{
+        .{ .label = "Camera", .flag = &state.include.camera, .value = .{ .detail = .camera } },
+        .{ .label = "Lens", .flag = &state.include.lens, .value = .{ .detail = .lens } },
+        .{ .label = "Film stock", .flag = &state.include.stock, .value = .{ .fixed = .{ .text = r.info.stock, .why = "Set in Develop" } } },
+        .{ .label = "Date shot", .flag = &state.include.shot, .value = .{ .detail = .shot } },
+        .{ .label = "Copyright", .flag = &state.include.copyright, .value = .{ .detail = .copyright } },
+        .{ .label = "Notes", .flag = &state.include.notes, .value = .{ .detail = .notes } },
+        .{ .label = "Settings", .flag = &state.include.settings, .value = .{ .fixed = .{ .text = "Look, base, scanner", .quiet = true } } },
+        .{ .label = "Rating", .flag = &state.include.rating, .value = .{ .fixed = .{ .text = "Stars, rejected", .quiet = true } } },
+    };
+    for (rows) |each| {
+        metadataCheck(list, x, y, each.label, each.flag);
+        switch (each.value) {
+            .detail => |which| detailField(state, ctx, r, which, gui.vec2(value_x, y), value_width),
+            .fixed => |fixed| {
+                const text_y = y + (row - c.ImGui_GetFontSize()) / 2;
+                const quiet = fixed.quiet or fixed.text == null;
+                c.ImDrawList_AddText(list, gui.vec2(value_x + gui.px(10), text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(fixed.text orelse "Not set", value_width - gui.px(10)));
+                if (fixed.why) |why| {
+                    c.ImGui_SetCursorScreenPos(gui.vec2(value_x, y));
+                    _ = c.ImGui_InvisibleButton(each.label, gui.vec2(value_width, row), 0);
+                    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{why}).ptr);
+                }
+            },
         }
-        const text_y = y + (gui.px(metadata_row) - c.ImGui_GetFontSize()) / 2;
-        c.ImDrawList_AddText(list, gui.vec2(x + gui.px(22 + 6), text_y), theme.imU32(if (hovered) theme.text else theme.text_secondary), row.label);
-        const value = row.value orelse unset;
-        const quiet = row.quiet or row.value == null;
-        c.ImDrawList_AddText(list, gui.vec2(value_x, text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(value, x + width - value_x));
-        y += gui.px(metadata_row + metadata_gap);
+        y += row + gui.px(metadata_gap);
     }
+
+    // The roll's own fields: a name and a value each, and Add.
+    metadataCheck(list, x, y, "Own fields", &state.include.fields);
+    const add_width = c.ImGui_CalcTextSize("Add field").x + gui.px(10 * 2 + 2);
+    c.ImGui_SetCursorScreenPos(gui.vec2(x + width - add_width, y));
+    const add = gui.buttonOf(.normal, "Add field", gui.vec2(add_width / gui.scale, detail_row));
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("A field of your own · written into the files' XMP");
+    y += row + gui.px(metadata_gap);
+    syncFields(state, ctx.gpa, r);
+    var remove: ?usize = null;
+    var edited = false;
+    const name_width = gui.px(100);
+    const value_left = value_x;
+    const remove_size = row;
+    for (state.custom.items, 0..) |*field, i| {
+        c.ImGui_PushIDInt(@intCast(i));
+        defer c.ImGui_PopID();
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(22 + 6), y));
+        if (state.focus_new_field and i + 1 == state.custom.items.len) {
+            c.ImGui_SetKeyboardFocusHere();
+            state.focus_new_field = false;
+        }
+        _ = gui.textField("name", &field.name, "Name", (name_width - gui.px(6)) / gui.scale);
+        edited = trackEdit(state, .{ .field_name = i }) or edited;
+        c.ImGui_SetCursorScreenPos(gui.vec2(value_left, y));
+        _ = gui.textField("value", &field.value, "Value", (value_width - remove_size - gui.px(6)) / gui.scale);
+        edited = trackEdit(state, .{ .field_value = i }) or edited;
+        c.ImGui_PopStyleVar();
+        c.ImGui_SetCursorScreenPos(gui.vec2(x + width - remove_size, y));
+        if (c.ImGui_InvisibleButton("remove", gui.vec2(remove_size, remove_size), 0)) remove = i;
+        const hovered = c.ImGui_IsItemHovered(0);
+        if (hovered) c.ImGui_SetTooltip("Remove the field");
+        const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
+        const arm = gui.px(4);
+        const ink = theme.imU32(if (hovered) theme.text else theme.text_tertiary);
+        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - arm, centre.y - arm), gui.vec2(centre.x + arm, centre.y + arm), ink, gui.px(1.5));
+        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + arm, centre.y - arm), gui.vec2(centre.x - arm, centre.y + arm), ink, gui.px(1.5));
+        y += row + gui.px(metadata_gap);
+    }
+    if (add) state.focus_new_field = true;
+    if (edited or add or remove != null) saveFields(state, ctx, r, remove, add);
     return y - gui.px(metadata_gap);
+}
+
+/// One row of Metadata: a check box for whether it goes into the files, its label, and either a
+/// detail you can edit here or a value you can't.
+const MetadataRow = struct {
+    label: [:0]const u8,
+    flag: *bool,
+    value: union(enum) {
+        detail: roll.Detail,
+        fixed: struct { text: ?[]const u8, quiet: bool = false, why: ?[]const u8 = null },
+    },
+};
+
+/// Draws a Metadata row's check box and label at `y`. Clicking either flips `flag`.
+fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag: *bool) void {
+    const row = gui.px(detail_row);
+    c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+    if (c.ImGui_InvisibleButton(gui.print("{s}##check", .{label}), gui.vec2(gui.px(22 + 6 + 100), row), 0)) flag.* = !flag.*;
+    const hovered = c.ImGui_IsItemHovered(0);
+    const box = gui.vec2(x + gui.px(4), y + (row - gui.px(metadata_check)) / 2);
+    if (flag.*) {
+        drawCheck(list, box, gui.px(metadata_check), true);
+    } else {
+        const far = gui.vec2(box.x + gui.px(metadata_check), box.y + gui.px(metadata_check));
+        c.ImDrawList_AddRectFilledEx(list, box, far, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
+        c.ImDrawList_AddRectEx(list, box, far, theme.imU32(theme.track), gui.px(3), 1, 0);
+    }
+    c.ImDrawList_AddText(list, gui.vec2(x + gui.px(22 + 6), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
+}
+
+/// Draws the field for one of the roll's details. It shows the roll's value except while you're
+/// typing in it, and saves the roll when you leave it.
+fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.Detail, at: gui.Vec2, width: f32) void {
+    const buffer = state.details.getPtr(which);
+    if (!state.isEditing(.{ .detail = which })) gui.setText(buffer, r.detail(which) orelse "") catch {};
+    c.ImGui_SetCursorScreenPos(at);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
+    _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
+    c.ImGui_PopStyleVar();
+    if (which == .shot and c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("2026, 2026-10 or 2026-10-22 go in as dates · anything else as text");
+    if (trackEdit(state, .{ .detail = which })) {
+        r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
+    }
+}
+
+/// Notes which field is being typed in, from the item just drawn. Returns true when you've just
+/// left it after changing it, which is when it's saved.
+fn trackEdit(state: *State, which: Editing) bool {
+    if (c.ImGui_IsItemActive()) {
+        state.editing = which;
+    } else if (state.isEditing(which)) {
+        state.editing = null;
+    }
+    return c.ImGui_IsItemDeactivatedAfterEdit();
+}
+
+/// Fills the fields' boxes from the roll, unless one of them is being typed in.
+fn syncFields(state: *State, gpa: std.mem.Allocator, r: *const roll.Roll) void {
+    if (state.editing) |e| if (e == .field_name or e == .field_value) return;
+    state.custom.resize(gpa, r.info.fields.len) catch return;
+    for (state.custom.items, r.info.fields) |*boxes, field| {
+        gui.setText(&boxes.name, field.name) catch {};
+        gui.setText(&boxes.value, field.value) catch {};
+    }
+}
+
+/// Saves the fields as they're typed, leaving out `remove` and adding an empty one for `add`.
+fn saveFields(state: *const State, ctx: context.Context, r: *roll.Roll, remove: ?usize, add: bool) void {
+    var fields: std.ArrayList(roll.Field) = .empty;
+    defer fields.deinit(ctx.gpa);
+    for (state.custom.items, 0..) |*boxes, i| {
+        if (remove == i) continue;
+        fields.append(ctx.gpa, .{ .name = std.mem.sliceTo(&boxes.name, 0), .value = std.mem.sliceTo(&boxes.value, 0) }) catch return;
+    }
+    if (add) fields.append(ctx.gpa, .{ .name = "", .value = "" }) catch return;
+    r.setFields(ctx.io, fields.items) catch |err| std.log.err("can't save {s}'s fields: {t}", .{ r.info.name, err });
 }
 
 /// Starts exporting the chosen frames of `r` on a separate thread.
