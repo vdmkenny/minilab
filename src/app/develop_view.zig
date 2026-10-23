@@ -1149,10 +1149,7 @@ fn drawRating(state: *State, io: std.Io, library: *Library, list: *c.ImDrawList,
     const reject_hovered = c.ImGui_IsItemHovered(0);
     if (current.rejected) shortcuts.tooltip("Clear reject", .unreject) else shortcuts.tooltip("Reject", .reject);
     const cross = if (current.rejected) theme.red else if (reject_hovered) theme.text else theme.text_tertiary;
-    const inset = size * 0.2;
-    const thickness = gui.px(1.6);
-    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + inset, top + inset), gui.vec2(reject_x + size - inset, top + size - inset), theme.imU32(cross), thickness);
-    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + size - inset, top + inset), gui.vec2(reject_x + inset, top + size - inset), theme.imU32(cross), thickness);
+    gui.cross(list, gui.vec2(reject_x + size / 2, top + size / 2), size * 0.3, gui.px(1.6), cross);
 
     // The stars, left to right. Hovering one shows what a click would give.
     const step = size + gui.px(rating_gap);
@@ -1335,9 +1332,7 @@ fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(1.5), theme.imU32(theme.header), 96, gui.px(3));
     c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.text), 96, gui.px(1.5));
     const mark = gui.px(5);
-    const ink = theme.imU32(theme.withAlpha(theme.text, 0.7));
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - mark, centre.y), gui.vec2(centre.x + mark, centre.y), ink, 1);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, centre.y - mark), gui.vec2(centre.x, centre.y + mark), ink, 1);
+    gui.plus(list, centre, mark, 1, theme.withAlpha(theme.text, 0.7));
 }
 
 /// The smallest crop box, in preview pixels.

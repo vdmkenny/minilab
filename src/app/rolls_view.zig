@@ -231,12 +231,9 @@ fn drawTitleRow(state: *State, library: *Library) void {
     // The plus sign, then the label, laid out as in the design: 12 pixels in, a 14-pixel icon,
     // then a 6-pixel gap.
     const list = c.ImGui_GetWindowDrawList();
-    const ink = theme.imU32(theme.on_accent);
-    const plus = gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2);
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x - gui.px(5), plus.y), gui.vec2(plus.x + gui.px(5), plus.y), ink, gui.px(1.8));
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x, plus.y - gui.px(5)), gui.vec2(plus.x, plus.y + gui.px(5)), ink, gui.px(1.8));
+    gui.plus(list, gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2), gui.px(5), gui.px(1.8), theme.on_accent);
     fonts.push(.semibold);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(12 + 14 + 6), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), ink, new_label);
+    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(12 + 14 + 6), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.on_accent), new_label);
     fonts.pop();
 }
 
@@ -308,11 +305,8 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const bar_y = origin.y + card_height - gui.px(card_padding_y + 3);
     c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(3) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
     const bar_width = gui.px(card_width - 2 * card_padding_x);
-    c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(3)), theme.imU32(theme.border), gui.px(2), 0);
-    if (total > 0 and developed > 0) {
-        const done = bar_width * @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
-    }
+    const share = if (total == 0) 0 else @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
+    gui.progressBar(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(3)), share);
 
     // Delete, in the card's top right corner while the mouse is over the card.
     const mouse = c.ImGui_GetMousePos();
@@ -474,9 +468,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
     const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
     const list = c.ImGui_GetWindowDrawList();
-    const ink = theme.imU32(theme.text_secondary);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x + gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x - gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
+    gui.cross(list, centre, gui.px(4), gui.px(1.6), theme.text_secondary);
 
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(10)));
     defer c.ImGui_PopStyleVar();

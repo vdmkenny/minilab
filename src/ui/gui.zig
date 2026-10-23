@@ -186,6 +186,8 @@ pub const Kind = enum {
     primary,
     /// A border only.
     outline,
+    /// A border only, with secondary text, for the less important actions.
+    secondary,
     /// The chosen one in a set of choices: an amber border on a dark amber fill.
     selected,
     /// An unchosen one in a set of choices: grey, with secondary text.
@@ -201,6 +203,7 @@ pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
         .normal => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
         .primary => .{ .fill = theme.accent, .hover = theme.accent, .line = theme.withAlpha(theme.accent, 0), .ink = theme.on_accent },
         .outline => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
+        .secondary => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
         .selected => .{ .fill = theme.accent_fill, .hover = theme.accent_fill, .line = theme.accent, .ink = theme.text },
         .unselected => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
         .quiet => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.withAlpha(theme.page, 0), .ink = theme.text_secondary },
@@ -571,6 +574,29 @@ pub fn star(list: *c.ImDrawList, centre: Vec2, radius: f32, filled: bool, colour
 /// How far in a star's notches are, as a share of its radius. A regular star's are at 0.38, and a
 /// little more fills out a small one.
 const star_notch = 0.45;
+
+/// Draws an x centred on `centre`, its strokes reaching `arm` out along each axis.
+pub fn cross(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness);
+}
+
+/// Draws a plus sign centred on `centre`, its strokes reaching `arm` out each way.
+pub fn plus(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness);
+}
+
+/// Draws a progress bar filling `min` to `max`: a grey track, with `fraction` (0 to 1) of it in
+/// amber from the left.
+pub fn progressBar(list: *c.ImDrawList, min: Vec2, max: Vec2, fraction: f32) void {
+    const rounding = (max.y - min.y) / 2;
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.border), rounding, 0);
+    const done = (max.x - min.x) * std.math.clamp(fraction, 0, 1);
+    if (done > 0) c.ImDrawList_AddRectFilledEx(list, min, vec2(min.x + done, max.y), theme.imU32(theme.accent), rounding, 0);
+}
 
 /// Prints `v` with `format`, using a real minus sign as the design does.
 pub fn formatSigned(comptime format: []const u8, v: f32) [:0]const u8 {

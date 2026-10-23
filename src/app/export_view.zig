@@ -434,23 +434,8 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
     shortcuts.tooltip("Select all", .select_all);
     c.ImGui_SetCursorScreenPos(gui.vec2(right - none_width, top));
-    if (outlineButton("Select none", gui.vec2(none_width, height))) state.selectAll(false);
+    if (gui.buttonOf(.secondary, "Select none", gui.vec2(none_width / gui.scale, height / gui.scale))) state.selectAll(false);
     shortcuts.tooltip("Select none", .select_none);
-}
-
-/// A button with a border and no fill, and its label in the secondary colour: the design's
-/// quieter button. `size` is in screen pixels.
-fn outlineButton(label: [:0]const u8, size: gui.Vec2) bool {
-    const corner = c.ImGui_GetCursorScreenPos();
-    const clicked = c.ImGui_InvisibleButton(label, size, 0);
-    const hovered = c.ImGui_IsItemHovered(0);
-    const list = c.ImGui_GetWindowDrawList();
-    const far = gui.vec2(corner.x + size.x, corner.y + size.y);
-    if (hovered) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control_hover), gui.px(5), 0);
-    c.ImDrawList_AddRectEx(list, corner, far, theme.imU32(theme.border), gui.px(5), 1, 0);
-    const text_size = c.ImGui_CalcTextSize(label);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + (size.x - text_size.x) / 2, corner.y + (size.y - text_size.y) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
-    return clicked;
 }
 
 /// Draws the frames as cards, in as many columns of at least 150 pixels as fit. A click picks or
@@ -570,9 +555,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
         // The progress bar, on the second line.
         const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), theme.imU32(theme.border), gui.px(2), 0);
-        const done = (right - x) * std.math.clamp(batch.progress(), 0, 1);
-        if (done > 0) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, bar_y), gui.vec2(x + done, bar_y + gui.px(4)), theme.imU32(theme.accent), gui.px(2), 0);
+        gui.progressBar(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), batch.progress());
         return;
     }
 
@@ -904,10 +887,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
         const hovered = c.ImGui_IsItemHovered(0);
         if (hovered) c.ImGui_SetTooltip("Remove");
         const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
-        const arm = gui.px(4);
-        const ink = theme.imU32(if (hovered) theme.text else theme.text_tertiary);
-        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - arm, centre.y - arm), gui.vec2(centre.x + arm, centre.y + arm), ink, gui.px(1.5));
-        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + arm, centre.y - arm), gui.vec2(centre.x - arm, centre.y + arm), ink, gui.px(1.5));
+        gui.cross(list, centre, gui.px(4), gui.px(1.5), if (hovered) theme.text else theme.text_tertiary);
         y += row + gui.px(metadata_gap);
     }
     if (add) state.focus_new_field = true;

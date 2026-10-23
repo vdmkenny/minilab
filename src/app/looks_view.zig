@@ -1002,34 +1002,28 @@ fn drawList(state: *State, ctx: context.Context) void {
         y += item_height + gui.px(6);
     }
 
-    // New look from references: a dashed outline, a plus sign and the label.
+    // New look from references, and Import .cube.
     y += gui.px(6);
     const height = gui.px(32);
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, y));
-    if (c.ImGui_InvisibleButton("new look", gui.vec2(width, height), 0)) state.newLook(ctx);
-    const hovered = c.ImGui_IsItemHovered(0);
-    if (hovered) c.ImDrawList_AddRectFilledEx(list, gui.vec2(origin.x, y), gui.vec2(origin.x + width, y + height), theme.imU32(theme.control), gui.px(5), 0);
-    gui.dashedRoundedRect(list, gui.vec2(origin.x, y), gui.vec2(origin.x + width, y + height), theme.imU32(theme.border), gui.px(5));
-    const ink = theme.imU32(if (hovered) theme.text else theme.text_secondary);
-    const plus = gui.vec2(origin.x + gui.px(10 + 6), y + height / 2);
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x - gui.px(4.5), plus.y), gui.vec2(plus.x + gui.px(4.5), plus.y), ink, gui.px(1.6));
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x, plus.y - gui.px(4.5)), gui.vec2(plus.x, plus.y + gui.px(4.5)), ink, gui.px(1.6));
-    gui.textIn(list, origin.x + gui.px(10 + 12 + 6), y, height, if (hovered) theme.text else theme.text_secondary, "New look from references");
-    if (hovered) c.ImGui_SetTooltip("Fitted from pairs");
-
-    // Import .cube, the same way.
+    if (addButton(list, gui.vec2(origin.x, y), width, height, "New look from references", "Fitted from pairs")) state.newLook(ctx);
     y += height + gui.px(6);
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, y));
-    if (c.ImGui_InvisibleButton("import cube", gui.vec2(width, height), 0)) state.cube_dialog.show(ctx.gpa, ctx.io);
-    const import_hovered = c.ImGui_IsItemHovered(0);
-    if (import_hovered) c.ImDrawList_AddRectFilledEx(list, gui.vec2(origin.x, y), gui.vec2(origin.x + width, y + height), theme.imU32(theme.control), gui.px(5), 0);
-    gui.dashedRoundedRect(list, gui.vec2(origin.x, y), gui.vec2(origin.x + width, y + height), theme.imU32(theme.border), gui.px(5));
-    const import_ink = theme.imU32(if (import_hovered) theme.text else theme.text_secondary);
-    const import_plus = gui.vec2(origin.x + gui.px(10 + 6), y + height / 2);
-    c.ImDrawList_AddLineEx(list, gui.vec2(import_plus.x - gui.px(4.5), import_plus.y), gui.vec2(import_plus.x + gui.px(4.5), import_plus.y), import_ink, gui.px(1.6));
-    c.ImDrawList_AddLineEx(list, gui.vec2(import_plus.x, import_plus.y - gui.px(4.5)), gui.vec2(import_plus.x, import_plus.y + gui.px(4.5)), import_ink, gui.px(1.6));
-    gui.textIn(list, origin.x + gui.px(10 + 12 + 6), y, height, if (import_hovered) theme.text else theme.text_secondary, "Import .cube LUT");
-    if (import_hovered) c.ImGui_SetTooltip("3D or 1D · sRGB or Rec. 709");
+    if (addButton(list, gui.vec2(origin.x, y), width, height, "Import .cube LUT", "3D or 1D · sRGB or Rec. 709")) state.cube_dialog.show(ctx.gpa, ctx.io);
+}
+
+/// Draws a button at `at` for adding to the list: a dashed outline, a plus sign and `label`.
+/// Returns true when it's clicked.
+fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: [:0]const u8, tooltip: [:0]const u8) bool {
+    const far = gui.vec2(at.x + width, at.y + height);
+    c.ImGui_SetCursorScreenPos(at);
+    const clicked = c.ImGui_InvisibleButton(label, gui.vec2(width, height), 0);
+    const hovered = c.ImGui_IsItemHovered(0);
+    if (hovered) c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.control), gui.px(5), 0);
+    gui.dashedRoundedRect(list, at, far, theme.imU32(theme.border), gui.px(5));
+    const ink = if (hovered) theme.text else theme.text_secondary;
+    gui.plus(list, gui.vec2(at.x + gui.px(10 + 6), at.y + height / 2), gui.px(4.5), gui.px(1.6), ink);
+    gui.textIn(list, at.x + gui.px(10 + 12 + 6), at.y, height, ink, label);
+    if (hovered) c.ImGui_SetTooltip(tooltip);
+    return clicked;
 }
 
 /// Draws a group's heading in the list at `y`, with space above it unless it's at the top of the

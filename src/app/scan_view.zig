@@ -1527,7 +1527,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     c.ImGui_SameLineEx(0, gui.px(8));
     if (gui.buttonOf(.normal, "Delete", gui.vec2(0, button_height))) deleteFrame(state, index);
     c.ImGui_SameLineEx(0, gui.px(8));
-    if (quietButton("Detect again", gui.vec2(0, button_height))) detect(state, ctx, roll_index);
+    if (gui.buttonOf(.secondary, "Detect again", gui.vec2(0, button_height))) detect(state, ctx, roll_index);
     c.ImGui_PopStyleVar();
     c.ImGui_EndDisabled();
 }
@@ -2033,10 +2033,8 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             c.ImDrawList_AddText(list, gui.vec2(right - c.ImGui_CalcTextSize(time).x, text_y), theme.imU32(theme.text_secondary), time);
             fonts.pop();
             const bar_y = y + pad_y + line + gui.px(group_gap);
-            const bar_far = gui.vec2(right, bar_y + gui.px(progress_height));
-            c.ImDrawList_AddRectFilledEx(list, gui.vec2(x + pad_x, bar_y), bar_far, theme.imU32(theme.border), gui.px(3), 0);
             const done = if (worker) |w| w.progress.fraction() else 0;
-            if (done > 0) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x + pad_x, bar_y), gui.vec2(x + pad_x + (right - x - pad_x) * done, bar_far.y), theme.imU32(theme.accent), gui.px(3), 0);
+            gui.progressBar(list, gui.vec2(x + pad_x, bar_y), gui.vec2(right, bar_y + gui.px(progress_height)), done);
         },
         else => {},
     }
@@ -2257,17 +2255,6 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     }
     y.* += height;
     return changed;
-}
-
-/// A button with a border, secondary text and no fill, for the design's less important actions.
-fn quietButton(label: [:0]const u8, size: gui.Vec2) bool {
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Button, theme.withAlpha(theme.page, 0));
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonHovered, theme.control_hover);
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ButtonActive, theme.control_hover);
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Border, theme.border);
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_Text, theme.text_secondary);
-    defer c.ImGui_PopStyleColorEx(5);
-    return c.ImGui_ButtonEx(label.ptr, gui.vec2(gui.px(size.x), gui.px(size.y)));
 }
 
 /// Draws a tick, 14 pixels square, at `corner`.
