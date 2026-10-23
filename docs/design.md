@@ -183,6 +183,9 @@ low-resolution scan of the whole area.
   `tl-x`, `tl-y`, `br-x`, `br-y`, `preview`) work with every backend. Backend-specific ones, like
   epkowa's `film-type` and `gamma-correction`, come from a scanner profile or from raw setup
   (both below).
+- Scan's resolution menu only lists what works raw. minilab puts the scanner in its raw setup,
+  then tries each resolution the backend lists and keeps the ones it takes as they are, still at
+  16 bits.
 - Cancel calls `sane_cancel`. On the V200 the plugin then reads the rest of the scan anyway, so
   that the scanner stays usable. That takes as long as the rest of the scan would have, so the UI
   shows "finishing" until it's done.
@@ -197,6 +200,8 @@ low-resolution scan of the whole area.
 - The standard has capabilities for film: `ICAP_LIGHTPATH` (`TWLP_TRANSMISSIVE`),
   `ICAP_FILMTYPE` (positive, negative), `ICAP_BITDEPTH`, `ICAP_GAMMA` and `ICAP_FRAMES`. How much
   of that each maker's driver supports, we can only find out scanner by scanner.
+- The resolution menu leaves out anything above the source's native resolution
+  (`ICAP_XNATIVERESOLUTION`), where the driver makes pixels up.
 - On Windows the V200 runs on Epson's own TWAIN driver (Epson Scan), not on our plugin. Whether
   Epson's driver gives linear 48-bit data without showing its own window, we won't know until
   someone tries it on Windows.

@@ -313,6 +313,7 @@ const CapabilityId = enum(u16) {
     x_resolution = 0x1118,
     y_resolution = 0x1119,
     bit_depth = 0x112b,
+    x_native_resolution = 0x1146,
     film_type = 0x1169,
     _,
 };
@@ -667,6 +668,15 @@ pub const Scanner = struct {
         try scanner.setLightPath(source);
         scanner.set(.units, .uint16, un_inches) catch {};
         scanner.set(.pixel_type, .uint16, pt_rgb) catch {};
+        var deep = false;
+        if (try scanner.get(gpa, .bit_depth)) |found| {
+            var d = found;
+            defer d.deinit(gpa);
+            deep = d.contains(rgb_bits_deep) or d.contains(grey_bits_deep);
+        }
+        // Read the resolutions with the raw settings in place, as a scan has them.
+        scanner.set(.bit_depth, .uint16, if (deep) rgb_bits_deep else rgb_bits) catch {};
+        scanner.setFix(.gamma, 1.0) catch {};
 
         var resolutions: std.ArrayList(u32) = .empty;
         errdefer resolutions.deinit(gpa);
@@ -679,6 +689,11 @@ pub const Scanner = struct {
             if (resolutions.items.len == 0) if (r.current) |v| if (interface.resolutionOf(v)) |dpi| try resolutions.append(gpa, dpi);
         }
         std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));
+        if (try scanner.get(gpa, .x_native_resolution)) |found| {
+            var native = found;
+            defer native.deinit(gpa);
+            if (native.current) |most| resolutions.shrinkRetainingCapacity(interface.upToNative(resolutions.items, most).len);
+        }
 
         var area: interface.Area = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
         if (try scanner.get(gpa, .physical_width)) |found| {
@@ -690,12 +705,6 @@ pub const Scanner = struct {
             var h = found;
             defer h.deinit(gpa);
             area.height = @floatCast((h.current orelse 0) * formats.mm_per_inch);
-        }
-        var deep = false;
-        if (try scanner.get(gpa, .bit_depth)) |found| {
-            var d = found;
-            defer d.deinit(gpa);
-            deep = d.contains(rgb_bits_deep) or d.contains(grey_bits_deep);
         }
         var film_setting = false;
         if (try scanner.get(gpa, .film_type)) |found| {

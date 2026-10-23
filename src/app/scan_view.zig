@@ -148,10 +148,10 @@ const min_box_px = 8;
 const mm_per_inch = formats.mm_per_inch;
 /// The resolution previews are scanned at, or the scanner's next one up.
 const preview_dpi = 300;
-/// The resolution picked to start with, if the scanner has it.
+/// The resolution picked to start with, or the scanner's closest one.
 const default_dpi = 2400;
-/// The most resolutions to offer.
-const max_resolution_choices = 4;
+/// The most resolutions the menu lists. A driver that lists more gets its highest ones.
+const max_resolutions = 32;
 /// The frame view shows this share of the frame's length past each end, as in the design.
 const view_overhang = 0.068;
 /// The largest margin, inset and rotation the controls allow.
@@ -610,10 +610,10 @@ fn queueItem(state: *State, index: usize) ?*QueueItem {
 }
 
 /// The resolution to use after the scanner changes: the chosen one if the scanner has it, or else
-/// the default, or else the nearest one above.
+/// the one closest to the default.
 fn chooseDpi(capabilities: scan.Capabilities, current: u32) u32 {
     if (std.mem.indexOfScalar(u32, capabilities.resolutions, current) != null) return current;
-    return capabilities.resolutionFrom(default_dpi) orelse current;
+    return capabilities.resolutionNearest(default_dpi) orelse current;
 }
 
 /// Adds a scanned frame to the queue's roll. Returns its index there.
@@ -774,9 +774,6 @@ const max_devices = 8;
 
 /// Draws the scanner menu at `y`. Returns the y below it.
 fn drawDevice(state: *State, panel: ScannerPanel, y: f32) f32 {
-    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding_x), (gui.px(device_height) - c.ImGui_GetFontSize()) / 2));
-    defer c.ImGui_PopStyleVar();
     c.ImGui_BeginDisabled(panel.busy or state.devices.len == 0);
     defer c.ImGui_EndDisabled();
     var names: [max_devices][]const u8 = undefined;
@@ -788,8 +785,7 @@ fn drawDevice(state: *State, panel: ScannerPanel, y: f32) f32 {
         else => "No scanner found",
     }};
     const items = if (shown > 0) names[0..shown] else placeholder;
-    c.ImGui_SetNextItemWidth(panel.width);
-    if (gui.combo("device", items, state.device orelse 0, panel.width / gui.scale)) |picked| {
+    if (menu(panel, y, "device", items, state.device orelse 0)) |picked| {
         if (shown > 0 and picked != state.device) {
             state.device = picked;
             if (state.capabilities) |*caps| caps.deinit(panel.ctx.gpa);
@@ -798,6 +794,15 @@ fn drawDevice(state: *State, panel: ScannerPanel, y: f32) f32 {
         }
     }
     return y + gui.px(device_height + scanner_gap);
+}
+
+/// Draws a drop-down of `items` across the panel at `y`, as tall as the scanner menu. Returns the
+/// item picked.
+fn menu(panel: ScannerPanel, y: f32, id: [:0]const u8, items: []const []const u8, chosen: usize) ?usize {
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding_x), (gui.px(device_height) - c.ImGui_GetFontSize()) / 2));
+    defer c.ImGui_PopStyleVar();
+    return gui.combo(id, items, chosen, panel.width / gui.scale);
 }
 
 /// Draws what the scanner is set up for, or why there isn't one, at `y`. Returns the y below it.
@@ -853,25 +858,19 @@ fn drawFilmChoice(state: *State, panel: ScannerPanel, top: f32) f32 {
     return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
 }
 
-/// Draws the resolutions to choose from at `y`, with the size of the scans. Returns the y below.
+/// Draws the resolution menu at `y`, with the size of the scans. Returns the y below.
 fn drawResolution(state: *State, panel: ScannerPanel, top: f32) f32 {
     var y = top;
     y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
-    var choices: [max_resolution_choices]u32 = undefined;
-    const resolutions = resolutionChoices(state, &choices);
+    const resolutions = listedResolutions(state);
     if (resolutions.len > 0) {
-        var labels_: [max_resolution_choices][:0]const u8 = undefined;
-        var chosen: usize = resolutions.len;
-        for (resolutions, 0..) |r, i| {
-            labels_[i] = gui.print("{d} dpi", .{r});
-            if (r == state.dpi) chosen = i;
-        }
-        c.ImGui_PushID("resolution");
+        var labels_: [max_resolutions][]const u8 = undefined;
+        for (labels_[0..resolutions.len], resolutions) |*label, r| label.* = gui.print("{d} dpi", .{r});
+        const chosen = std.mem.indexOfScalar(u32, resolutions, state.dpi) orelse resolutions.len;
         c.ImGui_BeginDisabled(state.scanning);
-        if (pills(labels_[0..resolutions.len], chosen, panel.x, &y, panel.width, true)) |picked| state.dpi = resolutions[picked];
+        if (menu(panel, y, "resolution", labels_[0..resolutions.len], chosen)) |picked| state.dpi = resolutions[picked];
         c.ImGui_EndDisabled();
-        c.ImGui_PopID();
-        y += gui.px(group_gap);
+        y += gui.px(device_height + group_gap);
     }
     return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, sizeNote(state, panel.ctx, panel.roll_index)) + gui.px(scanner_gap);
 }
@@ -1186,27 +1185,10 @@ fn filmAreaNote(caps: scan.Capabilities, ctx: context.Context, roll_index: ?usiz
     return gui.print("Film area {d:.2} × {d:.2} mm", .{ width, caps.area.height });
 }
 
-/// The resolutions to offer: all of the scanner's when there are only a few, or else a spread of
-/// them.
-fn resolutionChoices(state: *const State, buffer: *[max_resolution_choices]u32) []const u32 {
-    const caps = state.capabilities orelse return buffer[0..0];
-    const all = caps.resolutions;
-    if (all.len <= max_resolution_choices) {
-        @memcpy(buffer[0..all.len], all);
-        return buffer[0..all.len];
-    }
-    // The preview's resolution, then the highest three.
-    buffer[0] = caps.resolutionFrom(preview_dpi) orelse all[0];
-    var n: usize = 1;
-    var i = all.len;
-    while (i > 0 and n < max_resolution_choices) {
-        i -= 1;
-        if (all[i] == buffer[0]) break;
-        buffer[n] = all[i];
-        n += 1;
-    }
-    std.mem.sortUnstable(u32, buffer[0..n], {}, std.sort.asc(u32));
-    return buffer[0..n];
+/// The resolutions the menu lists: the scanner's, or its highest ones when it has too many.
+fn listedResolutions(state: *const State) []const u32 {
+    const caps = state.capabilities orelse return &.{};
+    return caps.resolutions[caps.resolutions.len -| max_resolutions..];
 }
 
 /// How big each frame's scan will be at the chosen resolution.
@@ -2302,7 +2284,7 @@ fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:
 /// `pills` for every value of enum `T`, in order, labelled by `labels_`. Returns the value clicked.
 fn pillsOf(comptime T: type, chosen: T, labels_: *const [std.enums.values(T).len][:0]const u8, x: f32, y: *f32, width: f32) ?T {
     const choices = std.enums.values(T);
-    const picked = pills(labels_, gui.indexIn(T, choices, chosen), x, y, width, false) orelse return null;
+    const picked = pills(labels_, gui.indexIn(T, choices, chosen), x, y, width) orelse return null;
     return choices[picked];
 }
 
@@ -2313,18 +2295,17 @@ fn labelsOf(comptime T: type) [std.enums.values(T).len][:0]const u8 {
     return out;
 }
 
-fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f32, fill: bool) ?usize {
+fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f32) ?usize {
     var clicked: ?usize = null;
     const gap = gui.px(pill_gap);
     const height = gui.px(pill_height);
-    const even = (width - gap * @as(f32, @floatFromInt(labels_.len - 1))) / @as(f32, @floatFromInt(labels_.len));
     var at = x;
     var row_y = y.*;
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(pill_padding), (height - c.ImGui_GetFontSize()) / 2));
     defer c.ImGui_PopStyleVar();
     for (labels_, 0..) |label, i| {
-        const w = if (fill) even else gui.fittedWidth(label, pill_padding);
-        if (!fill and at > x and at + w > x + width) {
+        const w = gui.fittedWidth(label, pill_padding);
+        if (at > x and at + w > x + width) {
             at = x;
             row_y += height + gap;
         }
@@ -2508,16 +2489,16 @@ test "dragging a corner of a free box moves that corner only" {
     try std.testing.expect(box.hand and state.boxes_dirty);
 }
 
-test "a scanner's resolutions are offered as they are, or as a spread with the preview's" {
+test "the resolution menu lists all of a scanner's resolutions, or its highest ones" {
     var few = [_]u32{ 300, 600, 1200 };
-    var many = [_]u32{ 100, 300, 600, 1200, 2400, 4800, 9600 };
     var state: State = .{ .capabilities = .{ .sources = .initOne(.transparency), .source = .transparency, .resolutions = &few, .area = default_film_area, .deep = true, .film_setting = false, .profile = null } };
-    var buffer: [max_resolution_choices]u32 = undefined;
-    try std.testing.expectEqualSlices(u32, &few, resolutionChoices(&state, &buffer));
+    try std.testing.expectEqualSlices(u32, &few, listedResolutions(&state));
+    var many: [max_resolutions + 2]u32 = undefined;
+    for (&many, 1..) |*r, i| r.* = @intCast(i * 100);
     state.capabilities.?.resolutions = &many;
-    try std.testing.expectEqualSlices(u32, &.{ 300, 2400, 4800, 9600 }, resolutionChoices(&state, &buffer));
+    try std.testing.expectEqualSlices(u32, many[2..], listedResolutions(&state));
     state.capabilities = null;
-    try std.testing.expectEqual(@as(usize, 0), resolutionChoices(&state, &buffer).len);
+    try std.testing.expectEqual(@as(usize, 0), listedResolutions(&state).len);
 }
 
 test "a frame placed from its neighbours says which ones" {
