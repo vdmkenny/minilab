@@ -93,7 +93,7 @@ pub fn paragraph(color: theme.Color, value: []const u8) void {
 /// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
 /// writes headings in capitals, and so do the callers.
 pub fn heading(value: []const u8) void {
-    fonts.pushSized(.semibold, 12);
+    fonts.pushSized(.semibold, fonts.small_size);
     textColored(theme.text_secondary, value);
     fonts.pop();
 }
@@ -103,7 +103,7 @@ pub fn heading(value: []const u8) void {
 /// The design's line height, as a multiple of the text size.
 pub const line_spacing = 1.4;
 /// A section heading's text size, in the design's pixels.
-pub const heading_size = 12;
+pub const heading_size = fonts.small_size;
 
 /// The height of a line of text `size` design pixels high.
 pub fn lineFor(size: f32) f32 {

@@ -26,7 +26,6 @@ const page_padding_y = 16;
 const panel_padding = 16;
 /// The space between blocks, on the page and in the panel.
 const block_gap = 14;
-const title_size = 18;
 const cell_min_width = 150;
 const cell_gap = 10;
 const cell_padding = 6;
@@ -399,10 +398,10 @@ fn drawNoRoll() ?context.Workspace {
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
     var at = gui.vec2(origin.x + gui.px(page_padding_x), origin.y + gui.px(page_padding_y));
-    fonts.pushSized(.semibold, title_size);
+    fonts.pushSized(.semibold, fonts.page_title_size);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), "Export");
     fonts.pop();
-    at.y += gui.lineFor(title_size) + gui.px(block_gap);
+    at.y += gui.lineFor(fonts.page_title_size) + gui.px(block_gap);
     const go = gui.noRoll(at);
     shortcuts.tooltip("Rolls", .rolls);
     return if (go) .rolls else null;
@@ -440,7 +439,7 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     const list = c.ImGui_GetWindowDrawList();
     const height = gui.px(control_height);
 
-    fonts.pushSized(.semibold, title_size);
+    fonts.pushSized(.semibold, fonts.page_title_size);
     const title = gui.print("Export {s}", .{r.info.name});
     const title_width = c.ImGui_CalcTextSize(title).x;
     c.ImDrawList_AddText(list, gui.vec2(left, top + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text), title);
@@ -525,7 +524,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
 
         // The number and the check box under the picture.
         const label_top = picture_max.y + gui.px(cell_padding);
-        fonts.pushSized(.mono, 12);
+        fonts.pushSized(.mono, fonts.small_size);
         const number = labels.frameNumber(i);
         const number_end = picture_min.x + gui.px(2) + c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
@@ -590,14 +589,14 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
 
     const summary = if (state.last) |*s| s else {
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text_secondary), "Nothing exported yet");
-        fonts.pushSized(.mono, 12);
+        fonts.pushSized(.mono, fonts.small_size);
         c.ImDrawList_AddText(list, gui.vec2(x, second_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), gui.elideStart(std.mem.sliceTo(&state.folder, 0), right - x));
         fonts.pop();
         return;
     };
     if (link(gui.vec2(right, first_top), "Show in folder")) showFolder(summary.folder.text());
     c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(summary.line.text(), right - x - gui.px(120)));
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     c.ImDrawList_AddText(list, gui.vec2(x, second_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), gui.elideStart(summary.files.text(), right - x));
     fonts.pop();
 }
@@ -776,7 +775,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     if (state.size == .custom) {
         rowLabel(list, x, y, "Long edge");
         c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-        fonts.pushSized(.mono, 12);
+        fonts.pushSized(.mono, fonts.small_size);
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
         c.ImGui_SetNextItemWidth(gui.px(90));
         _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
@@ -791,7 +790,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
 
     rowLabel(list, x, y, "File names");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField("names", &state.pattern, default_pattern, control_width / gui.scale);
     c.ImGui_PopStyleVar();

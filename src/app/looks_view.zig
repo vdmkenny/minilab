@@ -1000,7 +1000,7 @@ fn drawList(state: *State, ctx: context.Context) void {
 
     // In groups, the same as Develop's Look menu.
     y = groupHeading(list, origin.x, y, origin.y, "BUILT IN");
-    const item_height = gui.px(8 + 8 + 1) + gui.lineFor(13) + gui.lineFor(12) + 2;
+    const item_height = gui.px(8 + 8 + 1) + gui.lineFor(fonts.ui_size) + gui.lineFor(fonts.small_size) + 2;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
         .{ .neutral, "Neutral", "Inversion curve" },
         .{ .frontier, "Frontier emulation", "Color LUT, " ++ frontier_lut },
@@ -1077,10 +1077,10 @@ fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: 
 /// list (`first`). Returns the y below it.
 fn groupHeading(list: *c.ImDrawList, x: f32, y: f32, first: f32, label: []const u8) f32 {
     const top = if (y > first) y + gui.px(8) else y;
-    fonts.pushSized(.semibold, 12);
-    gui.textIn(list, x, top, gui.lineFor(12), theme.text_secondary, label);
+    fonts.pushSized(.semibold, fonts.small_size);
+    gui.textIn(list, x, top, gui.lineFor(fonts.small_size), theme.text_secondary, label);
     fonts.pop();
-    return top + gui.lineFor(12) + gui.px(8);
+    return top + gui.lineFor(fonts.small_size) + gui.px(8);
 }
 
 /// Draws one look in the list: its name and where it comes from. Returns true when it's clicked.
@@ -1099,11 +1099,11 @@ fn lookItem(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, name: []
     var y = at.y + gui.px(8) + 1;
     // The design's medium weight. Semibold is the nearest weight the app has.
     fonts.push(.semibold);
-    gui.textIn(list, x, y, gui.lineFor(13), theme.text, gui.elideEnd(name, width - gui.px(20) - 2));
+    gui.textIn(list, x, y, gui.lineFor(fonts.ui_size), theme.text, gui.elideEnd(name, width - gui.px(20) - 2));
     fonts.pop();
-    y += gui.lineFor(13) + gui.px(1);
-    fonts.pushSized(.regular, 12);
-    gui.textIn(list, x, y, gui.lineFor(12), theme.text_tertiary, gui.elideEnd(source, width - gui.px(20) - 2));
+    y += gui.lineFor(fonts.ui_size) + gui.px(1);
+    fonts.pushSized(.regular, fonts.small_size);
+    gui.textIn(list, x, y, gui.lineFor(fonts.small_size), theme.text_tertiary, gui.elideEnd(source, width - gui.px(20) - 2));
     fonts.pop();
     return clicked;
 }
@@ -1134,8 +1134,8 @@ fn drawMain(state: *State, ctx: context.Context) void {
     };
 
     // The title and its badge, on the same baseline.
-    fonts.pushSized(.semibold, 18);
-    const title_height = gui.lineFor(18);
+    fonts.pushSized(.semibold, fonts.page_title_size);
+    const title_height = gui.lineFor(fonts.page_title_size);
     const title_width = textWidth(title);
     gui.textIn(list, origin.x, y, title_height, theme.text, title);
     fonts.pop();
@@ -1150,12 +1150,12 @@ fn drawMain(state: *State, ctx: context.Context) void {
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Click to rename");
         drawRename(state, ctx);
     }
-    fonts.pushSized(.regular, 12);
+    fonts.pushSized(.regular, fonts.small_size);
     const badge_width = textWidth(badge) + gui.px(16) + 2;
     const badge_min = gui.vec2(origin.x + title_width + gui.px(10), y + gui.px(4.5));
-    const badge_max = gui.vec2(badge_min.x + badge_width, badge_min.y + gui.lineFor(12) + gui.px(2) + 2);
+    const badge_max = gui.vec2(badge_min.x + badge_width, badge_min.y + gui.lineFor(fonts.small_size) + gui.px(2) + 2);
     c.ImDrawList_AddRectEx(list, badge_min, badge_max, theme.imU32(theme.border), gui.px(10), 1, 0);
-    gui.textIn(list, badge_min.x + gui.px(8) + 1, badge_min.y + gui.px(1) + 1, gui.lineFor(12), theme.text_secondary, badge);
+    gui.textIn(list, badge_min.x + gui.px(8) + 1, badge_min.y + gui.px(1) + 1, gui.lineFor(fonts.small_size), theme.text_secondary, badge);
     fonts.pop();
     y += title_height + gui.px(4);
     y += gui.paragraphAt(list, origin.x, y, width, theme.text_secondary, description);
@@ -1217,8 +1217,8 @@ fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f
         .{ "Changes", info.changes },
     };
     for (rows) |row| {
-        gui.textIn(list, at.x, y, gui.lineFor(13), theme.text_secondary, row[0]);
-        y += @max(gui.lineFor(13), gui.paragraphAt(list, at.x + label_width, y + (gui.lineFor(13) - gui.lineHeight()) / 2, width - label_width, theme.text, row[1]));
+        gui.textIn(list, at.x, y, gui.lineFor(fonts.ui_size), theme.text_secondary, row[0]);
+        y += @max(gui.lineFor(fonts.ui_size), gui.paragraphAt(list, at.x + label_width, y + (gui.lineFor(fonts.ui_size) - gui.lineHeight()) / 2, width - label_width, theme.text, row[1]));
         y += gui.px(4);
     }
     return y;
@@ -1254,7 +1254,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     const small = previews.small.?;
     const aspect = @as(f32, @floatFromInt(small.height)) / @as(f32, @floatFromInt(small.width));
     const gap = gui.px(tile_gap);
-    const caption = gui.px(6) + gui.lineFor(13);
+    const caption = gui.px(6) + gui.lineFor(fonts.ui_size);
     if (!pack) {
         // Neutral and the look, side by side, no taller than `preview_max_height`.
         var w = (width - gap) / 2;
@@ -1279,10 +1279,10 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         const film: ?bundled.Film = if (from == 0) null else bundled.looks[ids[from].kind().bundled].film;
         var to = from + 1;
         while (film != null and to < ids.len and bundled.looks[ids[to].kind().bundled].film == film.?) to += 1;
-        fonts.pushSized(.semibold, 12);
-        gui.textIn(list, at.x, y, gui.lineFor(12), theme.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else "Neutral");
+        fonts.pushSized(.semibold, fonts.small_size);
+        gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else "Neutral");
         fonts.pop();
-        y += gui.lineFor(12) + gui.px(6);
+        y += gui.lineFor(fonts.small_size) + gui.px(6);
         for (from..to) |i| {
             const column: f32 = @floatFromInt((i - from) % columns);
             const row: f32 = @floatFromInt((i - from) / columns);
@@ -1332,7 +1332,7 @@ fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Text
     var hovered = false;
     if (clickable) {
         c.ImGui_SetCursorScreenPos(min);
-        clicked = c.ImGui_InvisibleButton("tile", gui.vec2(max.x - min.x, caption_top + gui.lineFor(13) - min.y), 0);
+        clicked = c.ImGui_InvisibleButton("tile", gui.vec2(max.x - min.x, caption_top + gui.lineFor(fonts.ui_size) - min.y), 0);
         hovered = c.ImGui_IsItemHovered(0);
     }
     c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(3), 0);
@@ -1341,7 +1341,7 @@ fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Text
         const outline = gui.px(if (current) 2 else 1);
         c.ImDrawList_AddRectEx(list, gui.vec2(min.x - outline, min.y - outline), gui.vec2(max.x + outline, max.y + outline), theme.imU32(if (current) theme.accent else theme.border), gui.px(4), outline, 0);
     }
-    gui.textIn(list, min.x, caption_top, gui.lineFor(13), if (current) theme.text else theme.text_secondary, gui.elideEnd(name, max.x - min.x));
+    gui.textIn(list, min.x, caption_top, gui.lineFor(fonts.ui_size), if (current) theme.text else theme.text_secondary, gui.elideEnd(name, max.x - min.x));
     return clicked;
 }
 
@@ -1458,8 +1458,8 @@ const Column = enum {
 fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, available: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     const n = own.pairs.items.len;
-    const header_height = gui.px(16) + gui.lineFor(12) + 1;
-    const row_height = gui.px(16) + gui.lineFor(13) + 1;
+    const header_height = gui.px(16) + gui.lineFor(fonts.small_size) + 1;
+    const row_height = gui.px(16) + gui.lineFor(fonts.ui_size) + 1;
     const width = @max(available, gui.px(table_min_width));
     const height = header_height + row_height * @as(f32, @floatFromInt(n)) + 2;
     const far = gui.vec2(at.x + width, at.y + height);
@@ -1471,11 +1471,11 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     // content, then the room that's left is shared out in proportion.
     const columns = std.enums.values(Column);
     var widths: std.EnumArray(Column, f32) = .initUndefined();
-    fonts.pushSized(.semibold, 12);
+    fonts.pushSized(.semibold, fonts.small_size);
     for (columns) |column| widths.set(column, textWidth(column.header(own)));
     fonts.pop();
     for (0..n) |i| for (columns) |column| {
-        if (column.mono()) fonts.pushSized(.mono, 12);
+        if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
         defer if (column.mono()) fonts.pop();
         widths.set(column, @max(widths.get(column), textWidth(column.text(own, i))));
     };
@@ -1488,10 +1488,10 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     for (&widths.values) |*w| w.* += room * w.* / total;
 
     // The header, in the design's medium weight.
-    fonts.pushSized(.semibold, 12);
+    fonts.pushSized(.semibold, fonts.small_size);
     var x = at.x + 1;
     for (columns) |column| {
-        gui.textIn(list, x + gui.px(12), at.y + 1 + gui.px(8), gui.lineFor(12), theme.text_secondary, column.header(own));
+        gui.textIn(list, x + gui.px(12), at.y + 1 + gui.px(8), gui.lineFor(fonts.small_size), theme.text_secondary, column.header(own));
         x += widths.get(column);
     }
     fonts.pop();
@@ -1547,8 +1547,8 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
                 .use => if (use_hovered) theme.text else theme.text_secondary,
                 .theirs, .stock, .registration => theme.text_secondary,
             };
-            if (column.mono()) fonts.pushSized(.mono, 12);
-            gui.textIn(list, x + gui.px(12), text_top, gui.lineFor(13), ink, shown);
+            if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
+            gui.textIn(list, x + gui.px(12), text_top, gui.lineFor(fonts.ui_size), ink, shown);
             if (column.mono()) fonts.pop();
             x += w;
         }
@@ -1568,7 +1568,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         }
     }
     if (n == 0) {
-        gui.textIn(list, at.x + 1 + gui.px(12), at.y + 1 + header_height + gui.px(8), gui.lineFor(13), theme.text_tertiary, "No pairs");
+        gui.textIn(list, at.x + 1 + gui.px(12), at.y + 1 + header_height + gui.px(8), gui.lineFor(fonts.ui_size), theme.text_tertiary, "No pairs");
     }
     c.ImDrawList_AddRectEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.divider), gui.px(6), 1, 0);
     c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + box_height));
@@ -1625,12 +1625,12 @@ fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
             if (i == 2) {
                 const placeholder = if (own.result != null and !aligned) "[Not aligned yet]" else "[Difference map after fitting]";
                 const size = c.ImGui_CalcTextSize(gui.print("{s}", .{placeholder}));
-                gui.textIn(list, (min.x + max.x - size.x) / 2, (min.y + max.y) / 2 - gui.lineFor(13) / 2, gui.lineFor(13), theme.text_tertiary, placeholder);
+                gui.textIn(list, (min.x + max.x - size.x) / 2, (min.y + max.y) / 2 - gui.lineFor(fonts.ui_size) / 2, gui.lineFor(fonts.ui_size), theme.text_tertiary, placeholder);
             }
         }
-        gui.textIn(list, min.x, max.y + gui.px(6), gui.lineFor(13), theme.text_secondary, gui.elideEnd(caption, figure_width));
+        gui.textIn(list, min.x, max.y + gui.px(6), gui.lineFor(fonts.ui_size), theme.text_secondary, gui.elideEnd(caption, figure_width));
     }
-    c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + figure_height + gui.px(6) + gui.lineFor(13)));
+    c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + figure_height + gui.px(6) + gui.lineFor(fonts.ui_size)));
     c.ImGui_Dummy(gui.vec2(0, 0));
 }
 
@@ -1641,10 +1641,10 @@ fn drawModel(state: *State, ctx: context.Context) void {
     const origin = c.ImGui_GetCursorScreenPos();
     const width = c.ImGui_GetContentRegionAvail().x;
     var y = origin.y;
-    fonts.pushSized(.semibold, 12);
-    gui.textIn(list, origin.x, y, gui.lineFor(12), theme.text_secondary, "MODEL");
+    fonts.pushSized(.semibold, fonts.small_size);
+    gui.textIn(list, origin.x, y, gui.lineFor(fonts.small_size), theme.text_secondary, "MODEL");
     fonts.pop();
-    y += gui.lineFor(12) + gui.px(12);
+    y += gui.lineFor(fonts.small_size) + gui.px(12);
 
     const look = switch (state.selected) {
         .own => |i| i,
@@ -1758,7 +1758,7 @@ fn lutNote(own: *const Own) []const u8 {
 
 /// The height of a model option `width` wide, with `note` wrapped under its name.
 fn optionHeight(width: f32, note: []const u8) f32 {
-    return gui.lineFor(13) + gui.paragraphHeight(note, width - gui.px(13 + 8));
+    return gui.lineFor(fonts.ui_size) + gui.paragraphHeight(note, width - gui.px(13 + 8));
 }
 
 /// Draws one of the model's choices: a check box, its name and a note under it. Returns its height
@@ -1775,8 +1775,8 @@ fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, na
     const box = gui.px(13);
     gui.checkBox(list, gui.vec2(at.x, at.y + gui.px(3)), box, checked.*, hovered);
     const x = at.x + box + gui.px(8);
-    gui.textIn(list, x, at.y, gui.lineFor(13), theme.text, name);
-    _ = gui.paragraphAt(list, x, at.y + gui.lineFor(13), width - box - gui.px(8), theme.text_tertiary, note);
+    gui.textIn(list, x, at.y, gui.lineFor(fonts.ui_size), theme.text, name);
+    _ = gui.paragraphAt(list, x, at.y + gui.lineFor(fonts.ui_size), width - box - gui.px(8), theme.text_tertiary, note);
     return if (clicked) height else null;
 }
 
@@ -1789,8 +1789,8 @@ fn drawStages(list: *c.ImDrawList, at: gui.Vec2, width: f32, stages: []const [2]
         const box = gui.px(13);
         c.ImDrawList_AddCircleFilled(list, gui.vec2(at.x + box / 2, y + gui.px(3) + box / 2), gui.px(2.5), theme.imU32(theme.text_tertiary), 12);
         const x = at.x + box + gui.px(8);
-        gui.textIn(list, x, y, gui.lineFor(13), theme.text, stage[0]);
-        y += gui.lineFor(13);
+        gui.textIn(list, x, y, gui.lineFor(fonts.ui_size), theme.text, stage[0]);
+        y += gui.lineFor(fonts.ui_size);
         y += gui.paragraphAt(list, x, y, width - box - gui.px(8), theme.text_tertiary, stage[1]);
     }
     return y;
@@ -1860,7 +1860,7 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
         .identity => gui.dashedLine(list, p(at, k, 30, 160), p(at, k, 290, 10), theme.imU32(theme.text_tertiary), 1.5 * k, 4 * k, 4 * k),
     }
 
-    fonts.pushSized(.mono, 10 * k);
+    fonts.pushSized(.mono, fonts.tiny_size * k);
     const small = theme.imU32(theme.text_tertiary);
     const baseline = ascent();
     const density_in = "density in";
@@ -1883,7 +1883,7 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     fonts.pop();
     // The label goes at the top right, as in the design, or at the top left to keep it out of the
     // fitted curves' way.
-    fonts.pushSized(.regular, 11 * k);
+    fonts.pushSized(.regular, fonts.caption_size * k);
     const label = gui.print("{s}", .{chart.label()});
     const label_size = c.ImGui_CalcTextSize(label);
     const label_x = if (chart == .fitted) at.x + 40 * k else at.x + 286 * k - label_size.x;
@@ -1903,8 +1903,8 @@ fn ascent() f32 {
 fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matrix) f32 {
     const gap = gui.px(4);
     const cell_width = (width - 2 * gap) / 3;
-    const cell_height = gui.px(12) + gui.lineFor(12);
-    fonts.pushSized(.mono, 12);
+    const cell_height = gui.px(12) + gui.lineFor(fonts.small_size);
+    fonts.pushSized(.mono, fonts.small_size);
     defer fonts.pop();
     for (matrix, 0..) |row, r| {
         for (row, 0..) |v, col| {
@@ -1912,7 +1912,7 @@ fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matri
             c.ImDrawList_AddRectFilledEx(list, min, gui.vec2(min.x + cell_width, min.y + cell_height), theme.imU32(theme.raised), gui.px(3), 0);
             const shown = gui.formatSigned("{d:.3}", v);
             const size = c.ImGui_CalcTextSize(shown);
-            gui.textIn(list, min.x + (cell_width - size.x) / 2, min.y + gui.px(6), gui.lineFor(12), if (r == col) theme.text else theme.text_tertiary, shown);
+            gui.textIn(list, min.x + (cell_width - size.x) / 2, min.y + gui.px(6), gui.lineFor(fonts.small_size), if (r == col) theme.text else theme.text_tertiary, shown);
         }
     }
     return at.y + 3 * cell_height + 2 * gap;
@@ -1927,14 +1927,14 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
             values = .{ gui.print("{d:.2}", .{m}), gui.print("{d:.2}", .{r.report.p95.?}) };
         } else values = .{ "no pair held out", "no pair held out" };
     }
-    const height = gui.px(20 + 6) + 2 * gui.lineFor(13);
+    const height = gui.px(20 + 6) + 2 * gui.lineFor(fonts.ui_size);
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.raised), gui.px(5), 0);
     for (rows, values, 0..) |label, value, i| {
-        const y = at.y + gui.px(10) + (gui.lineFor(13) + gui.px(6)) * @as(f32, @floatFromInt(i));
-        gui.textIn(list, at.x + gui.px(10), y, gui.lineFor(13), theme.text_secondary, label);
+        const y = at.y + gui.px(10) + (gui.lineFor(fonts.ui_size) + gui.px(6)) * @as(f32, @floatFromInt(i));
+        gui.textIn(list, at.x + gui.px(10), y, gui.lineFor(fonts.ui_size), theme.text_secondary, label);
         fonts.push(.mono);
         const w = textWidth(value);
-        gui.textIn(list, at.x + width - gui.px(10) - w, y, gui.lineFor(13), theme.text, value);
+        gui.textIn(list, at.x + width - gui.px(10) - w, y, gui.lineFor(fonts.ui_size), theme.text, value);
         fonts.pop();
     }
     if (own.result) |r| {

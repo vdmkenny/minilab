@@ -201,7 +201,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
     const filter_width = gui.px(130);
     const controls = gui.px(search_width) + filter_width + new_width + gui.px(10 * 2);
 
-    fonts.pushSized(.semibold, 18);
+    fonts.pushSized(.semibold, fonts.page_title_size);
     const title_height = c.ImGui_GetFontSize();
     c.ImGui_SetCursorPosY(row_top + (height - title_height) / 2);
     gui.text("Rolls");
@@ -294,11 +294,11 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + gui.px(card_width), origin.y + card_height), theme.imU32(if (hovered) theme.control else theme.panel), gui.px(6), 0);
     var at = gui.vec2(origin.x + gui.px(card_padding_x), origin.y + gui.px(card_padding_y));
     const inner = gui.px(card_width - 2 * card_padding_x);
-    fonts.pushSized(.semibold, 15);
+    fonts.pushSized(.semibold, fonts.title_size);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), gui.elideEnd(r.info.name, inner));
     fonts.pop();
     at.y += gui.px(21 + 3);
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.accent), gui.print("{s}", .{r.info.shot orelse r.info.created orelse ""}));
     fonts.pop();
     at.y += gui.px(17 + 3);
@@ -381,7 +381,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
         } else {
             c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(1), 0);
         }
-        fonts.pushSized(.mono, 11);
+        fonts.pushSized(.mono, fonts.caption_size);
         const number = labels.frameNumber(frame);
         const number_width = c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.text_tertiary), number);
@@ -440,7 +440,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
 
     const close_size = c.ImGui_GetFrameHeight();
     c.ImGui_AlignTextToFramePadding();
-    gui.title("New roll", 15);
+    gui.title("New roll", fonts.title_size);
     c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - close_size - c.ImGui_GetStyle().*.ItemSpacing.x, 0);
     const corner = c.ImGui_GetCursorScreenPos();
     if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;

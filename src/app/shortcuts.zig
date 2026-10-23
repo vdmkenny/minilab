@@ -301,7 +301,7 @@ pub fn tooltip(text: []const u8, command: Command) void {
     defer c.ImGui_EndTooltip();
     gui.text(text);
     c.ImGui_SameLineEx(0, gui.px(12));
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     gui.textColored(theme.text_tertiary, label(command));
     fonts.pop();
 }
@@ -349,7 +349,7 @@ pub fn drawHelp() bool {
     defer c.ImGui_PopStyleVarEx(2);
     defer c.ImGui_PopStyleColor();
     if (c.ImGui_Begin("Keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
-        gui.title("Keyboard shortcuts", 15);
+        gui.title("Keyboard shortcuts", fonts.title_size);
         gui.textColored(theme.text_tertiary, "As in Lightroom and Bridge");
         c.ImGui_Dummy(gui.vec2(0, gui.px(4)));
         const column = (c.ImGui_GetContentRegionAvail().x - gui.px(24)) / 2;
@@ -366,7 +366,7 @@ pub fn drawHelp() bool {
                 const row_x = c.ImGui_GetCursorPosX();
                 gui.textColored(theme.text_secondary, command.describe());
                 c.ImGui_SameLineEx(row_x + column - gui.px(110), 0);
-                fonts.pushSized(.mono, 12);
+                fonts.pushSized(.mono, fonts.small_size);
                 gui.text(label(command));
                 fonts.pop();
             }

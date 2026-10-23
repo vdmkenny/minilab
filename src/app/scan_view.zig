@@ -867,14 +867,14 @@ fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]cons
     const radius = gui.px(9);
     const middle = top + gui.lineHeight() / 2;
     c.ImDrawList_AddCircleFilled(list, gui.vec2(x + radius, middle), radius, theme.imU32(theme.control), 16);
-    fonts.pushSized(.mono, 11);
+    fonts.pushSized(.mono, fonts.caption_size);
     const size = c.ImGui_CalcTextSize(number);
     c.ImDrawList_AddText(list, gui.vec2(x + radius - size.x / 2, middle - size.y / 2), theme.imU32(theme.text), number);
     fonts.pop();
     var y = top;
     y += gui.lineAt(list, x + gui.px(step_indent), y, theme.text_secondary, name);
     if (detail) |text| {
-        fonts.pushSized(.mono, 12);
+        fonts.pushSized(.mono, fonts.small_size);
         y += gui.paragraphAt(list, x + gui.px(step_indent), y, width - gui.px(step_indent), theme.text_tertiary, text);
         fonts.pop();
     }
@@ -949,7 +949,7 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
         return;
     }
     defer c.ImGui_EndPopup();
-    gui.title("Scanner settings", 15);
+    gui.title("Scanner settings", fonts.title_size);
     gui.textColored(theme.text_tertiary, gui.print("{s} · {s}", .{ name, driver }));
     const changes = settings.raw(name, driver);
     var report_buffer: [96]u8 = undefined;
@@ -1137,7 +1137,7 @@ fn drawMarginField(state: *State, corner: gui.Vec2) void {
     const height = gui.px(pill_height);
     const list = c.ImGui_GetWindowDrawList();
     c.ImGui_SetCursorScreenPos(corner);
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     defer fonts.pop();
     if (state.editing_margin) {
         c.ImGui_SetNextItemWidth(width);
@@ -1215,7 +1215,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
 
     // The film area scaled to fill the column's height, with its width following.
     const area: scan.Area = if (state.preview) |p| p.area else if (state.capabilities) |caps| caps.area else default_film_area;
-    const mono_line = gui.lineFor(12);
+    const mono_line = gui.lineFor(fonts.small_size);
     const below = gui.px(8) + mono_line + gui.px(8) + 2 * gui.lineHeight();
     const room = top + height - y - below;
     // Once there are frames, the strip is drawn as straight film, as in the design: the film's
@@ -1246,7 +1246,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     }
     y += shown.y + gui.px(8);
 
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     const mm = gui.print("{d:.2} × {d:.2} mm", .{ area.width, area.height });
     const mm_width = c.ImGui_CalcTextSize(mm).x;
     c.ImDrawList_AddText(list, gui.vec2(x, y + (mono_line - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), mm);
@@ -1374,11 +1374,11 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
         if (state.selected == i) c.ImDrawList_AddRectEx(list, gui.vec2(min.x - gui.px(1.5), min.y - gui.px(1.5)), gui.vec2(max.x + gui.px(1.5), max.y + gui.px(1.5)), theme.imU32(theme.text), 0, gui.px(3), 0);
 
         // The number chip.
-        fonts.pushSized(.mono, 10);
+        fonts.pushSized(.mono, fonts.tiny_size);
         const chip = if (weak) gui.print("{d} ?", .{i + 1}) else gui.print("{d}", .{i + 1});
         const size = c.ImGui_CalcTextSize(chip);
         const chip_min = gui.vec2(min.x + gui.px(3), min.y + gui.px(3));
-        const chip_max = gui.vec2(chip_min.x + size.x + gui.px(6), chip_min.y + gui.lineFor(10));
+        const chip_max = gui.vec2(chip_min.x + size.x + gui.px(6), chip_min.y + gui.lineFor(fonts.tiny_size));
         c.ImDrawList_AddRectFilledEx(list, chip_min, chip_max, theme.imU32(if (weak) theme.text else theme.accent), gui.px(2), 0);
         c.ImDrawList_AddText(list, gui.vec2(chip_min.x + gui.px(3), chip_min.y + (chip_max.y - chip_min.y - size.y) / 2), theme.imU32(theme.on_accent), chip);
         fonts.pop();
@@ -2177,7 +2177,7 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
 /// Draws a title like "Frame 4" at 18 pixels, then `detail` in the secondary colour on the same
 /// baseline. Returns the row's height.
 fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:0]const u8) f32 {
-    fonts.pushSized(.semibold, 18);
+    fonts.pushSized(.semibold, fonts.page_title_size);
     const title_size = c.ImGui_CalcTextSize(title);
     const height = gui.lineHeight();
     const title_top = y + (height - c.ImGui_GetFontSize()) / 2;

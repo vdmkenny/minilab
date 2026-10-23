@@ -945,7 +945,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, 0.6)), gui.px(3), 0);
             const selected = state.selected == i;
             gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(3), if (selected) gui.px(2) else 1);
-            fonts.pushSized(.mono, 10);
+            fonts.pushSized(.mono, fonts.tiny_size);
             const number = labels.frameNumber(i);
             const size = c.ImGui_CalcTextSize(number);
             const label_min = gui.vec2(corner.x + gui.px(4), far.y - gui.px(3) - size.y);
@@ -992,7 +992,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const list = c.ImGui_GetWindowDrawList();
     // The tallest thing on the toolbar is the Split / Negative / Positive box.
     const toolbar_height = gui.px(26 + 6 + 16) + 1;
-    const info_height = gui.lineFor(12) + gui.px(16) + 1;
+    const info_height = gui.lineFor(fonts.small_size) + gui.px(16) + 1;
 
     // The toolbar.
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));
@@ -1067,7 +1067,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     // This is the toolbar's last control. The pipeline only shows where it won't run under the
     // controls, which the crop tool's buttons often reach.
     const controls_end = c.ImGui_GetItemRectMax().x;
-    fonts.pushSized(.mono, 12);
+    fonts.pushSized(.mono, fonts.small_size);
     const pipeline_size = c.ImGui_CalcTextSize(pipeline);
     const pipeline_x = origin.x + size.x - gui.px(12) - pipeline_size.x;
     if (pipeline_x > controls_end + gui.px(16)) c.ImDrawList_AddText(list, gui.vec2(pipeline_x, origin.y + (toolbar_height - pipeline_size.y) / 2), theme.imU32(theme.text_tertiary), pipeline);
@@ -1080,7 +1080,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     if (state.frame) |frame| {
         // The rating on the right, and the frame's details from the left up to it.
         const limit = drawRating(state, io, library, list, origin.x + size.x - gui.px(12), info_top + info_height / 2);
-        fonts.pushSized(.mono, 12);
+        fonts.pushSized(.mono, fonts.small_size);
         var x = origin.x + gui.px(12);
         const y = info_top + (info_height - c.ImGui_GetTextLineHeight()) / 2;
         var items: [4][:0]const u8 = undefined;
@@ -1828,7 +1828,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
 fn drawHistogramSection(frame: *Frame) void {
     gui.beginSection("histogram");
     drawHistogram(frame);
-    fonts.pushSized(.regular, 12);
+    fonts.pushSized(.regular, fonts.small_size);
     const shadows = gui.print("Shadows clipped {d:.1}%", .{frame.clipped_shadows * 100});
     const highlights = gui.print("Highlights clipped {d:.1}%", .{frame.clipped_highlights * 100});
     c.ImGui_SetCursorPosY(c.ImGui_GetCursorPosY() - gui.px(2));

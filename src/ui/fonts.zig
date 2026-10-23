@@ -6,8 +6,20 @@ const c = @import("c");
 
 pub const Face = enum { regular, semibold, mono };
 
-/// The interface's text size, in the design's pixels.
+/// The design's type sizes, in its pixels. Most text is `ui_size`.
 pub const ui_size: f32 = 13;
+/// Secondary lines, section headings, file names and values.
+pub const small_size: f32 = 12;
+/// The frame numbers under a strip.
+pub const caption_size: f32 = 11;
+/// Labels on pictures, and the version in the header.
+pub const tiny_size: f32 = 10;
+/// The app's name in the header.
+pub const wordmark_size: f32 = 14;
+/// A panel's or a card's title.
+pub const title_size: f32 = 15;
+/// A page's title.
+pub const page_title_size: f32 = 18;
 
 var faces: std.EnumArray(Face, ?*c.ImFont) = .initFill(null);
 var scale: f32 = 1;

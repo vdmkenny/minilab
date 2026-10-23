@@ -261,12 +261,12 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
 
     // The mark: a frame of film with its perforations, then the name.
     drawMark(list, gui.vec2(origin.x + gui.px(16), middle - gui.px(10)));
-    fonts.pushSized(.semibold, 14);
+    fonts.pushSized(.semibold, fonts.wordmark_size);
     const name_size = c.ImGui_CalcTextSize("minilab");
     c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
     fonts.pop();
     // The version, small, beside the name.
-    fonts.pushSized(.mono, 10);
+    fonts.pushSized(.mono, fonts.tiny_size);
     const version_text = gui.print("{s}", .{version.string});
     const version_size = c.ImGui_CalcTextSize(version_text);
     const version_x = origin.x + gui.px(16 + 20 + 8 + 6) + name_size.x;
