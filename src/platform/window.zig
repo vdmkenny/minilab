@@ -4,18 +4,11 @@
 const std = @import("std");
 const c = @import("c");
 const icon = @import("icon.zig");
+const sdl = @import("sdl.zig");
 
-pub const Error = error{Sdl};
-
-/// Logs SDL's last error against `what`, the call that failed, and returns it as an error.
-fn fail(what: []const u8) Error {
-    logError(what);
-    return error.Sdl;
-}
-
-fn logError(what: []const u8) void {
-    std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
-}
+pub const Error = sdl.Error;
+const fail = sdl.fail;
+const logError = sdl.logError;
 
 /// How long the window waits for an event before drawing again anyway. That keeps the text cursor
 /// blinking and timed messages moving while the app is idle.
@@ -156,18 +149,7 @@ pub const Window = struct {
         if (!c.SDL_WaitAndAcquireGPUSwapchainTexture(commands, window.handle, &swapchain, null, null)) {
             logError("SDL_WaitAndAcquireGPUSwapchainTexture");
         }
-        if (swapchain) |texture| if (!minimized) {
-            c.cImGui_ImplSDLGPU3_PrepareDrawData(draw_data, commands);
-            const target: c.SDL_GPUColorTargetInfo = .{
-                .texture = texture,
-                .clear_color = .{ .r = background[0], .g = background[1], .b = background[2], .a = background[3] },
-                .load_op = c.SDL_GPU_LOADOP_CLEAR,
-                .store_op = c.SDL_GPU_STOREOP_STORE,
-            };
-            const pass = c.SDL_BeginGPURenderPass(commands, &target, 1, null);
-            c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, commands, pass);
-            c.SDL_EndGPURenderPass(pass);
-        };
+        if (swapchain) |texture| if (!minimized) drawInto(draw_data, commands, texture, background);
         _ = c.SDL_SubmitGPUCommandBuffer(commands);
     }
 
@@ -193,16 +175,7 @@ pub const Window = struct {
         const transfer = c.SDL_CreateGPUTransferBuffer(window.gpu, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD, .size = size }) orelse return fail("SDL_CreateGPUTransferBuffer");
         defer c.SDL_ReleaseGPUTransferBuffer(window.gpu, transfer);
         const commands = c.SDL_AcquireGPUCommandBuffer(window.gpu) orelse return fail("SDL_AcquireGPUCommandBuffer");
-        c.cImGui_ImplSDLGPU3_PrepareDrawData(draw_data, commands);
-        const target: c.SDL_GPUColorTargetInfo = .{
-            .texture = texture,
-            .clear_color = .{ .r = background[0], .g = background[1], .b = background[2], .a = background[3] },
-            .load_op = c.SDL_GPU_LOADOP_CLEAR,
-            .store_op = c.SDL_GPU_STOREOP_STORE,
-        };
-        const pass = c.SDL_BeginGPURenderPass(commands, &target, 1, null);
-        c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, commands, pass);
-        c.SDL_EndGPURenderPass(pass);
+        drawInto(draw_data, commands, texture, background);
         const copy = c.SDL_BeginGPUCopyPass(commands);
         c.SDL_DownloadFromGPUTexture(copy, &.{ .texture = texture, .w = width, .h = height, .d = 1 }, &.{ .transfer_buffer = transfer });
         c.SDL_EndGPUCopyPass(copy);
@@ -222,6 +195,20 @@ pub const Window = struct {
         _ = c.SDL_SetWindowFullscreen(window.handle, !full);
     }
 };
+
+/// Draws ImGui's frame into `texture`, cleared to `background` first.
+fn drawInto(draw_data: *c.ImDrawData, commands: *c.SDL_GPUCommandBuffer, texture: *c.SDL_GPUTexture, background: [4]f32) void {
+    c.cImGui_ImplSDLGPU3_PrepareDrawData(draw_data, commands);
+    const target: c.SDL_GPUColorTargetInfo = .{
+        .texture = texture,
+        .clear_color = .{ .r = background[0], .g = background[1], .b = background[2], .a = background[3] },
+        .load_op = c.SDL_GPU_LOADOP_CLEAR,
+        .store_op = c.SDL_GPU_STOREOP_STORE,
+    };
+    const pass = c.SDL_BeginGPURenderPass(commands, &target, 1, null);
+    c.cImGui_ImplSDLGPU3_RenderDrawData(draw_data, commands, pass);
+    c.SDL_EndGPURenderPass(pass);
+}
 
 /// Gives the window minilab's icon, which on macOS is also the Dock icon.
 fn setIcon(handle: *c.SDL_Window) void {
