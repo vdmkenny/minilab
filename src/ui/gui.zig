@@ -240,28 +240,41 @@ pub fn noRoll(at: Vec2) bool {
     return buttonOf(.normal, label, vec2(width, button_height));
 }
 
+/// Corner radii, in the design's pixels: controls and cards, the choices inside a box of them,
+/// check boxes and small marks, and slider tracks and bars.
+pub const control_rounding = 5;
+pub const choice_rounding = 4;
+pub const box_rounding = 3;
+pub const track_rounding = 2;
+
+/// A segmented box: the space around its choices, their height, and the padding either side of
+/// each label.
+const segmented_padding = 2;
+const segmented_height = 26;
+const segmented_label_padding = 10;
+
 /// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
 /// Negative / Positive. Returns the one that was clicked.
 pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) ?usize {
     c.ImGui_PushID(id.ptr);
     defer c.ImGui_PopID();
-    const padding = px(2);
-    const pill_height = px(26);
+    const padding = px(segmented_padding);
+    const pill_height = px(segmented_height);
     var width: f32 = 2 * padding;
-    for (labels) |label| width += c.ImGui_CalcTextSize(label.ptr).x + px(20);
+    for (labels) |label| width += c.ImGui_CalcTextSize(label.ptr).x + px(2 * segmented_label_padding);
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
     const box_height = pill_height + 2 * padding + 2;
-    c.ImDrawList_AddRectFilledEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.control), px(5), 0);
-    c.ImDrawList_AddRectEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.border), px(5), 1, 0);
+    c.ImDrawList_AddRectFilledEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.control), px(control_rounding), 0);
+    c.ImDrawList_AddRectEx(list, origin, vec2(origin.x + width, origin.y + box_height), theme.imU32(theme.border), px(control_rounding), 1, 0);
     var clicked: ?usize = null;
     var x = origin.x + padding + 1;
     for (labels, 0..) |label, i| {
-        const w = c.ImGui_CalcTextSize(label.ptr).x + px(20);
+        const w = c.ImGui_CalcTextSize(label.ptr).x + px(2 * segmented_label_padding);
         c.ImGui_SetCursorScreenPos(vec2(x, origin.y + padding + 1));
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, vec2(px(10), (pill_height - c.ImGui_GetFontSize()) / 2));
-        c.ImGui_PushStyleVar(c.ImGuiStyleVar_FrameRounding, px(4));
-        if (buttonOf(if (i == chosen) .selected else .quiet, label, vec2(w / scale, 26))) clicked = i;
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, vec2(px(segmented_label_padding), (pill_height - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_PushStyleVar(c.ImGuiStyleVar_FrameRounding, px(choice_rounding));
+        if (buttonOf(if (i == chosen) .selected else .quiet, label, vec2(w / scale, segmented_height))) clicked = i;
         c.ImGui_PopStyleVarEx(2);
         x += w;
     }
@@ -409,15 +422,23 @@ pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
     return false;
 }
 
+/// A drop-down's chevron: where its tip is, in from the right and down from the middle, how far
+/// its arms reach each way, and their thickness.
+const chevron_inset = 14;
+const chevron_drop = 2.5;
+const chevron_arm = 4;
+const chevron_thickness = 1.5;
+
 /// Draws a drop-down's small chevron at the right of the item just drawn.
 fn chevron() void {
     const max = c.ImGui_GetItemRectMax();
     const middle = (c.ImGui_GetItemRectMin().y + max.y) / 2;
-    const tip = vec2(max.x - px(14), middle + px(2.5));
+    const tip = vec2(max.x - px(chevron_inset), middle + px(chevron_drop));
     const ink = theme.imU32(theme.text_secondary);
     const list = c.ImGui_GetWindowDrawList();
-    c.ImDrawList_AddLineEx(list, vec2(tip.x - px(4), tip.y - px(4)), tip, ink, px(1.5));
-    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + px(4), tip.y - px(4)), ink, px(1.5));
+    const arm = px(chevron_arm);
+    c.ImDrawList_AddLineEx(list, vec2(tip.x - arm, tip.y - arm), tip, ink, px(chevron_thickness));
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + arm, tip.y - arm), ink, px(chevron_thickness));
 }
 
 /// Draws a ticked check box, `size` pixels square, at `min`: amber, with the design's tick.
@@ -425,7 +446,7 @@ pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
     // The design draws its 12-pixel tick in a 16-pixel box: M2.5 6.5 l2.5 2.5 4.5 −5.5.
     const design_box = 16;
     const max = vec2(min.x + size, min.y + size);
-    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.accent), px(3), 0);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.accent), px(box_rounding), 0);
     const unit = size / design_box;
     const o = vec2(min.x + 2 * unit, min.y + 2 * unit);
     const points = [_]Vec2{
@@ -440,8 +461,8 @@ pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
 pub fn checkBox(list: *c.ImDrawList, min: Vec2, size: f32, checked: bool, hovered: bool) void {
     if (checked) return tickedBox(list, min, size);
     const max = vec2(min.x + size, min.y + size);
-    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
-    c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(box_rounding), 0);
+    c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(box_rounding), 1, 0);
 }
 
 /// How a check box with a label is laid out.
@@ -501,6 +522,13 @@ pub fn textField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f
     return c.ImGui_InputTextWithHint(print("##{s}", .{id}).ptr, hint.ptr, buffer, buffer.len + 1, 0);
 }
 
+/// A slider's thumb radius and how much it grows while it's held or hovered, the track's
+/// thickness, and how many sides the thumb is drawn with.
+const slider_thumb = 7;
+const slider_thumb_grow = 1;
+const slider_track = 4;
+const slider_thumb_segments = 16;
+
 /// A range slider drawn the way the design draws one: a thin track, amber up to the value, and a
 /// round thumb. `width` is in the design's pixels, and 0 fills up to the value column. Returns true
 /// when it moved.
@@ -509,7 +537,7 @@ pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) boo
     const w = if (width == 0) room - px(value_column + label_gap + reset_space) else px(width);
     const height = c.ImGui_GetFrameHeight();
     const origin = c.ImGui_GetCursorScreenPos();
-    const thumb = px(7);
+    const thumb = px(slider_thumb);
     _ = c.ImGui_InvisibleButton(print("##{s}", .{id}).ptr, vec2(w, height), 0);
     const active = c.ImGui_IsItemActive();
     const hovered = c.ImGui_IsItemHovered(0);
@@ -529,9 +557,10 @@ pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) boo
     const middle = origin.y + height / 2;
     const disabled = c.ImGui_GetStyle().*.Alpha < 1 or (c.ImGui_GetItemFlags() & c.ImGuiItemFlags_Disabled) != 0;
     const amber = if (disabled) theme.text_tertiary else theme.accent;
-    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - px(2)), vec2(left + span, middle + px(2)), theme.imU32(theme.track), px(2), 0);
-    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - px(2)), vec2(left + span * share, middle + px(2)), theme.imU32(amber), px(2), 0);
-    c.ImDrawList_AddCircleFilled(list, vec2(left + span * share, middle), if (hovered or active) thumb + px(1) else thumb, theme.imU32(amber), 16);
+    const track = px(slider_track) / 2;
+    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - track), vec2(left + span, middle + track), theme.imU32(theme.track), px(track_rounding), 0);
+    c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - track), vec2(left + span * share, middle + track), theme.imU32(amber), px(track_rounding), 0);
+    c.ImDrawList_AddCircleFilled(list, vec2(left + span * share, middle), if (hovered or active) thumb + px(slider_thumb_grow) else thumb, theme.imU32(amber), slider_thumb_segments);
     return changed;
 }
 
@@ -677,18 +706,22 @@ pub fn divider() void {
     c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(window.x, origin.y), vec2(window.x + width, origin.y), theme.imU32(theme.divider));
 }
 
-/// Starts a section of a side panel: 12 pixels of space above and below, and a divider under it.
+/// The space above and below a section of a side panel, in the design's pixels.
+const section_padding = 12;
+
+/// Starts a section of a side panel: `section_padding` of space above and below, and a divider
+/// under it.
 /// The panel's own padding takes care of the sides. Call `endSection` afterwards.
 pub fn beginSection(id: [:0]const u8) void {
     c.ImGui_PushID(id.ptr);
     const y = c.ImGui_GetCursorPosY();
     // After an earlier section, the cursor sits one line's spacing below that section's divider.
     const at_top = y <= c.ImGui_GetCursorStartPos().y;
-    c.ImGui_SetCursorPosY(y + px(12) - if (at_top) 0 else c.ImGui_GetStyle().*.ItemSpacing.y);
+    c.ImGui_SetCursorPosY(y + px(section_padding) - if (at_top) 0 else c.ImGui_GetStyle().*.ItemSpacing.y);
 }
 
 pub fn endSection(line: bool) void {
-    const bottom = c.ImGui_GetCursorPosY() - c.ImGui_GetStyle().*.ItemSpacing.y + px(12);
+    const bottom = c.ImGui_GetCursorPosY() - c.ImGui_GetStyle().*.ItemSpacing.y + px(section_padding);
     c.ImGui_SetCursorPosY(bottom);
     if (line) divider();
     c.ImGui_Dummy(vec2(0, 1));
@@ -749,11 +782,15 @@ pub fn dashedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, thickn
     for ([_][2]Vec2{ .{ a, b }, .{ b, d }, .{ e, d }, .{ a, e } }) |side| dashedLine(list, side[0], side[1], colour, thickness, dash, gap);
 }
 
+/// The dashes of the design's dashed box, and the gaps between them.
+const dashed_box_dash = 3;
+const dashed_box_gap = 3;
+
 /// Draws the design's dashed box, for something you can add or that isn't available yet: a
 /// one-pixel dashed outline with rounded corners of `radius`.
 pub fn dashedRoundedRect(list: *c.ImDrawList, min: Vec2, max: Vec2, colour: u32, radius: f32) void {
-    const dash = px(3);
-    const gap = px(3);
+    const dash = px(dashed_box_dash);
+    const gap = px(dashed_box_gap);
     dashedLine(list, vec2(min.x + radius, min.y + 0.5), vec2(max.x - radius, min.y + 0.5), colour, 1, dash, gap);
     dashedLine(list, vec2(min.x + radius, max.y - 0.5), vec2(max.x - radius, max.y - 0.5), colour, 1, dash, gap);
     dashedLine(list, vec2(min.x + 0.5, min.y + radius), vec2(min.x + 0.5, max.y - radius), colour, 1, dash, gap);
