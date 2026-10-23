@@ -251,7 +251,9 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var capabilities = try scanner.capabilities(gpa, if (flatbed) .flatbed else .transparency);
     defer capabilities.deinit(gpa);
     const resolution = capabilities.resolutionFrom(dpi) orelse return error.NoResolutions;
-    std.log.info("{s} {s}: {t}, {d} dpi, {s}", .{ device.vendor, device.model, capabilities.source, resolution, if (capabilities.profile) |p| p.summary else "no profile: the data may not be linear" });
+    var raw_buffer: [96]u8 = undefined;
+    const setup = if (capabilities.profile) |p| p.summary else if (capabilities.options) |o| scan.rawSetup(o.items, &.{}).report.label(&raw_buffer) else "no profile: the data may not be linear";
+    std.log.info("{s} {s}: {t}, {d} dpi, {s}", .{ device.vendor, device.model, capabilities.source, resolution, setup });
     var progress: scan.Progress = .{};
     var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = area }, &progress);
     defer image.deinit(gpa);

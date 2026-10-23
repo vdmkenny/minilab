@@ -225,9 +225,13 @@ pub const Capabilities = struct {
     film_setting: bool,
     /// The settings that make this model's data linear, if we've measured them.
     profile: ?*const Profile,
+    /// Without a profile, the options raw setup reads (`rawSetup`). Empty with a profile, and on
+    /// TWAIN, which doesn't list its options.
+    options: ?Owned(OptionInfo) = null,
 
     pub fn deinit(capabilities: *Capabilities, gpa: std.mem.Allocator) void {
         gpa.free(capabilities.resolutions);
+        if (capabilities.options) |*o| o.deinit();
         capabilities.* = undefined;
     }
 
@@ -247,6 +251,9 @@ pub const Request = struct {
     deep: bool = true,
     /// What to scan, or null for the source's whole area.
     area: ?Area = null,
+    /// The scanner settings' changes to raw setup. They're borrowed, so they have to last until
+    /// the scan is done.
+    raw: []const RawSetting = &.{},
 };
 
 /// A scan as the scanner delivered it: RGB, and linear if the scanner's profile makes it so.
@@ -316,7 +323,7 @@ pub const profiles = [_]Profile{
     .{
         .driver = "epkowa",
         .model = "Perfection V200",
-        .summary = "Transparency Unit, 48-bit, gamma 1.0, no colour matrix (raw)",
+        .summary = "Transparency Unit, 48-bit, gamma 1.0, no color matrix (raw)",
         .options = &.{
             .{ .name = "mode", .value = .{ .string = "Color" } },
             .{ .name = "gamma-correction", .value = .{ .string = "User defined (Gamma=1.0)" } },
@@ -342,6 +349,353 @@ pub fn profileOf(driver: []const u8, model: []const u8) ?*const Profile {
         if (std.mem.eql(u8, p.driver, driver) and std.mem.startsWith(u8, model, p.model)) return p;
     }
     return null;
+}
+
+// Raw setup without a profile ----------------------------------------------------------------
+
+/// One of a scanner's options, as raw setup sees it.
+pub const OptionInfo = struct {
+    name: []const u8,
+    kind: Type,
+    /// A string option's values.
+    choices: []const []const u8 = &.{},
+    /// A number's or a table's range, when it has one.
+    range: ?[2]f64 = null,
+
+    pub const Type = enum {
+        bool,
+        number,
+        string,
+        table,
+        /// epkowa's colour matrix: its nine `cct` options, taken as one.
+        matrix,
+        other,
+    };
+};
+
+/// What raw setup sets an option to.
+pub const RawValue = union(enum) {
+    /// Nothing: the driver's own default.
+    leave,
+    /// The film setting for the scan's `Film`, found with `filmChoice`.
+    film,
+    /// One of a list option's values.
+    choose: []const u8,
+    /// A number, or a switch's 1 (on) or 0 (off).
+    number: f64,
+    /// A gamma table filled with a straight line, or the colour matrix set to the identity.
+    straight,
+
+    /// Writes the value for the log, as `{f}`.
+    pub fn format(value: RawValue, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (value) {
+            .leave => try writer.writeAll("(driver default)"),
+            .film => try writer.writeAll("(film type)"),
+            .choose => |v| try writer.print("\"{s}\"", .{v}),
+            .number => |v| try writer.print("{d}", .{v}),
+            .straight => try writer.writeAll("(straight)"),
+        }
+    }
+
+    pub fn eql(a: RawValue, b: RawValue) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .choose => |v| std.mem.eql(u8, v, b.choose),
+            .number => |v| v == b.number,
+            .leave, .film, .straight => true,
+        };
+    }
+};
+
+/// An option and what raw setup sets it to. The scanner settings keep the user's changes in
+/// the same form.
+pub const RawSetting = struct {
+    name: []const u8,
+    value: RawValue,
+};
+
+/// An option raw setup can set, what it's for, and what raw setup sets it to by itself.
+pub const RawControl = struct {
+    option: OptionInfo,
+    role: Role,
+    auto: RawValue,
+
+    pub const Role = enum {
+        film,
+        /// SANE's `custom-gamma`, which switches the gamma tables on.
+        gamma_switch,
+        /// A list of gamma settings, such as epson2's `gamma-correction`.
+        gamma_choice,
+        gamma_table,
+        /// A gamma number.
+        gamma,
+        colour_correction,
+        colour_matrix,
+        /// Brightness or contrast.
+        tone,
+    };
+};
+
+/// How raw setup leaves the scanner, for the Scan screen.
+pub const RawReport = struct {
+    /// Gamma 1.0: a straight table, a gamma of 1.0, or a choice that says so.
+    linear: bool = false,
+    /// Colour correction off, or its matrix set to the identity.
+    colour_off: bool = false,
+    /// A film setting, so positive film can keep the scanner from inverting.
+    film: bool = false,
+
+    /// The report as a label, such as "Raw · gamma 1.0 · color correction off".
+    pub fn label(report: RawReport, buffer: []u8) []const u8 {
+        if (!report.linear) return "No profile · data may not be linear";
+        return std.fmt.bufPrint(buffer, "Raw · gamma 1.0{s}", .{if (report.colour_off) " · color correction off" else ""}) catch "Raw · gamma 1.0";
+    }
+};
+
+/// The most options raw setup sets.
+const max_raw_controls = 24;
+
+/// The options raw setup can set on one scanner, in the order it sets them.
+pub const RawControls = struct {
+    buffer: [max_raw_controls]RawControl = undefined,
+    len: usize = 0,
+
+    pub fn all(controls: *const RawControls) []const RawControl {
+        return controls.buffer[0..controls.len];
+    }
+
+    fn add(controls: *RawControls, option: OptionInfo, role: RawControl.Role, auto: RawValue) void {
+        if (controls.len == controls.buffer.len) return;
+        controls.buffer[controls.len] = .{ .option = option, .role = role, .auto = auto };
+        controls.len += 1;
+    }
+};
+
+/// SANE's standard names for the gamma switch and tables (`saneopts.h`).
+const custom_gamma = "custom-gamma";
+const gamma_tables = [_][]const u8{ "gamma-table", "red-gamma-table", "green-gamma-table", "blue-gamma-table" };
+const gamma_numbers = [_][]const u8{ "gamma", "analog-gamma", "analog-gamma-r", "analog-gamma-g", "analog-gamma-b" };
+/// epkowa's colour matrix, row by row (the V200's profile sets it).
+pub const colour_matrix = [_][]const u8{ "cct-1", "cct-2", "cct-3", "cct-4", "cct-5", "cct-6", "cct-7", "cct-8", "cct-9" };
+/// The name the colour matrix goes by as one control.
+pub const colour_matrix_name = "cct";
+
+/// Words in a gamma choice that mean gamma 1.0.
+const linear_words = [_][]const u8{ "1.0", "linear" };
+/// Words in a gamma choice that mean it takes the gamma tables.
+const custom_words = [_][]const u8{ "user defined", "custom" };
+/// Words in a colour correction choice that mean off.
+const off_words = [_][]const u8{ "none", "off", "disable" };
+
+/// Finds the options that raw setup sets on a scanner we have no profile for, and what it sets
+/// each to by itself, in this order:
+///
+/// - The film setting, set to positive for raw (or negative when asked). It goes first, since a
+///   backend may reset its colour settings when it changes.
+/// - Gamma: SANE's `custom-gamma` switched on and its gamma tables filled with a straight line;
+///   or a gamma choice that says 1.0 or linear; or one that takes your own table, and then the
+///   tables. Tables with no switch, as on Nikon's Coolscans, are always on and get filled too. A
+///   gamma number is set to 1.0.
+/// - Colour correction off, or epkowa's colour matrix set to the identity.
+/// - Brightness and contrast at 0, where 0 is the middle of their range.
+///
+/// A gamma choice or colour correction it can't pick a value for still gets a control, left as
+/// it is, so the scanner settings can set it.
+pub fn rawControls(options: []const OptionInfo) RawControls {
+    var controls: RawControls = .{};
+
+    for (options) |o| {
+        if (o.kind != .string or !nameHas(o.name, "film")) continue;
+        if (choiceWith(o.choices, &.{"positive"}) == null) continue;
+        controls.add(o, .film, .film);
+        break;
+    }
+
+    if (optionOf(options, custom_gamma, .bool)) |o| controls.add(o, .gamma_switch, .{ .number = 1 });
+    const has_table = for (gamma_tables) |name| {
+        if (optionOf(options, name, .table) != null) break true;
+    } else false;
+    for (options) |o| {
+        if (o.kind != .string or !nameHas(o.name, "gamma")) continue;
+        const auto: RawValue = auto: {
+            if (choiceWith(o.choices, &linear_words)) |value| break :auto .{ .choose = value };
+            if (has_table) if (choiceWith(o.choices, &custom_words)) |value| break :auto .{ .choose = value };
+            break :auto .leave;
+        };
+        controls.add(o, .gamma_choice, auto);
+        break;
+    }
+    for (gamma_tables) |name| if (optionOf(options, name, .table)) |o| {
+        if (o.range != null) controls.add(o, .gamma_table, .straight);
+    };
+    for (gamma_numbers) |name| if (optionOf(options, name, .number)) |o| {
+        if (inRange(o.range, 1)) controls.add(o, .gamma, .{ .number = 1 });
+    };
+
+    for (options) |o| {
+        if (o.kind != .string or !isColourCorrection(o.name)) continue;
+        controls.add(o, .colour_correction, if (choiceWith(o.choices, &off_words)) |value| .{ .choose = value } else .leave);
+        break;
+    }
+    const has_matrix = for (colour_matrix) |name| {
+        if (optionOf(options, name, .number) == null) break false;
+    } else true;
+    if (has_matrix) controls.add(.{ .name = colour_matrix_name, .kind = .matrix }, .colour_matrix, .straight);
+
+    for ([_][]const u8{ "brightness", "contrast" }) |name| if (optionOf(options, name, .number)) |o| {
+        const range = o.range orelse continue;
+        if (range[0] < 0 and range[1] > 0) controls.add(o, .tone, .{ .number = 0 });
+    };
+    return controls;
+}
+
+/// What raw setup does on one scan: its settings in order, and how they leave the scanner.
+pub const RawSetup = struct {
+    buffer: [max_raw_controls]RawSetting = undefined,
+    len: usize = 0,
+    report: RawReport = .{},
+
+    pub fn settings(setup: *const RawSetup) []const RawSetting {
+        return setup.buffer[0..setup.len];
+    }
+};
+
+/// Raw setup for a scanner with these `options`: what `rawControls` picks, with the user's
+/// `changes` from the scanner settings in its place.
+pub fn rawSetup(options: []const OptionInfo, changes: []const RawSetting) RawSetup {
+    const controls = rawControls(options);
+    var setup: RawSetup = .{};
+    for (controls.all()) |control| {
+        const value = valueOf(changes, control.option.name) orelse control.auto;
+        if (value == .leave) continue;
+        setup.buffer[setup.len] = .{ .name = control.option.name, .value = value };
+        setup.len += 1;
+    }
+    setup.report = reportOf(controls.all(), setup.settings());
+    return setup;
+}
+
+/// The value `settings` give the option `name`, if they give it one.
+pub fn valueOf(settings: []const RawSetting, name: []const u8) ?RawValue {
+    for (settings) |s| if (std.mem.eql(u8, s.name, name)) return s.value;
+    return null;
+}
+
+/// How `settings` leave a scanner with these `controls`. The gamma tables only count when
+/// they're on: switched on, turned on by the gamma choice, or always on when there's neither.
+fn reportOf(controls: []const RawControl, settings: []const RawSetting) RawReport {
+    var report: RawReport = .{};
+    var switch_on: ?bool = null;
+    var choice_takes_tables: ?bool = null;
+    var straight_tables = false;
+    for (controls) |control| {
+        const value = valueOf(settings, control.option.name) orelse .leave;
+        const choice = if (value == .choose) value.choose else "";
+        switch (control.role) {
+            .film => report.film = value != .leave,
+            .gamma_switch => switch_on = value == .number and value.number != 0,
+            .gamma_choice => {
+                if (saysAny(choice, &linear_words)) report.linear = true;
+                choice_takes_tables = saysAny(choice, &custom_words);
+            },
+            .gamma_table => if (value == .straight) {
+                straight_tables = true;
+            },
+            .gamma => if (value == .number and value.number == 1) {
+                report.linear = true;
+            },
+            .colour_correction => if (saysAny(choice, &off_words)) {
+                report.colour_off = true;
+            },
+            .colour_matrix => if (value == .straight) {
+                report.colour_off = true;
+            },
+            .tone => {},
+        }
+    }
+    const tables_on = switch_on orelse choice_takes_tables orelse true;
+    if (tables_on and straight_tables) report.linear = true;
+    return report;
+}
+
+/// The film setting's value for `film` among `choices`: one that names positive or negative film,
+/// preferring "film" over "slide".
+pub fn filmChoice(choices: []const []const u8, film: Film) ?[]const u8 {
+    const word = switch (film) {
+        .positive => "positive",
+        .negative => "negative",
+    };
+    for (choices) |choice| {
+        if (containsIgnoreCase(choice, word) and containsIgnoreCase(choice, "film")) return choice;
+    }
+    return choiceWith(choices, &.{word});
+}
+
+/// The option called `name`, if it's there and of the type `kind`.
+fn optionOf(options: []const OptionInfo, name: []const u8, kind: OptionInfo.Type) ?OptionInfo {
+    for (options) |o| if (o.kind == kind and std.mem.eql(u8, o.name, name)) return o;
+    return null;
+}
+
+/// The first of `choices` that contains any of `words`, ignoring case.
+fn choiceWith(choices: []const []const u8, words: []const []const u8) ?[]const u8 {
+    for (words) |word| for (choices) |choice| {
+        if (containsIgnoreCase(choice, word)) return choice;
+    };
+    return null;
+}
+
+fn saysAny(text: []const u8, words: []const []const u8) bool {
+    return choiceWith(&.{text}, words) != null;
+}
+
+fn nameHas(name: []const u8, word: []const u8) bool {
+    return containsIgnoreCase(name, word);
+}
+
+/// Colour correction, such as epson2's `color-correction`. Not shading correction, which evens
+/// out the lamp and has to stay on.
+fn isColourCorrection(name: []const u8) bool {
+    return nameHas(name, "correction") and (nameHas(name, "color") or nameHas(name, "colour")) and !nameHas(name, "gamma");
+}
+
+fn inRange(range: ?[2]f64, value: f64) bool {
+    const r = range orelse return true;
+    return r[0] <= value and value <= r[1];
+}
+
+/// The values a gamma table takes for a straight line: `entries` of them, evenly from the bottom
+/// of `range` to its top.
+pub fn straightTable(values: []f64, range: [2]f64) void {
+    const last: f64 = @floatFromInt(@max(values.len, 2) - 1);
+    for (values, 0..) |*v, i| v.* = range[0] + (range[1] - range[0]) * @as(f64, @floatFromInt(i)) / last;
+}
+
+/// A list of options or settings with the memory it lives in, for handing between threads.
+pub fn Owned(comptime T: type) type {
+    return struct {
+        arena: std.heap.ArenaAllocator,
+        items: []const T = &.{},
+
+        pub fn deinit(owned: *@This()) void {
+            owned.arena.deinit();
+            owned.* = undefined;
+        }
+    };
+}
+
+/// Copies `settings` and their strings into memory of their own.
+pub fn cloneSettings(gpa: std.mem.Allocator, settings: []const RawSetting) error{OutOfMemory}!Owned(RawSetting) {
+    var owned: Owned(RawSetting) = .{ .arena = .init(gpa) };
+    errdefer owned.arena.deinit();
+    const a = owned.arena.allocator();
+    const copy = try a.alloc(RawSetting, settings.len);
+    for (copy, settings) |*to, from| to.* = .{ .name = try a.dupe(u8, from.name), .value = switch (from.value) {
+        .choose => |v| .{ .choose = try a.dupe(u8, v) },
+        else => from.value,
+    } };
+    owned.items = copy;
+    return owned;
 }
 
 /// A loaded scanner library.
@@ -477,4 +831,134 @@ test "copying devices frees what it made when memory runs out" {
 
 test {
     std.testing.refAllDecls(@This());
+}
+
+/// The value raw setup gives `name`, or null when it leaves it.
+fn settingOf(setup: *const RawSetup, name: []const u8) ?RawValue {
+    return valueOf(setup.settings(), name);
+}
+
+test "raw setup on an epkowa scanner picks what the V200's profile sets" {
+    // epkowa's option names and values, as the V200 gives them (see its profile above).
+    var options = [_]OptionInfo{
+        .{ .name = "film-type", .kind = .string, .choices = &.{ "Positive Film", "Negative Film" } },
+        .{ .name = "gamma-correction", .kind = .string, .choices = &.{ "Default", "User defined (Gamma=1.0)", "User defined (Gamma=1.8)" } },
+    } ++ @as([colour_matrix.len]OptionInfo, @splat(.{ .name = undefined, .kind = .number }));
+    for (options[2..], colour_matrix) |*o, name| o.name = name;
+    const setup = rawSetup(&options, &.{});
+    const settings = setup.settings();
+    try std.testing.expectEqualStrings("film-type", settings[0].name);
+    try std.testing.expectEqual(RawValue.film, settings[0].value);
+    try std.testing.expectEqualStrings("User defined (Gamma=1.0)", settingOf(&setup, "gamma-correction").?.choose);
+    // The matrix is set as one, to the identity, as the profile does.
+    try std.testing.expectEqual(RawValue.straight, settingOf(&setup, colour_matrix_name).?);
+    try std.testing.expect(setup.report.linear and setup.report.colour_off and setup.report.film);
+    try std.testing.expectEqualStrings("Positive Film", filmChoice(options[0].choices, .positive).?);
+    try std.testing.expectEqualStrings("Negative Film", filmChoice(options[0].choices, .negative).?);
+}
+
+test "raw setup on epson2 picks its gamma 1.0 and turns colour correction off" {
+    // epson2's names and values, from the backend's own strings.
+    const options = [_]OptionInfo{
+        .{ .name = "film-type", .kind = .string, .choices = &.{ "Positive Film", "Negative Film", "Positive Slide", "Negative Slide" } },
+        .{ .name = "gamma-correction", .kind = .string, .choices = &.{ "Default", "User defined (Gamma=1.0)", "User defined (Gamma=1.8)", "High density printing" } },
+        .{ .name = "color-correction", .kind = .string, .choices = &.{ "None", "Default", "User defined CCT profile" } },
+        .{ .name = "red-gamma-table", .kind = .table, .range = .{ 0, 255 } },
+    };
+    const setup = rawSetup(&options, &.{});
+    try std.testing.expect(setup.report.linear and setup.report.colour_off);
+    try std.testing.expectEqualStrings("User defined (Gamma=1.0)", settingOf(&setup, "gamma-correction").?.choose);
+    try std.testing.expectEqualStrings("None", settingOf(&setup, "color-correction").?.choose);
+    try std.testing.expectEqualStrings("Positive Film", filmChoice(options[0].choices, .positive).?);
+}
+
+test "raw setup switches on SANE's custom gamma and straightens its tables" {
+    // The standard names (`saneopts.h`), as genesys, plustek and Canon's backends use them.
+    const options = [_]OptionInfo{
+        .{ .name = "custom-gamma", .kind = .bool },
+        .{ .name = "gamma-table", .kind = .table, .range = .{ 0, 65535 } },
+        .{ .name = "red-gamma-table", .kind = .table, .range = .{ 0, 65535 } },
+        .{ .name = "brightness", .kind = .number, .range = .{ -100, 100 } },
+        .{ .name = "contrast", .kind = .number, .range = .{ 0, 255 } },
+    };
+    const setup = rawSetup(&options, &.{});
+    const settings = setup.settings();
+    try std.testing.expectEqualStrings("custom-gamma", settings[0].name);
+    try std.testing.expectEqual(@as(f64, 1), settings[0].value.number);
+    try std.testing.expectEqual(RawValue.straight, settings[1].value);
+    try std.testing.expectEqual(RawValue.straight, settings[2].value);
+    // Brightness is centred on 0; contrast's 0 is an end, so it's left alone.
+    try std.testing.expectEqualStrings("brightness", settings[3].name);
+    try std.testing.expectEqual(@as(usize, 4), settings.len);
+    try std.testing.expect(setup.report.linear and !setup.report.colour_off);
+
+    var table: [5]f64 = undefined;
+    straightTable(&table, .{ 0, 65535 });
+    try std.testing.expectEqualSlices(f64, &.{ 0, 16383.75, 32767.5, 49151.25, 65535 }, &table);
+}
+
+test "raw setup fills tables that are always on, and says so when it can't help" {
+    // Nikon's Coolscan backends have tables and no switch.
+    const coolscan = [_]OptionInfo{.{ .name = "red-gamma-table", .kind = .table, .range = .{ 0, 4095 } }};
+    try std.testing.expect(rawSetup(&coolscan, &.{}).report.linear);
+    // A scanner with nothing to set.
+    const plain = [_]OptionInfo{.{ .name = "resolution", .kind = .number, .range = .{ 75, 1200 } }};
+    const nothing = rawSetup(&plain, &.{});
+    try std.testing.expectEqual(@as(usize, 0), nothing.settings().len);
+    var buffer: [64]u8 = undefined;
+    try std.testing.expectEqualStrings("No profile · data may not be linear", nothing.report.label(&buffer));
+}
+
+test "the scanner settings' changes take the place of what raw setup picks" {
+    const options = [_]OptionInfo{
+        .{ .name = "custom-gamma", .kind = .bool },
+        .{ .name = "gamma-table", .kind = .table, .range = .{ 0, 255 } },
+        .{ .name = "color-correction", .kind = .string, .choices = &.{ "Default", "Vivid" } },
+        .{ .name = "shading-correction", .kind = .string, .choices = &.{ "On", "Off" } },
+    };
+    // No "off" among the colour choices, so raw setup leaves it, but it still has a control.
+    // Shading correction evens out the lamp, so it isn't one.
+    const controls = rawControls(&options);
+    try std.testing.expectEqual(@as(usize, 3), controls.all().len);
+    try std.testing.expectEqual(RawValue.leave, controls.all()[2].auto);
+
+    // Switching custom gamma off leaves the straight tables doing nothing.
+    const off = rawSetup(&options, &.{.{ .name = "custom-gamma", .value = .{ .number = 0 } }});
+    try std.testing.expect(!off.report.linear);
+    // Leaving the tables alone takes them out of the settings.
+    const left = rawSetup(&options, &.{.{ .name = "gamma-table", .value = .leave }});
+    try std.testing.expectEqual(@as(?RawValue, null), settingOf(&left, "gamma-table"));
+    try std.testing.expect(!left.report.linear);
+    // And a change can pick a value raw setup wouldn't.
+    const vivid = rawSetup(&options, &.{.{ .name = "color-correction", .value = .{ .choose = "Vivid" } }});
+    try std.testing.expectEqualStrings("Vivid", settingOf(&vivid, "color-correction").?.choose);
+    try std.testing.expect(vivid.report.linear and !vivid.report.colour_off);
+}
+
+test "a gamma choice that takes your own table turns the tables on" {
+    const options = [_]OptionInfo{
+        .{ .name = "gamma-correction", .kind = .string, .choices = &.{ "Default", "Custom" } },
+        .{ .name = "red-gamma-table", .kind = .table, .range = .{ 0, 255 } },
+    };
+    const auto = rawSetup(&options, &.{});
+    try std.testing.expectEqualStrings("Custom", settingOf(&auto, "gamma-correction").?.choose);
+    try std.testing.expect(auto.report.linear);
+    const default = rawSetup(&options, &.{.{ .name = "gamma-correction", .value = .{ .choose = "Default" } }});
+    try std.testing.expect(!default.report.linear);
+}
+
+test "raw values are the same when their kind and value are" {
+    try std.testing.expect((RawValue{ .choose = "None" }).eql(.{ .choose = "None" }));
+    try std.testing.expect(!(RawValue{ .choose = "None" }).eql(.{ .choose = "Default" }));
+    try std.testing.expect(!(RawValue{ .number = 1 }).eql(.straight));
+    try std.testing.expect((RawValue{ .leave = {} }).eql(.leave));
+}
+
+test "copied settings keep their strings" {
+    const gpa = std.testing.allocator;
+    var value = "Vivid".*;
+    var copy = try cloneSettings(gpa, &.{.{ .name = "color-correction", .value = .{ .choose = &value } }});
+    defer copy.deinit();
+    value[0] = 'L';
+    try std.testing.expectEqualStrings("Vivid", copy.items[0].value.choose);
 }

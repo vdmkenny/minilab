@@ -75,6 +75,9 @@ pub const Job = union(enum) {
     preview: scan.Request,
     /// Scan these, in order. The thread owns the slice once it's submitted.
     frames: []FrameJob,
+    /// Use these changes to raw setup from now on, from the scanner settings. The thread owns
+    /// them once they're submitted.
+    raw: scan.Owned(scan.RawSetting),
 };
 
 pub const Stage = enum { list, open, preview, scan };
@@ -151,6 +154,8 @@ pub const Worker = struct {
     library: ?scan.Library = null,
     devices: []scan.Device = &.{},
     scanner: ?scan.Scanner = null,
+    /// The scanner settings' changes, which every scan gets.
+    raw: ?scan.Owned(scan.RawSetting) = null,
 
     /// Starts the thread, which loads the scanner library and lists the devices.
     pub fn start(gpa: std.mem.Allocator, io: std.Io) !*Worker {
@@ -265,6 +270,7 @@ pub const Worker = struct {
             worker.mutex.unlock(worker.io);
         }
         if (worker.scanner) |*s| s.close(worker.gpa);
+        if (worker.raw) |*r| r.deinit();
         scan.freeDevices(worker.gpa, worker.devices);
         if (worker.library) |*l| l.unload();
         worker.finished.store(true, .release);
@@ -272,6 +278,11 @@ pub const Worker = struct {
 
     fn handle(worker: *Worker, job: Job) void {
         const gpa = worker.gpa;
+        if (job == .raw) {
+            if (worker.raw) |*r| r.deinit();
+            worker.raw = job.raw;
+            return;
+        }
         // Looking for scanners tries the scanner library again, so it's found once it's installed.
         if (worker.library == null and job == .list) worker.library = scan.Library.load(gpa, worker.io) catch null;
         const library = if (worker.library) |*l| l else {
@@ -281,6 +292,7 @@ pub const Worker = struct {
                 .open => .open,
                 .preview => .preview,
                 .frames => .scan,
+                .raw => unreachable,
             }, .err = error.Unavailable } });
             return;
         };
@@ -311,7 +323,7 @@ pub const Worker = struct {
             .preview => |request| {
                 worker.phase.store(.previewing, .release);
                 const scanner = if (worker.scanner) |*s| s else return worker.post(.{ .failed = .{ .stage = .preview, .err = error.NotFound } });
-                const picture = scanner.scan(gpa, request, &worker.progress) catch |err| return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
+                const picture = scanner.scan(gpa, worker.withRaw(request), &worker.progress) catch |err| return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
                 worker.post(.{ .preview = .{
                     .scan = .{ .width = picture.width, .height = picture.height, .pixels = picture.pixels },
                     .dpi = picture.dpi,
@@ -322,7 +334,15 @@ pub const Worker = struct {
                 defer gpa.free(list);
                 worker.scanQueue(list);
             },
+            .raw => unreachable,
         }
+    }
+
+    /// `request` with the scanner settings' changes.
+    fn withRaw(worker: *const Worker, request: scan.Request) scan.Request {
+        var with = request;
+        with.raw = if (worker.raw) |r| r.items else &.{};
+        return with;
     }
 
     fn scanQueue(worker: *Worker, list: []FrameJob) void {
@@ -338,7 +358,7 @@ pub const Worker = struct {
             }
             worker.phase.store(.scanning, .release);
             worker.post(.{ .frame_started = job.index });
-            var picture = scanner.scan(gpa, job.request, &worker.progress) catch |err| {
+            var picture = scanner.scan(gpa, worker.withRaw(job.request), &worker.progress) catch |err| {
                 worker.post(.{ .frame_failed = .{ .index = job.index, .err = err } });
                 continue;
             };
@@ -452,7 +472,11 @@ pub fn inset(area: image.Area, share: f32, width: usize, height: usize) image.Ar
 fn freeJob(gpa: std.mem.Allocator, job: Job) void {
     switch (job) {
         .frames => |list| gpa.free(list),
-        else => {},
+        .raw => |owned| {
+            var dropped = owned;
+            dropped.deinit();
+        },
+        .list, .open, .preview => {},
     }
 }
 

@@ -8,7 +8,8 @@
 //! The declarations follow `sane.h` (SANE standard 1.0, public domain). We find options by name.
 //! SANE's standard ones (`source`, `mode`, `depth`, `resolution`, `tl-x`, `tl-y`, `br-x`, `br-y`)
 //! work with every backend, and a model's profile adds its own, such as epkowa's `film-type` and
-//! `gamma-correction`.
+//! `gamma-correction`. A scanner without a profile gets raw setup worked out from its options
+//! (`interface.rawSetup`): its gamma tables straightened, colour correction off, and so on.
 //!
 //! A scan is always read to the end. Calling `sane_cancel` in the middle of a scan leaves the V200
 //! stuck until it's switched off (we found this during the V200 driver work), so this file never
@@ -20,6 +21,11 @@ const interface = @import("root.zig");
 const image = @import("../core/image.zig");
 
 const Error = interface.Error;
+
+/// The most values of a list option we look through.
+const max_choices = 64;
+/// epkowa's colour matrix is 3 by 3.
+const matrix_size = 3;
 
 /// Whether this platform can load libsane. Windows only has SANE under Cygwin.
 pub const supported = switch (builtin.os.tag) {
@@ -504,15 +510,126 @@ pub const Scanner = struct {
         }
         std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));
 
+        // Without a profile, raw setup works from the options, and so do the scanner settings.
+        var options: ?interface.Owned(interface.OptionInfo) = null;
+        errdefer if (options) |*o| o.deinit();
+        if (scanner.profile == null) {
+            options = .{ .arena = .init(gpa) };
+            options.?.items = try scanner.optionInfos(options.?.arena.allocator());
+        }
+        const raw_film = if (options) |o| interface.rawSetup(o.items, &.{}).report.film else false;
+
         return .{
             .sources = sources,
             .source = current,
             .resolutions = try resolutions.toOwnedSlice(gpa),
             .area = scanner.fullArea(),
             .deep = scanner.hasDeepColour(),
-            .film_setting = scanner.hasFilmSetting(),
+            .film_setting = scanner.hasFilmSetting() or raw_film,
             .profile = scanner.profile,
+            .options = options,
         };
+    }
+
+    /// The scanner's options, as raw setup sees them, copied into `arena`.
+    fn optionInfos(scanner: *Scanner, arena: std.mem.Allocator) Error![]interface.OptionInfo {
+        var count: Word = 0;
+        if (scanner.api.control_option(scanner.handle, 0, .get_value, &count, null) != .good) return &.{};
+        var list: std.ArrayList(interface.OptionInfo) = .empty;
+        var i: Int = 1;
+        while (i < count) : (i += 1) {
+            const option = scanner.api.get_option_descriptor(scanner.handle, i) orelse continue;
+            const name = std.mem.span(option.name orelse continue);
+            if (name.len == 0) continue;
+            const words = @divFloor(@max(option.size, 0), @sizeOf(Word));
+            const kind: interface.OptionInfo.Type = switch (option.type) {
+                .bool => .bool,
+                .int, .fixed => if (words > 1) .table else .number,
+                .string => .string,
+                else => .other,
+            };
+            var choices: std.ArrayList([]const u8) = .empty;
+            if (option.constraint_type == .string_list) {
+                var k: usize = 0;
+                while (option.constraint.string_list[k]) |s| : (k += 1) try choices.append(arena, try arena.dupe(u8, std.mem.span(s)));
+            }
+            const range: ?[2]f64 = if (option.constraint_type == .range) .{ option.number(option.constraint.range.min), option.number(option.constraint.range.max) } else null;
+            try list.append(arena, .{ .name = try arena.dupe(u8, name), .kind = kind, .choices = choices.items, .range = range });
+        }
+        return list.items;
+    }
+
+    /// Makes raw setup's settings, in order. One the scanner won't take (inactive, out of range,
+    /// or refused) is skipped and logged: the scan still goes ahead, just maybe not raw.
+    fn applyRaw(scanner: *Scanner, gpa: std.mem.Allocator, setup: *const interface.RawSetup, film: interface.Film) error{OutOfMemory}!void {
+        for (setup.settings()) |setting| {
+            const set = scanner.applySetting(gpa, setting, film) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => false,
+            };
+            if (set) {
+                std.log.debug("raw setup: {s} = {f}", .{ setting.name, setting.value });
+            } else std.log.info("raw setup: the scanner didn't take {s} = {f}", .{ setting.name, setting.value });
+        }
+    }
+
+    /// Makes one of raw setup's settings. Returns false when the scanner doesn't have the option
+    /// or won't take it now.
+    fn applySetting(scanner: *Scanner, gpa: std.mem.Allocator, setting: interface.RawSetting, film: interface.Film) Error!bool {
+        const name = setting.name;
+        return switch (setting.value) {
+            .leave => true,
+            .film => if (scanner.filmValue(name, film)) |value| scanner.setString(name, value) else false,
+            .choose => |value| scanner.setString(name, value),
+            .number => |value| scanner.setNumber(name, value),
+            .straight => if (std.mem.eql(u8, name, interface.colour_matrix_name)) scanner.setIdentityMatrix() else scanner.setStraightTable(gpa, name),
+        };
+    }
+
+    /// Sets epkowa's colour matrix to the identity, so the channels stay apart.
+    fn setIdentityMatrix(scanner: *Scanner) Error!bool {
+        comptime std.debug.assert(interface.colour_matrix.len == matrix_size * matrix_size);
+        var all = true;
+        for (interface.colour_matrix, 0..) |name, i| {
+            const on_diagonal = i % (matrix_size + 1) == 0;
+            if (!try scanner.setNumber(name, if (on_diagonal) 1 else 0)) all = false;
+        }
+        return all;
+    }
+
+    /// The value of the film option `name` for `film`, from its list of values.
+    fn filmValue(scanner: *Scanner, name: []const u8, film: interface.Film) ?[]const u8 {
+        const found = scanner.find(name) orelse return null;
+        if (found.option.constraint_type != .string_list) return null;
+        var choices: [max_choices][]const u8 = undefined;
+        var n: usize = 0;
+        while (found.option.constraint.string_list[n]) |s| : (n += 1) {
+            if (n == choices.len) break;
+            choices[n] = std.mem.span(s);
+        }
+        return interface.filmChoice(choices[0..n], film);
+    }
+
+    /// Fills the gamma table `name` with a straight line over its range, so the data stays
+    /// linear. Returns false when the scanner doesn't have it or won't take it now.
+    fn setStraightTable(scanner: *Scanner, gpa: std.mem.Allocator, name: []const u8) Error!bool {
+        const found = scanner.find(name) orelse return false;
+        const option = found.option;
+        if (!option.settable() or option.constraint_type != .range) return false;
+        switch (option.type) {
+            .int, .fixed => {},
+            else => return false,
+        }
+        const entries: usize = @intCast(@divFloor(@max(option.size, 0), @sizeOf(Word)));
+        if (entries < 2) return false;
+        const values = try gpa.alloc(f64, entries);
+        defer gpa.free(values);
+        interface.straightTable(values, .{ option.number(option.constraint.range.min), option.number(option.constraint.range.max) });
+        const words = try gpa.alloc(Word, entries);
+        defer gpa.free(words);
+        for (words, values) |*w, v| w.* = option.word(v);
+        try check(scanner.api.control_option(scanner.handle, found.index, .set_value, words.ptr, null));
+        return true;
     }
 
     fn hasDeepColour(scanner: *Scanner) bool {
@@ -542,8 +659,9 @@ pub const Scanner = struct {
     }
 
     /// Sets the scanner up for `request`: the profile's options if there's a profile, and
-    /// otherwise colour at the deepest bit depth the scanner has.
-    fn prepare(scanner: *Scanner, request: interface.Request) Error!void {
+    /// otherwise colour at the deepest bit depth the scanner has, with raw setup worked out from
+    /// its options.
+    fn prepare(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request) Error!void {
         if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
         if (scanner.profile) |profile| {
             // Set the film type first, because a backend may reset its colour settings when the
@@ -564,6 +682,10 @@ pub const Scanner = struct {
             }
         } else {
             _ = try scanner.setString("mode", "Color");
+            var arena: std.heap.ArenaAllocator = .init(gpa);
+            defer arena.deinit();
+            const setup = interface.rawSetup(try scanner.optionInfos(arena.allocator()), request.raw);
+            try scanner.applyRaw(gpa, &setup, request.film);
         }
         _ = try scanner.setNumber("depth", if (request.deep) 16 else 8);
         if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
@@ -592,7 +714,7 @@ pub const Scanner = struct {
 
     pub fn scan(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request, progress: *interface.Progress) Error!interface.Image {
         progress.reset();
-        try scanner.prepare(request);
+        try scanner.prepare(gpa, request);
         const area = scanner.usedArea();
         const dpi: f32 = @floatCast(scanner.getNumber("resolution") orelse @as(f64, @floatFromInt(request.dpi)));
         const x_dpi: f32 = @floatCast(scanner.getNumber("x-resolution") orelse dpi);
