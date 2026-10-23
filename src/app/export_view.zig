@@ -779,25 +779,19 @@ fn formatNote(state: *const State) []const u8 {
 /// Draws colour space, size, file names and folder as the design's grid of rows: a label column,
 /// then the control. JPEG adds its quality first. Returns the y below the last row.
 fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f32) f32 {
-    const list = c.ImGui_GetWindowDrawList();
-    const control_x = x + gui.px(label_width + grid_gap);
-    const control_width = width - gui.px(label_width + grid_gap);
-    const row = gui.px(control_height);
+    const grid: FileGrid = .{
+        .list = c.ImGui_GetWindowDrawList(),
+        .x = x,
+        .control_x = x + gui.px(label_width + grid_gap),
+        .control_width = width - gui.px(label_width + grid_gap),
+        .row = gui.px(control_height),
+    };
+    const list = grid.list;
+    const control_x = grid.control_x;
+    const control_width = grid.control_width;
+    const row = grid.row;
     var y = top;
-
-    if (state.file == .jpeg) {
-        rowLabel(list, x, y, "Quality");
-        c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y + (row - c.ImGui_GetFrameHeight()) / 2));
-        _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap - gui.reset_space);
-        state.quality = @round(state.quality);
-        const shown = gui.print("{d:.0}", .{state.quality});
-        gui.valueText(shown);
-        c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
-        const at = c.ImGui_GetCursorScreenPos();
-        const default_quality = (State{}).quality;
-        if (gui.resetButton("reset quality", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0}", .{default_quality}))) state.quality = default_quality;
-        y += row + gui.px(grid_gap);
-    }
+    if (state.file == .jpeg) y = qualityRow(state, grid, y);
 
     rowLabel(list, x, y, "Color space");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
@@ -811,22 +805,72 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PopStyleVar();
     y += row + gui.px(grid_gap);
 
-    if (state.size == .custom) {
-        rowLabel(list, x, y, "Long edge");
-        c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-        fonts.pushSized(.mono, fonts.small_size);
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
-        c.ImGui_SetNextItemWidth(gui.px(edge_field_width));
-        _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
-        c.ImGui_PopStyleVar();
-        fonts.pop();
-        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
-        const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
-        const unit = if (state.customEdge() == null) "px" else "px";
-        c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(edge_field_width + unit_gap), unit_y), theme.imU32(theme.text_tertiary), unit);
-        y += row + gui.px(grid_gap);
-    }
+    if (state.size == .custom) y = longEdgeRow(state, grid, y);
+    y = namesRow(state, grid, y);
+    return folderRow(state, ctx, grid, y);
+}
 
+/// Where the File panel's rows go: their labels at `x`, their controls at `control_x`.
+const FileGrid = struct {
+    list: *c.ImDrawList,
+    x: f32,
+    control_x: f32,
+    control_width: f32,
+    row: f32,
+};
+
+/// Draws the JPEG quality slider at `y`. Returns the y of the next row.
+fn qualityRow(state: *State, grid: FileGrid, top: f32) f32 {
+    const list = grid.list;
+    const x = grid.x;
+    const control_x = grid.control_x;
+    const control_width = grid.control_width;
+    const row = grid.row;
+    var y = top;
+    rowLabel(list, x, y, "Quality");
+    c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y + (row - c.ImGui_GetFrameHeight()) / 2));
+    _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap - gui.reset_space);
+    state.quality = @round(state.quality);
+    const shown = gui.print("{d:.0}", .{state.quality});
+    gui.valueText(shown);
+    c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
+    const at = c.ImGui_GetCursorScreenPos();
+    const default_quality = (State{}).quality;
+    if (gui.resetButton("reset quality", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0}", .{default_quality}))) state.quality = default_quality;
+    y += row + gui.px(grid_gap);
+    return y;
+}
+
+/// Draws the custom long edge's field at `y`. Returns the y of the next row.
+fn longEdgeRow(state: *State, grid: FileGrid, top: f32) f32 {
+    const list = grid.list;
+    const x = grid.x;
+    const control_x = grid.control_x;
+    const row = grid.row;
+    var y = top;
+    rowLabel(list, x, y, "Long edge");
+    c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
+    fonts.pushSized(.mono, fonts.small_size);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_SetNextItemWidth(gui.px(edge_field_width));
+    _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
+    c.ImGui_PopStyleVar();
+    fonts.pop();
+    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
+    const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
+    c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(edge_field_width + unit_gap), unit_y), theme.imU32(theme.text_tertiary), "px");
+    y += row + gui.px(grid_gap);
+    return y;
+}
+
+/// Draws the file name pattern at `y`, with what's wrong with it. Returns the y of the next row.
+fn namesRow(state: *State, grid: FileGrid, top: f32) f32 {
+    const list = grid.list;
+    const x = grid.x;
+    const control_x = grid.control_x;
+    const control_width = grid.control_width;
+    const row = grid.row;
+    var y = top;
     rowLabel(list, x, y, "File names");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
     fonts.pushSized(.mono, fonts.small_size);
@@ -849,7 +893,16 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
         y -= gui.px(line) - c.ImGui_GetFontSize();
     }
     y += gui.px(grid_gap);
+    return y;
+}
 
+/// Draws the folder the files go to at `y`, with Choose. Returns the y below it.
+fn folderRow(state: *State, ctx: context.Context, grid: FileGrid, y: f32) f32 {
+    const list = grid.list;
+    const x = grid.x;
+    const control_x = grid.control_x;
+    const control_width = grid.control_width;
+    const row = grid.row;
     rowLabel(list, x, y, "Folder");
     const choose_width = gui.fittedWidth("Choose", pill_padding);
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
@@ -861,8 +914,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_BeginDisabled(state.dialog.isShowing());
     if (gui.buttonOf(.normal, "Choose", gui.vec2(choose_width / gui.scale, control_height))) chooseFolder(state, ctx);
     c.ImGui_EndDisabled();
-    y += row;
-    return y;
+    return y + row;
 }
 
 /// Draws a grid row's label, centred in the row's height.
@@ -905,21 +957,34 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
         metadataCheck(list, x, y, each.label, each.flag);
         switch (each.value) {
             .detail => |which| detailField(state, ctx, r, which, gui.vec2(value_x, y), value_width),
-            .fixed => |fixed| {
-                const text_y = y + (row - c.ImGui_GetFontSize()) / 2;
-                const quiet = fixed.quiet or fixed.text == null;
-                c.ImDrawList_AddText(list, gui.vec2(value_x + gui.px(value_inset), text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(fixed.text orelse "Not set", value_width - gui.px(value_inset)));
-                if (fixed.why) |why| {
-                    c.ImGui_SetCursorScreenPos(gui.vec2(value_x, y));
-                    _ = c.ImGui_InvisibleButton(each.label, gui.vec2(value_width, row), 0);
-                    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{why}).ptr);
-                }
-            },
+            .fixed => |fixed| fixedValue(list, each.label, fixed, gui.vec2(value_x, y), value_width),
         }
         y += row + gui.px(metadata_gap);
     }
 
-    // The roll's own fields: a name and a value each, and Add.
+    return drawOwnFields(state, ctx, r, list, gui.vec2(x, y), width, value_x) - gui.px(metadata_gap);
+}
+
+/// Draws a Metadata value that's set somewhere else, at `at`, with why as its tooltip.
+fn fixedValue(list: *c.ImDrawList, label: [:0]const u8, fixed: FixedValue, at: gui.Vec2, width: f32) void {
+    const row = gui.px(detail_row);
+    const text_y = at.y + (row - c.ImGui_GetFontSize()) / 2;
+    const quiet = fixed.quiet or fixed.text == null;
+    c.ImDrawList_AddText(list, gui.vec2(at.x + gui.px(value_inset), text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(fixed.text orelse "Not set", width - gui.px(value_inset)));
+    if (fixed.why) |why| {
+        c.ImGui_SetCursorScreenPos(at);
+        _ = c.ImGui_InvisibleButton(label, gui.vec2(width, row), 0);
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{why}).ptr);
+    }
+}
+
+/// Draws the roll's own fields at `at`, `width` wide with their values from `value_x`: a name and
+/// a value each, with Add and Remove. Returns the y below them.
+fn drawOwnFields(state: *State, ctx: context.Context, r: *roll.Roll, list: *c.ImDrawList, at: gui.Vec2, width: f32, value_x: f32) f32 {
+    const x = at.x;
+    var y = at.y;
+    const row = gui.px(detail_row);
+    const value_width = x + width - value_x;
     metadataCheck(list, x, y, "Own fields", &state.include.fields);
     const add_width = gui.fittedWidth("Add field", pill_padding);
     c.ImGui_SetCursorScreenPos(gui.vec2(x + width - add_width, y));
@@ -959,17 +1024,21 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
     }
     if (add) state.focus_new_field = true;
     if (edited or add or remove != null) saveFields(state, ctx, r, remove, add);
-    return y - gui.px(metadata_gap);
+    return y;
 }
 
 /// One row of Metadata: a check box for whether it goes into the files, its label, and either a
 /// detail you can edit here or a value you can't.
+/// A Metadata value that's set somewhere else: its text, or null when it isn't set, whether it's
+/// shown quietly, and where it's set, for its tooltip.
+const FixedValue = struct { text: ?[]const u8, quiet: bool = false, why: ?[]const u8 = null };
+
 const MetadataRow = struct {
     label: [:0]const u8,
     flag: *bool,
     value: union(enum) {
         detail: roll.Detail,
-        fixed: struct { text: ?[]const u8, quiet: bool = false, why: ?[]const u8 = null },
+        fixed: FixedValue,
     },
 };
 
