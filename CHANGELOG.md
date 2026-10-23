@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.1](https://github.com/vdmkenny/minilab/compare/v0.3.0...v0.3.1) (2026-10-23)
+
+
+### Fixes
+
+* Film type locked for finished scans ([#41](https://github.com/vdmkenny/minilab/issues/41)) ([8751788](https://github.com/vdmkenny/minilab/commit/8751788b45aa71752a9a5d8eb05468ba44d92121))
+* The built-in LUT keeps LF line endings on Windows ([#40](https://github.com/vdmkenny/minilab/issues/40)) ([8d6f907](https://github.com/vdmkenny/minilab/commit/8d6f9072eb9df2de570cdd748629a84a3411daa6))
+
+
+### Documentation
+
+* Frame detection as a feature of its own, and shorter feature lines ([#44](https://github.com/vdmkenny/minilab/issues/44)) ([687b62a](https://github.com/vdmkenny/minilab/commit/687b62abf4e02be6351979bbeb2f181ac4e0edd8))
+* README opens with a summary and a features list ([#42](https://github.com/vdmkenny/minilab/issues/42)) ([ee619f4](https://github.com/vdmkenny/minilab/commit/ee619f4906c082daa473ee558092bb18cc4f6f10))
+
 ## [0.3.0](https://github.com/vdmkenny/minilab/compare/v0.2.0...v0.3.0) (2026-10-23)
 
 
