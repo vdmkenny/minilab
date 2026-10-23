@@ -19,11 +19,11 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 ## Features
 
 - **Raw scanning:** linear 16-bit scans straight from your scanner. The Mac download comes with
-  SANE's drivers. On Windows, minilab uses the maker's TWAIN driver.
+  SANE's drivers. On Windows, minilab uses your scanner's TWAIN driver.
 - **Frame detection:** finds the frames on a scanner preview, a strip scan or a camera shot.
 - **One workflow:** scanning, inversion, colour correction and batch export in one app.
-- **Datasheet corrections:** the film maker's published curves open up crushed shadows and keep
-  them neutral.
+- **Datasheet corrections:** the film's datasheet curves open up crushed shadows and keep them
+  neutral.
 - **Film looks:** Frontier lab emulation, 85 film looks from three free collections, and your own
   `.cube` LUTs (3D or 1D).
 - **Fitted looks:** a look that matches your lab, made from a few frames scanned by both.
@@ -145,7 +145,7 @@ minilab only looks for scanner drivers when you open Scan, so everything else wo
 
 **On a Mac** the download comes with the drivers, so there's nothing to install. They're SANE, a
 free collection of drivers for most scanners, in the `sane` folder next to the program. Plug the
-scanner in, open Scan, and it's in the list. You don't need the scanner maker's own Mac software,
+scanner in, open Scan, and it's in the list. You don't need the scanner's own Mac software,
 and you can leave it installed. Just don't have it open while minilab scans, since only one
 program can use the scanner at a time.
 
@@ -156,9 +156,9 @@ to install SANE from Homebrew, with a button to copy the command.
 
 **On Linux** install your distribution's SANE package (often `sane-utils` or `sane-backends`).
 
-**On Windows** minilab uses the scanner maker's own TWAIN driver, so install that.
+**On Windows** minilab uses your scanner's TWAIN driver, so install that.
 
-A few scanners need their maker's own SANE driver rather than one of SANE's. The Epson Perfection
+A few scanners need a driver that isn't part of SANE. The Epson Perfection
 V200 is one of them: it needs Epson's epkowa driver and its plugin, which minilab can't come with.
 On a Mac, install them into Homebrew's SANE and minilab finds them.
 
@@ -182,7 +182,7 @@ The Mac download also carries SANE (under the GPL, mostly with an exception for 
 it), libusb (LGPL 2.1) and libjpeg-turbo. Their licences are in its `sane` folder, along with a
 README that says where their source is, and each release has the source archives attached.
 
-The film stock presets are our own readings of the makers' datasheets;
+The film stock presets are our own readings of the film datasheets;
 [data/stocks/README.md](data/stocks/README.md) explains how we read them. The film looks come from
 GlassMeter by Glass Works and Street Monochrome by Ivan Bogachev, both under CC BY 4.0, and
 t3mujinpack by João Almeida, under the MIT licence. The build downloads them and puts their
