@@ -612,7 +612,7 @@ Rolls/
   calibration.json       scanner calibrations (section 9)
   Looks/                 imported LUTs and fitted looks
   2026-10-22 Portra 400 Ghent/
-    roll.json            film type, stock, format, camera, lens, dates, notes, scanner
+    roll.json            film type, stock, format, camera, lens, dates, notes, scanner, own fields
     flat.ppm             camera rolls only: the flat field, as shot
     scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import and
                          never changed; the frames of a strip share one
@@ -625,7 +625,10 @@ Rolls/
 
 Exports carry the roll's metadata (camera, lens, film stock, date, copyright, how the frame was
 developed, and its rating as `xmp:Rating`: 1 to 5 stars, or -1 for rejected, the way Lightroom and
-Bridge read it). EXIF goes inside the file. XMP goes inside the file and in a sidecar next to it,
+Bridge read it). The roll's notes go in as the caption (`dc:description`), and fields of your own
+as `minilab:Fields`, a list of name and value pairs. You can change the camera, lens, date shot,
+copyright and notes, and the fields, in Export's Metadata section at any time; each one saves to
+`roll.json` when you leave its box. EXIF goes inside the file. XMP goes inside the file and in a sidecar next to it,
 and that's where the film stock and develop settings go, since EXIF has no fields for them. We
 write both in Zig: we only need a handful of tags, and exiv2, the usual library for this, is C++.
 
