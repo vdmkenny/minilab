@@ -29,10 +29,12 @@ fail() {
     failed=1
 }
 
+# Names as they are, not quoted: git puts a name with an accent in quotes, with the accent as
+# octal escapes, and the -f check below would then skip it.
 paths() {
     case $mode in
-        "") git ls-files ;;
-        --staged) git diff --cached --name-only --diff-filter=ACMR ;;
+        "") git -c core.quotePath=false ls-files ;;
+        --staged) git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR ;;
     esac
 }
 

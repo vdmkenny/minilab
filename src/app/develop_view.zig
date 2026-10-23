@@ -196,15 +196,16 @@ pub const State = struct {
         rl.saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
     }
 
-    /// Saves the open frame, then opens the roll at `path` and selects its first frame.
+    /// Saves the open frame, then opens the roll at `path` and selects its first frame. When the
+    /// roll isn't there, or there's no memory for its path, nothing changes.
     pub fn openRoll(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, path: []const u8) !void {
+        const index = library.find(path) orelse return error.RollNotFound;
+        const copy = try gpa.dupe(u8, path);
         state.save(io, library);
         state.closeFrame(gpa);
         state.clearLoose(gpa);
-        const copy = try gpa.dupe(u8, path);
         if (state.roll_path) |p| gpa.free(p);
         state.roll_path = copy;
-        const index = library.find(path) orelse return error.RollNotFound;
         state.selected = if (library.rolls.items[index].frames.items.len > 0) 0 else null;
     }
 

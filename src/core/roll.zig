@@ -160,6 +160,11 @@ pub const Roll = struct {
     path: []const u8,
     info: Info,
     frames: std.ArrayList(FrameSettings) = .empty,
+    /// Each frame's number, which names its file in frames/: 01.json is 1. They run from 1 to the
+    /// count unless a frame's file was removed by hand, so they're kept as they were read rather
+    /// than worked out from a frame's place. Otherwise the frame after a gap would be saved over
+    /// the gap's number, and show up twice.
+    numbers: std.ArrayList(usize) = .empty,
 
     /// Creates a roll folder named after `info.name` in `library`. Fails with `error.RollExists`
     /// if the library already has a roll with that name, and with `error.BadRollName` if the name
@@ -199,7 +204,12 @@ pub const Roll = struct {
         var names: std.ArrayList([]const u8) = .empty;
         var each = dir.iterate();
         while (try each.next(io)) |entry| {
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".json")) try names.append(arena, try arena.dupe(u8, entry.name));
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".json")) continue;
+            if (frameNumber(entry.name) == null) {
+                std.log.warn("{s}/{s}/{s} isn't a frame's file; leaving it alone", .{ path, frames_dir, entry.name });
+                continue;
+            }
+            try names.append(arena, try arena.dupe(u8, entry.name));
         }
         // Sort by number, the way `saveFrame` names them. As text, 100.json would come before
         // 11.json.
@@ -215,6 +225,7 @@ pub const Roll = struct {
             upgrade(&frame.settings);
             frame.rating = frame.rating.valid();
             try roll.frames.append(arena, frame);
+            try roll.numbers.append(arena, frameNumber(name).?);
         }
         return roll;
     }
@@ -350,9 +361,8 @@ pub const Roll = struct {
     /// file goes into the roll unchanged, copied or moved, so the roll keeps the lab's own bytes.
     /// `picture` is the file read into linear values, for the thumbnail.
     fn addFinished(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, picture: image.Scan, transfer: Transfer) !Added {
-        const arena = roll.arena.allocator();
         const first = roll.frames.items.len;
-        errdefer roll.frames.shrinkRetainingCapacity(first);
+        errdefer roll.dropFramesFrom(first);
         var lower: [max_extension]u8 = undefined;
         const extension = std.fs.path.extension(path);
         const name = try roll.nextScanName(std.ascii.lowerString(&lower, extension[0..@min(extension.len, max_extension)]));
@@ -369,7 +379,7 @@ pub const Roll = struct {
             try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, thumbnail_name }), .data = thumbnail_bytes });
             try placeFile(gpa, io, path, try std.fs.path.join(a, &.{ roll.path, scans_dir, name }), transfer);
         }
-        try roll.frames.append(arena, .{
+        try roll.appendFrame(.{
             .scan = name,
             .width = picture.width,
             .height = picture.height,
@@ -383,10 +393,9 @@ pub const Roll = struct {
     /// Like `addImage`, for a scan with a camera's colour, `slide`, which its frames use when
     /// they're slides.
     fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32, slide: ?develop.SlideColour) !Added {
-        const arena = roll.arena.allocator();
         const first = roll.frames.items.len;
         // Frames added before a failure would have no file, so they're removed again.
-        errdefer roll.frames.shrinkRetainingCapacity(first);
+        errdefer roll.dropFramesFrom(first);
         const name = try roll.nextScanName(".ppm");
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
@@ -416,12 +425,12 @@ pub const Roll = struct {
             .dpi = dpi,
             .settings = .{ .kind = roll.info.kind, .slide_colour = slide },
         };
-        if (found.len == 0) try roll.frames.append(arena, frame);
+        if (found.len == 0) try roll.appendFrame(frame);
         for (found) |f| {
             var cropped = frame;
             cropped.crop = f.frame;
             cropped.film_base = try framing.measureBase(gpa, scan, f.gaps);
-            try roll.frames.append(arena, cropped);
+            try roll.appendFrame(cropped);
         }
         for (first..roll.frames.items.len) |index| try roll.saveFrame(io, index);
         return .{ .first = first, .count = roll.frames.items.len - first };
@@ -472,6 +481,21 @@ pub const Roll = struct {
         try roll.saveInfo(io);
     }
 
+    /// Removes the frames from `first` on, which haven't been saved.
+    fn dropFramesFrom(roll: *Roll, first: usize) void {
+        roll.frames.shrinkRetainingCapacity(first);
+        roll.numbers.shrinkRetainingCapacity(@min(first, roll.numbers.items.len));
+    }
+
+    /// Adds `frame` after the others, numbered after the last one.
+    fn appendFrame(roll: *Roll, frame: FrameSettings) !void {
+        const a = roll.arena.allocator();
+        const last = if (roll.numbers.items.len > 0) roll.numbers.items[roll.numbers.items.len - 1] else roll.frames.items.len;
+        try roll.frames.ensureUnusedCapacity(a, 1);
+        try roll.numbers.append(a, last + 1);
+        roll.frames.appendAssumeCapacity(frame);
+    }
+
     pub fn saveFrame(roll: *Roll, io: Io, index: usize) !void {
         var temporary = roll.scratch();
         defer temporary.deinit();
@@ -480,7 +504,8 @@ pub const Roll = struct {
         var frame = roll.frames.items[index];
         finite(develop.Settings, &frame.settings, .{});
         const bytes = try std.json.Stringify.valueAlloc(a, frame, json_options);
-        const name = try std.fmt.allocPrint(a, "{d:0>2}.json", .{index + 1});
+        const number = if (index < roll.numbers.items.len) roll.numbers.items[index] else index + 1;
+        const name = try std.fmt.allocPrint(a, "{d:0>2}.json", .{number});
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, frames_dir, name }), .data = bytes });
     }
 
@@ -586,6 +611,12 @@ fn today(arena: std.mem.Allocator, io: Io) ![]const u8 {
 }
 
 /// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
+/// The number in a frame's file name, such as 3 for 03.json, or null when it isn't a frame's.
+fn frameNumber(name: []const u8) ?usize {
+    const number = std.fmt.parseInt(usize, std.fs.path.stem(name), 10) catch return null;
+    return if (number > 0) number else null;
+}
+
 fn byNumber(_: void, a: []const u8, b: []const u8) bool {
     const x = std.fmt.parseInt(usize, std.fs.path.stem(a), 10) catch return false;
     const y = std.fmt.parseInt(usize, std.fs.path.stem(b), 10) catch return true;
@@ -979,4 +1010,34 @@ test "a roll saved before the stock's corrections could be turned off has them o
     const off = try std.json.parseFromSlice(Info, gpa, "{\"name\":\"Roll 1\",\"stock_corrections\":false}", .{ .ignore_unknown_fields = true });
     defer off.deinit();
     try std.testing.expect(!off.value.stock_corrections);
+}
+
+test "a frame after a gap in the files keeps its own file" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var roll = try Roll.create(gpa, io, library, .{ .name = "Gaps" });
+    for (0..3) |_| _ = try roll.addScan(gpa, io, "P6 1 1 255\n\x00\x00\x00");
+    roll.close();
+    // Frame 2's file removed by hand, and a file that isn't a frame's.
+    try tmp.dir.deleteFile(io, "Gaps/frames/02.json");
+    try tmp.dir.writeFile(io, .{ .sub_path = "Gaps/frames/notes.json", .data = "{}" });
+
+    var rolls = try listRolls(gpa, io, library);
+    defer {
+        for (rolls.items) |*r| r.close();
+        rolls.deinit(gpa);
+    }
+    const again = &rolls.items[0];
+    try std.testing.expectEqual(@as(usize, 2), again.frames.items.len);
+    again.frames.items[1].settings.contrast = 2;
+    try again.saveFrame(io, 1);
+    _ = try again.addScan(gpa, io, "P6 1 1 255\n\x00\x00\x00");
+    // Frame 3 saved to its own file, not over the gap's, and the new frame after it.
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Gaps/frames/02.json", .{}));
+    try tmp.dir.access(io, "Gaps/frames/03.json", .{});
+    try tmp.dir.access(io, "Gaps/frames/04.json", .{});
 }

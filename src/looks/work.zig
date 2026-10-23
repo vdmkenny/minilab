@@ -102,13 +102,14 @@ pub const Prepare = struct {
     }
 
     pub fn set(p: *Prepare, gpa: std.mem.Allocator, index: usize, pair: usize, ours: []const u8, placement: ?draft.Placement, theirs: []const u8, alignment: ?register.Alignment) !void {
+        // Copy both first, so a failed copy leaves the item as it was.
+        const owned_ours = try gpa.dupe(u8, ours);
+        errdefer gpa.free(owned_ours);
+        const owned_theirs = try gpa.dupe(u8, theirs);
         const item = &p.items[index];
-        item.pair = pair;
-        item.ours = try gpa.dupe(u8, ours);
-        errdefer gpa.free(item.ours);
-        item.theirs = try gpa.dupe(u8, theirs);
-        item.placement = placement;
-        item.alignment = alignment;
+        gpa.free(item.ours);
+        gpa.free(item.theirs);
+        item.* = .{ .pair = pair, .ours = owned_ours, .theirs = owned_theirs, .placement = placement, .alignment = alignment };
     }
 
     fn deinit(p: *Prepare, gpa: std.mem.Allocator) void {
@@ -171,10 +172,20 @@ pub const Match = struct {
 
     pub fn init(gpa: std.mem.Allocator, references: []const []const u8, frames: usize) !Match {
         const refs = try gpa.alloc([]u8, references.len);
-        for (refs, references) |*r, path| r.* = try gpa.dupe(u8, path);
+        var copied: usize = 0;
+        errdefer {
+            for (refs[0..copied]) |r| gpa.free(r);
+            gpa.free(refs);
+        }
+        for (refs, references) |*r, path| {
+            r.* = try gpa.dupe(u8, path);
+            copied += 1;
+        }
         const f = try gpa.alloc(Frame, frames);
+        errdefer gpa.free(f);
         for (f) |*frame| frame.* = .{ .scan = &.{}, .thumbnail = &.{}, .label = &.{}, .stock = null };
         const found = try gpa.alloc(?usize, references.len);
+        errdefer gpa.free(found);
         @memset(found, null);
         const quality = try gpa.alloc(f32, references.len);
         @memset(quality, 0);
@@ -182,13 +193,20 @@ pub const Match = struct {
     }
 
     pub fn setFrame(m: *Match, gpa: std.mem.Allocator, index: usize, scan: []const u8, thumbnail: []const u8, label: []const u8, stock: ?[]const u8, placement: draft.Placement) !void {
-        m.frames[index] = .{
-            .placement = placement,
-            .scan = try gpa.dupe(u8, scan),
-            .thumbnail = try gpa.dupe(u8, thumbnail),
-            .label = try gpa.dupe(u8, label),
-            .stock = if (stock) |s| try gpa.dupe(u8, s) else null,
-        };
+        // Copy everything first, so a failed copy leaves the frame as it was.
+        const owned_scan = try gpa.dupe(u8, scan);
+        errdefer gpa.free(owned_scan);
+        const owned_thumbnail = try gpa.dupe(u8, thumbnail);
+        errdefer gpa.free(owned_thumbnail);
+        const owned_label = try gpa.dupe(u8, label);
+        errdefer gpa.free(owned_label);
+        const owned_stock = if (stock) |s| try gpa.dupe(u8, s) else null;
+        const frame = &m.frames[index];
+        gpa.free(frame.scan);
+        gpa.free(frame.thumbnail);
+        gpa.free(frame.label);
+        if (frame.stock) |s| gpa.free(s);
+        frame.* = .{ .placement = placement, .scan = owned_scan, .thumbnail = owned_thumbnail, .label = owned_label, .stock = owned_stock };
     }
 
     fn deinit(m: *Match, gpa: std.mem.Allocator) void {
@@ -406,4 +424,19 @@ test "jobs read, match and fit pairs" {
     const report = fitting.task.fit.result.?.report;
     try std.testing.expectEqual(@as(usize, 2), report.fitted_pairs);
     try std.testing.expect(report.median.? < 3);
+}
+
+fn setUpJobs(gpa: std.mem.Allocator) !void {
+    var prepare: Prepare = try .init(gpa, 2);
+    defer prepare.deinit(gpa);
+    try prepare.set(gpa, 0, 0, "ours.ppm", null, "theirs.jpg", null);
+    try prepare.set(gpa, 0, 1, "ours again.ppm", null, "theirs again.jpg", null);
+    var match: Match = try .init(gpa, &.{ "a.jpg", "b.jpg" }, 1);
+    defer match.deinit(gpa);
+    try match.setFrame(gpa, 0, "scan.ppm", "thumb.ppm", "Frame 1", "Kodak Portra 400", .{});
+    try match.setFrame(gpa, 0, "scan.ppm", "thumb.ppm", "Frame 1", null, .{});
+}
+
+test "setting up the Looks jobs frees what it made when memory runs out" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, setUpJobs, .{});
 }

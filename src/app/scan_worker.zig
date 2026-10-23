@@ -140,6 +140,10 @@ pub const Worker = struct {
     cancel: std.atomic.Value(bool) = .init(false),
     phase: std.atomic.Value(Phase) = .init(.loading),
     progress: scan.Progress = .{},
+    /// Whether the thread has taken a job and is running it. It changes under the mutex, together
+    /// with the job list, so `pending` never sees the moment between taking a job and starting it
+    /// as idle.
+    running: bool = false,
     /// Set when the thread has ended, so `stop` knows it can join it.
     finished: std.atomic.Value(bool) = .init(false),
 
@@ -213,7 +217,7 @@ pub const Worker = struct {
     pub fn pending(worker: *Worker) bool {
         worker.mutex.lockUncancelable(worker.io);
         defer worker.mutex.unlock(worker.io);
-        return worker.jobs.items.len > 0 or worker.events.items.len > 0 or switch (worker.phase.load(.acquire)) {
+        return worker.jobs.items.len > 0 or worker.events.items.len > 0 or worker.running or switch (worker.phase.load(.acquire)) {
             .idle, .unavailable => false,
             else => true,
         };
@@ -252,9 +256,13 @@ pub const Worker = struct {
                 break;
             }
             const job = worker.jobs.orderedRemove(0);
+            worker.running = true;
             worker.mutex.unlock(worker.io);
             worker.handle(job);
             if (worker.library != null) worker.phase.store(.idle, .release);
+            worker.mutex.lockUncancelable(worker.io);
+            worker.running = false;
+            worker.mutex.unlock(worker.io);
         }
         if (worker.scanner) |*s| s.close(worker.gpa);
         scan.freeDevices(worker.gpa, worker.devices);

@@ -156,9 +156,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
                     if (at.frame < library.rolls.items[at.roll].frames.items.len) develop.select(gpa, io, &library, at.frame);
                     workspace = .develop;
                 },
-                .created => |index| {
-                    try develop.openRoll(gpa, io, &library, library.rolls.items[index].path);
-                    workspace = if (library.rolls.items[index].info.input == .scanner) .scan else .develop;
+                .created => |created| {
+                    if (created.flat_failed) notice.set("Flat field not set", .{});
+                    try develop.openRoll(gpa, io, &library, library.rolls.items[created.roll].path);
+                    workspace = if (library.rolls.items[created.roll].info.input == .scanner) .scan else .develop;
                 },
                 .dropped_on => |index| {
                     try develop.openRoll(gpa, io, &library, library.rolls.items[index].path);

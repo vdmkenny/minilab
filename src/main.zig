@@ -127,10 +127,17 @@ const Options = struct {
 };
 
 /// Returns the curves of the stock called `name`, for film `kind`, in Status M, since the command
-/// line has no scanner calibration.
-fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) !?minilab.stock_curves.Curves {
+/// line has no scanner calibration. A stock of another kind of film is refused, as in the app:
+/// a B&W stock's curves would be wrong on a colour negative.
+fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) minilab.stock_curves.Curves {
     for (minilab.stocks.stocks) |stock| {
         if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
+        // The presets' kinds have the same names as Develop's.
+        const stock_kind = std.meta.stringToEnum(minilab.develop.FilmKind, @tagName(stock.kind)).?;
+        if (stock_kind != kind) {
+            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock_kind, kind });
+            std.process.exit(usage_status);
+        }
         const curves = minilab.stock_curves.of(stock, @splat(1)) orelse {
             std.log.err("{s} has no curves for {t}", .{ stock.name, kind });
             std.process.exit(usage_status);
@@ -154,6 +161,7 @@ fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog,
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, name, gpa, .limited(64 << 20));
     defer gpa.free(bytes);
     const lut = try gpa.create(minilab.cube_lut.Lut);
+    errdefer gpa.destroy(lut);
     lut.* = try minilab.cube_lut.Lut.parse(gpa, bytes);
     return .{ .lut = lut };
 }
@@ -436,7 +444,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     const look = try lookNamed(gpa, io, &catalog, look_name);
     defer freeLook(gpa, look, look_name);
     const suffix = std.fs.path.stem(look_name);
-    const curves = if (stock_name) |name| try stockNamed(name, kind) else null;
+    const curves = if (stock_name) |name| stockNamed(name, kind) else null;
     for (frames.items) |frame| {
         var developed = try minilab.look.developFrame(gpa, frame.scan, .whole(frame.scan.width, frame.scan.height), kind, look, base, .{ .curves = if (curves) |*cv| cv else null });
         defer developed.deinit(gpa);
@@ -621,7 +629,7 @@ fn parse(args: []const [:0]const u8) !Options {
     if (count != positional.len) return error.MissingArgument;
     options.input = positional[0];
     options.output = positional[1];
-    if (stock_name) |name| options.curves = try stockNamed(name, options.kind);
+    if (stock_name) |name| options.curves = stockNamed(name, options.kind);
     return options;
 }
 
@@ -733,7 +741,7 @@ test "a developed TIFF carries sRGB's profile" {
     defer decoded.deinit(gpa);
     const profile = try minilab.codecs.icc.profileBytes(gpa, .srgb);
     defer gpa.free(profile);
-    try std.testing.expectEqualSlices(u8, profile, decoded.icc_profile.?);
+    try std.testing.expect(minilab.codecs.icc.sameProfile(profile, decoded.icc_profile.?));
 }
 
 test {
@@ -743,6 +751,9 @@ test {
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
     _ = @import("app/looks_view.zig");
+    _ = @import("app/export_view.zig");
+    _ = @import("app/rolls_view.zig");
+    _ = @import("app/library.zig");
 }
 
 test {

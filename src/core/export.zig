@@ -755,7 +755,7 @@ test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" 
     try std.testing.expectEqual(tiff.Depth.sixteen, decoded.depth);
     const profile = try icc.profileBytes(gpa, .adobe_rgb);
     defer gpa.free(profile);
-    try std.testing.expectEqualSlices(u8, profile, decoded.icc_profile.?);
+    try std.testing.expect(icc.sameProfile(profile, decoded.icc_profile.?));
 }
 
 test "a crop outside the scan is refused" {
