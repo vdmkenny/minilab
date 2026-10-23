@@ -5,6 +5,7 @@ const std = @import("std");
 const c = @import("c");
 const minilab = @import("minilab");
 const Texture = @import("../platform/texture.zig").Texture;
+const trash = @import("../platform/trash.zig");
 
 const image = minilab.image;
 const roll = minilab.roll;
@@ -14,6 +15,8 @@ pub const Key = struct { roll: usize, frame: usize };
 
 pub const Library = struct {
     path: []const u8,
+    /// The user's home folder, if known: Linux's Trash is in it.
+    home: ?[]const u8,
     /// The path as the interface shows it, with the home folder as ~.
     label: []const u8,
     rolls: std.ArrayList(roll.Roll) = .empty,
@@ -42,7 +45,9 @@ pub const Library = struct {
         else
             try gpa.dupe(u8, path);
         errdefer gpa.free(label);
-        var library: Library = .{ .path = try gpa.dupe(u8, path), .label = label, .looks = try .init(gpa, path), .calibrations = try .load(gpa, io, path), .gpa = gpa };
+        const owned_home = if (home) |h| try gpa.dupe(u8, h) else null;
+        errdefer if (owned_home) |h| gpa.free(h);
+        var library: Library = .{ .path = try gpa.dupe(u8, path), .home = owned_home, .label = label, .looks = try .init(gpa, path), .calibrations = try .load(gpa, io, path), .gpa = gpa };
         library.rolls = try roll.listRolls(gpa, io, path);
         return library;
     }
@@ -59,6 +64,7 @@ pub const Library = struct {
         library.looks.deinit(gpa);
         library.calibrations.deinit();
         gpa.free(library.path);
+        if (library.home) |h| gpa.free(h);
         gpa.free(library.label);
     }
 
@@ -138,6 +144,15 @@ pub const Library = struct {
             }
         }
         return hasher.final();
+    }
+
+    /// Moves roll `index` (its folder, with its scans, settings and exports) to the system's Trash,
+    /// and reads the rolls again.
+    pub fn trashRoll(library: *Library, gpa: std.mem.Allocator, io: std.Io, index: usize) !void {
+        const path = try gpa.dupe(u8, library.rolls.items[index].path);
+        defer gpa.free(path);
+        try trash.move(gpa, io, path, library.home);
+        try library.reload(gpa, io);
     }
 
     /// The index of the roll in the folder at `path`.

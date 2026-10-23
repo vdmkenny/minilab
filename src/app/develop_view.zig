@@ -208,6 +208,18 @@ pub const State = struct {
         state.selected = if (library.rolls.items[index].frames.items.len > 0) 0 else null;
     }
 
+    /// Lets go of the roll in the folder at `path` if it's the open one, without saving, since the
+    /// roll is about to go.
+    pub fn forgetRoll(state: *State, gpa: std.mem.Allocator, path: []const u8) void {
+        const open = state.roll_path orelse return;
+        if (!std.mem.eql(u8, open, path)) return;
+        state.closeFrame(gpa);
+        gpa.free(open);
+        state.roll_path = null;
+        state.selected = null;
+        state.dirty = false;
+    }
+
     /// Opens the scan at `path` outside any roll, closing the open roll if there is one.
     pub fn openLoose(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, path: []const u8) !void {
         if (state.roll_path) |p| {

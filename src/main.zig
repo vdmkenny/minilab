@@ -739,6 +739,7 @@ test "a developed TIFF carries sRGB's profile" {
 test {
     _ = @import("app/develop_view.zig");
     _ = @import("app/frame.zig");
+    _ = @import("platform/trash.zig");
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
     _ = @import("app/looks_view.zig");

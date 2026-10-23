@@ -164,6 +164,14 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
                     try develop.openRoll(gpa, io, &library, library.rolls.items[index].path);
                     dropScans(gpa, io, &library, &develop, dropped, &notice);
                 },
+                .trash => |index| {
+                    var name_buffer: [256]u8 = undefined;
+                    const name = std.fmt.bufPrint(&name_buffer, "{s}", .{library.rolls.items[index].info.name}) catch library.rolls.items[index].info.name;
+                    develop.forgetRoll(gpa, library.rolls.items[index].path);
+                    if (library.trashRoll(gpa, io, index)) |_| {
+                        notice.set("Moved {s} to Trash", .{name});
+                    } else |err| notice.set("Can't move {s} to Trash · {t}", .{ name, err });
+                },
             },
             .develop => develop_view.draw(&develop, gpa, io, &library, window.gpu, panels == .all),
             .scan, .@"export", .looks => {

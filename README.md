@@ -46,7 +46,8 @@ The app has five workspaces, roughly one per step:
 
 - **Rolls** shows each roll as a contact sheet, with its film, its format and how many frames
   you've developed. Click New roll to start one. Drop scans, or a folder of them, on a roll's row
-  to add them. Rolls added from outside the app, say with `minilab import`, show up by themselves.
+  to add them. The bin on a roll's card moves the whole roll to the Trash, after you confirm, so
+  you can still put it back from there. Rolls added from outside the app, say with `minilab import`, show up by themselves.
 - **Finished scans** are pictures that are already positives: a lab's JPEGs, or a scanner's that
   inverts by itself. A roll keeps them as the files they are and shows them unchanged, with the
   usual look, saturation and exposure on top if you want them.
