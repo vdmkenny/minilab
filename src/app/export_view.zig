@@ -370,11 +370,7 @@ fn drawNoRoll() ?context.Workspace {
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), "Export");
     fonts.pop();
     at.y += gui.lineFor(title_size) + gui.px(block_gap);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), "No roll open");
-    at.y += gui.px(line + block_gap);
-    c.ImGui_SetCursorScreenPos(at);
-    const width = c.ImGui_CalcTextSize("Go to Rolls").x / gui.scale + 24 + 2;
-    const go = gui.buttonOf(.normal, "Go to Rolls", gui.vec2(width, control_height));
+    const go = gui.noRoll(at);
     shortcuts.tooltip("Rolls", .rolls);
     return if (go) .rolls else null;
 }

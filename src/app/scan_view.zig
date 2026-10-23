@@ -28,6 +28,7 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
+const holes = @import("holes.zig");
 const labels = @import("labels.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const scan_worker = @import("scan_worker.zig");
@@ -1172,16 +1173,7 @@ fn startPreview(state: *State, gpa: std.mem.Allocator) void {
 
 fn drawNoRoll() bool {
     const origin = c.ImGui_GetWindowPos();
-    const list = c.ImGui_GetWindowDrawList();
-    const x = origin.x + gui.px(main_padding_x);
-    var y = origin.y + gui.px(main_padding_y);
-    fonts.pushSized(.semibold, 18);
-    c.ImDrawList_AddText(list, gui.vec2(x, y), theme.imU32(theme.text), "No roll open");
-    y += gui.lineHeight();
-    fonts.pop();
-    y += gui.px(section_gap);
-    c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-    const go = gui.buttonOf(.primary, "Go to Rolls", gui.vec2(0, button_height));
+    const go = gui.noRoll(gui.vec2(origin.x + gui.px(main_padding_x), origin.y + gui.px(main_padding_y)));
     shortcuts.tooltip("Rolls", .rolls);
     return go;
 }
@@ -1285,9 +1277,6 @@ fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmS
     return widest / preview.pxPerMm()[if (preview.axis == .y) 0 else 1] + 2 * plain_film_margin_mm;
 }
 
-/// Draws the film as it looks on a light table: the base in its own colour, the film's holes if it
-/// has any (rows along both edges, or a few per frame), and each frame's picture straight and
-/// centred.
 /// Draws mounted slides down the column: each frame's picture in a slide mount, on the dark of the
 /// holder. The column is one mount wide.
 fn drawMounts(state: *const State, preview: *const Preview, map: StripMap, list: *c.ImDrawList) void {
@@ -1303,6 +1292,9 @@ fn drawMounts(state: *const State, preview: *const Preview, map: StripMap, list:
     drawPictures(state, preview, map, list);
 }
 
+/// Draws the film as it looks on a light table: the base in its own colour, the film's holes if it
+/// has any (rows along both edges, or a few per frame), and each frame's picture straight and
+/// centred.
 fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
     const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
     const base = preview.base_colour orelse theme.rgba8(theme.raised);
@@ -1310,47 +1302,14 @@ fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: f
 
     const per_mm = map.along * preview.alongPerMm();
     const across_per_mm = map.shown.x / filmWidthMm(state, preview, film);
-    const hole_ink = theme.imU32(theme.viewer);
+    const strip: holes.Strip = .{ .axis = .y, .start = map.corner.y, .end = far.y, .near = map.corner.x, .far = far.x, .along_per_mm = per_mm, .across_per_mm = across_per_mm };
     switch (film.holes()) {
         .none => {},
-        .rows => |holes| drawRows(state, map, holes, per_mm, across_per_mm, list),
-        .per_frame => |count| for (state.boxes.items) |box| {
-            // At the start of each frame, along one edge. The sizes are our own drawing sizes,
-            // since we don't have the formats' real ones to hand.
-            const side = formats.registration_hole.size_mm * across_per_mm;
-            const x = map.corner.x + formats.registration_hole.inset_mm * across_per_mm;
-            const start = map.corner.y + (box.along - box.length / 2) * map.along;
-            for (0..count) |k| {
-                const offset = (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * formats.registration_hole.spacing_mm * per_mm;
-                const top = std.math.clamp(start + offset - side / 2, map.corner.y, far.y);
-                const bottom = std.math.clamp(start + offset + side / 2, map.corner.y, far.y);
-                if (bottom > top) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, top), gui.vec2(x + side, bottom), hole_ink, side / 4, 0);
-            }
-        },
+        // In step with the first frame.
+        .rows => |p| if (state.boxes.items.len > 0) holes.rows(list, strip, p, map.corner.y + state.boxes.items[0].start() * map.along, theme.viewer),
+        .per_frame => |count| for (state.boxes.items) |box| holes.atFrame(list, strip, count, map.corner.y + box.start() * map.along, theme.viewer),
     }
     drawPictures(state, preview, map, list);
-}
-
-/// Draws 135's perforations along both edges, at the film's pitch and in step with the first
-/// frame, the way a camera advances the film.
-fn drawRows(state: *const State, map: StripMap, holes: formats.Perforations, per_mm: f32, across_per_mm: f32, list: *c.ImDrawList) void {
-    const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
-    const first = if (state.boxes.items.len > 0) state.boxes.items[0] else return;
-    const pitch = holes.pitch_mm * per_mm;
-    const length = holes.length_mm * per_mm;
-    const start = map.corner.y + (first.along - first.length / 2) * map.along;
-    var at = start - @ceil((start - map.corner.y) / pitch) * pitch;
-    const inset = holes.inset_mm * across_per_mm;
-    const height = holes.height_mm * across_per_mm;
-    const ink = theme.imU32(theme.viewer);
-    const radius = @min(length, height) / 4;
-    while (at < far.y) : (at += pitch) {
-        const top = @max(at, map.corner.y);
-        const bottom = @min(at + length, far.y);
-        if (bottom <= top) continue;
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(map.corner.x + inset, top), gui.vec2(map.corner.x + inset + height, bottom), ink, radius, 0);
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(far.x - inset - height, top), gui.vec2(far.x - inset, bottom), ink, radius, 0);
-    }
 }
 
 /// Draws each frame's picture, straight and centred in its box.

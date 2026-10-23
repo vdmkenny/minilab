@@ -10,6 +10,7 @@ const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
+const holes = @import("holes.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
 const roll = minilab.roll;
@@ -350,7 +351,13 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const film_ink = theme.imU32(theme.film);
     if (shown > 0 and !sheets) {
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(strip_x, strip_top), gui.vec2(strip_end, strip_top + band), film_ink, gui.px(2), 0);
-        drawHoles(list, format.size, strip_x, strip_end, strip_top, band, per_mm, strip_x + leader, step, shown);
+        // Punched in the page's colour, so they look cut out.
+        const strip: holes.Strip = .{ .axis = .x, .start = strip_x, .end = strip_end, .near = strip_top, .far = strip_top + band, .along_per_mm = per_mm, .across_per_mm = per_mm };
+        switch (format.size.holes()) {
+            .none => {},
+            .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.page),
+            .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.page),
+        }
     }
 
     var x = strip_x + if (sheets) 0 else leader;
@@ -415,40 +422,6 @@ fn drawBin(list: *c.ImDrawList, centre: gui.Vec2, half: f32, colour: theme.Color
     for ([_]f32{ -0.28, 0.28 }) |at| {
         const x = centre.x + half * at;
         c.ImDrawList_AddLineEx(list, gui.vec2(x, lid + half * 0.35), gui.vec2(x, bottom - half * 0.3), ink, thickness);
-    }
-}
-
-/// Punches the film's holes into a strip from `left` to `right`, `band` high: rows along both
-/// edges, or one or two along the top edge at the start of each of `frames` frames, the first at
-/// `first_frame` and the rest `step` apart. They're drawn in the page's colour, so they look cut out.
-fn drawHoles(list: *c.ImDrawList, size: formats.FilmSize, left: f32, right: f32, top: f32, band: f32, per_mm: f32, first_frame: f32, step: f32, frames: usize) void {
-    const ink = theme.imU32(theme.page);
-    switch (size.holes()) {
-        .none => {},
-        .rows => |p| {
-            const pitch = p.pitch_mm * per_mm;
-            const length = p.length_mm * per_mm;
-            const across = p.height_mm * per_mm;
-            const inset = p.inset_mm * per_mm;
-            const radius = @min(length, across) / 4;
-            var at = left + (pitch - length) / 2;
-            while (at + length <= right) : (at += pitch) {
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + inset), gui.vec2(at + length, top + inset + across), ink, radius, 0);
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + band - inset - across), gui.vec2(at + length, top + band - inset), ink, radius, 0);
-            }
-        },
-        .per_frame => |count| {
-            const hole = formats.registration_hole;
-            const side = hole.size_mm * per_mm;
-            const y = top + hole.inset_mm * per_mm;
-            for (0..frames) |i| {
-                const start = first_frame + @as(f32, @floatFromInt(i)) * step;
-                for (0..count) |k| {
-                    const centre = start + (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * hole.spacing_mm * per_mm;
-                    c.ImDrawList_AddRectFilledEx(list, gui.vec2(centre - side / 2, y), gui.vec2(centre + side / 2, y + side), ink, side / 4, 0);
-                }
-            }
-        },
     }
 }
 

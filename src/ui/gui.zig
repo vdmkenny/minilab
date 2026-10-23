@@ -223,6 +223,23 @@ pub fn button(label: [:0]const u8) bool {
     return buttonOf(.normal, label, vec2(0, 0));
 }
 
+/// The gap between "No roll open" and its button, in the design's pixels.
+const no_roll_gap = 14;
+/// The height of a button that fits its label, in the design's pixels.
+const button_height = 32;
+/// The padding either side of a button's label, in the design's pixels.
+const button_padding = 12;
+
+/// Draws "No roll open" at `at` with a Go to Rolls button under it, for a page that needs a roll.
+/// Returns true when the button is clicked.
+pub fn noRoll(at: Vec2) bool {
+    const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.text_secondary, "No roll open");
+    c.ImGui_SetCursorScreenPos(vec2(at.x, at.y + height + px(no_roll_gap)));
+    const label = "Go to Rolls";
+    const width = c.ImGui_CalcTextSize(label).x / scale + 2 * button_padding + 2;
+    return buttonOf(.normal, label, vec2(width, button_height));
+}
+
 /// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
 /// Negative / Positive. Returns the one that was clicked.
 pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) ?usize {
