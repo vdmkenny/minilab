@@ -228,7 +228,15 @@ const no_roll_gap = 14;
 /// The height of a button that fits its label, in the design's pixels.
 const button_height = 32;
 /// The padding either side of a button's label, in the design's pixels.
-const button_padding = 12;
+pub const button_padding = 12;
+/// A control's border, in the design's pixels.
+const border = 1;
+
+/// The width of a button that fits `label`, with `padding` either side of it (in the design's
+/// pixels) and its border, in screen pixels.
+pub fn fittedWidth(label: [:0]const u8, padding: f32) f32 {
+    return c.ImGui_CalcTextSize(label).x + px(2 * padding + 2 * border);
+}
 
 /// Draws "No roll open" at `at` with a Go to Rolls button under it, for a page that needs a roll.
 /// Returns true when the button is clicked.
@@ -236,8 +244,7 @@ pub fn noRoll(at: Vec2) bool {
     const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.text_secondary, "No roll open");
     c.ImGui_SetCursorScreenPos(vec2(at.x, at.y + height + px(no_roll_gap)));
     const label = "Go to Rolls";
-    const width = c.ImGui_CalcTextSize(label).x / scale + 2 * button_padding + 2;
-    return buttonOf(.normal, label, vec2(width, button_height));
+    return buttonOf(.normal, label, vec2(fittedWidth(label, button_padding) / scale, button_height));
 }
 
 /// Corner radii, in the design's pixels: controls and cards, the choices inside a box of them,

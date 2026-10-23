@@ -44,8 +44,47 @@ const metadata_gap = 6;
 const detail_capacity = 1024;
 const field_name_capacity = 64;
 const metadata_check = 13;
+/// A Metadata row's columns: the check box, its name and the gaps between them.
+const metadata_check_width = 22;
+const metadata_check_inset = 4;
+const metadata_name_width = 100;
+const metadata_spacing = 6;
+/// The space a detail's value has before it in its box.
+const value_inset = 10;
+/// The x that removes a field.
+const remove_arm = 4;
+const remove_thickness = 1.5;
 const export_height = 40;
 const section_padding = 12;
+const section_rounding = 6;
+/// The grid of frames: the least height it gets, and the gaps in the bar above it.
+const grid_min_height = 40;
+const toolbar_gap = 10;
+/// A frame's card: the corner of its picture, the inset of its number and check box, and its
+/// stars.
+const picture_rounding = 2;
+const card_inset = 2;
+const rating_gap = 8;
+const star_radius = 5;
+const star_gap = 2;
+/// The running export's progress bar, and the room the status lines leave for the button on
+/// their right.
+const progress_height = 4;
+const progress_room = 80;
+const summary_room = 120;
+/// The line under a link.
+const link_underline = 1;
+/// Padding either side of the text in a choice, a drop-down and a text field.
+const pill_padding = 10;
+const combo_padding = 8;
+const field_padding = 10;
+/// The box for a custom long edge, the gap before its unit, and the space above a problem with
+/// the file names.
+const edge_field_width = 90;
+const unit_gap = 8;
+const problem_gap = 4;
+/// The gap between a text field and the button beside it.
+const field_gap = 6;
 /// Line heights, in the design's pixels, for 13-pixel text and headings.
 const line = fonts.ui_size * gui.line_spacing;
 const small_line = gui.heading_size * gui.line_spacing;
@@ -425,7 +464,7 @@ fn drawPage(state: *State, ctx: context.Context, roll_index: usize) void {
     const grid_bottom = bottom - section_height - gui.px(block_gap);
     c.ImGui_SetCursorScreenPos(gui.vec2(left, grid_top));
     c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ChildBg, theme.withAlpha(theme.page, 0));
-    _ = c.ImGui_BeginChild("grid", gui.vec2(right - left, @max(grid_bottom - grid_top, gui.px(40))), c.ImGuiChildFlags_None, c.ImGuiWindowFlags_None);
+    _ = c.ImGui_BeginChild("grid", gui.vec2(right - left, @max(grid_bottom - grid_top, gui.px(grid_min_height))), c.ImGuiChildFlags_None, c.ImGuiWindowFlags_None);
     drawGrid(state, ctx, roll_index);
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
@@ -445,13 +484,13 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     c.ImDrawList_AddText(list, gui.vec2(left, top + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text), title);
     fonts.pop();
     const count = gui.print("{d} of {d} frames selected", .{ state.selectedCount(), r.frames.items.len });
-    c.ImDrawList_AddText(list, gui.vec2(left + title_width + gui.px(10), top + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), count);
+    c.ImDrawList_AddText(list, gui.vec2(left + title_width + gui.px(toolbar_gap), top + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), count);
 
-    const none_width = c.ImGui_CalcTextSize("Select none").x + gui.px(12 * 2 + 2);
-    const all_width = c.ImGui_CalcTextSize("Select all").x + gui.px(12 * 2 + 2);
-    const all_x = right - none_width - gui.px(10) - all_width;
-    c.ImGui_SetCursorScreenPos(gui.vec2(all_x - gui.px(10 + star_filter_width), top));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (height - c.ImGui_GetFontSize()) / 2));
+    const none_width = gui.fittedWidth("Select none", gui.button_padding);
+    const all_width = gui.fittedWidth("Select all", gui.button_padding);
+    const all_x = right - none_width - gui.px(toolbar_gap) - all_width;
+    c.ImGui_SetCursorScreenPos(gui.vec2(all_x - gui.px(toolbar_gap + star_filter_width), top));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(combo_padding), (height - c.ImGui_GetFontSize()) / 2));
     if (gui.combo("stars", &star_filters, state.min_stars, star_filter_width)) |picked| {
         state.min_stars = picked;
         state.applyFilter(r);
@@ -511,33 +550,33 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         const on = state.selected.items[i];
 
         // The card.
-        const radius = gui.px(5);
+        const radius = gui.px(gui.control_rounding);
         if (on) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), radius, 0);
         c.ImDrawList_AddRectEx(list, corner, far, theme.imU32(if (on) theme.accent else if (hovered) theme.border else theme.divider), radius, 1, 0);
         const picture_min = gui.vec2(corner.x + inset, corner.y + inset);
         const picture_max = gui.vec2(far.x - inset, picture_min.y + picture_height);
         if (ctx.library.thumbnail(ctx.gpa, .{ .roll = roll_index, .frame = i })) |t| {
-            gui.imageCover(list, t.ref(), t.width, t.height, picture_min, picture_max, gui.px(2));
+            gui.imageCover(list, t.ref(), t.width, t.height, picture_min, picture_max, gui.px(picture_rounding));
         } else {
-            c.ImDrawList_AddRectFilledEx(list, picture_min, picture_max, theme.imU32(theme.control_hover), gui.px(2), 0);
+            c.ImDrawList_AddRectFilledEx(list, picture_min, picture_max, theme.imU32(theme.control_hover), gui.px(picture_rounding), 0);
         }
 
         // The number and the check box under the picture.
         const label_top = picture_max.y + gui.px(cell_padding);
         fonts.pushSized(.mono, fonts.small_size);
         const number = labels.frameNumber(i);
-        const number_end = picture_min.x + gui.px(2) + c.ImGui_CalcTextSize(number).x;
-        c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
+        const number_end = picture_min.x + gui.px(card_inset) + c.ImGui_CalcTextSize(number).x;
+        c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(card_inset), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
         fonts.pop();
         // The frame's stars, or that it's rejected.
         const label_middle = label_top + gui.px(small_line) / 2;
         if (frame.rating.rejected) {
-            c.ImDrawList_AddText(list, gui.vec2(number_end + gui.px(8), label_middle - c.ImGui_GetFontSize() / 2), theme.imU32(theme.red), "Rejected");
+            c.ImDrawList_AddText(list, gui.vec2(number_end + gui.px(rating_gap), label_middle - c.ImGui_GetFontSize() / 2), theme.imU32(theme.red), "Rejected");
         } else for (0..frame.rating.stars) |k| {
-            const star_radius = gui.px(5);
-            gui.star(list, gui.vec2(number_end + gui.px(8) + star_radius + @as(f32, @floatFromInt(k)) * (2 * star_radius + gui.px(2)), label_middle), star_radius, true, theme.accent);
+            const star = gui.px(star_radius);
+            gui.star(list, gui.vec2(number_end + gui.px(rating_gap) + star + @as(f32, @floatFromInt(k)) * (2 * star + gui.px(star_gap)), label_middle), star, true, theme.accent);
         }
-        const box_min = gui.vec2(picture_max.x - gui.px(2 + check_size), label_top + (gui.px(small_line) - gui.px(check_size)) / 2);
+        const box_min = gui.vec2(picture_max.x - gui.px(card_inset + check_size), label_top + (gui.px(small_line) - gui.px(check_size)) / 2);
         drawCheck(list, box_min, gui.px(check_size), on);
 
         // Frames left out are dimmed by drawing the page colour over them, standing in for the
@@ -553,14 +592,14 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
 /// outline when not.
 fn drawCheck(list: *c.ImDrawList, min: gui.Vec2, size: f32, on: bool) void {
     if (on) return gui.tickedBox(list, min, size);
-    c.ImDrawList_AddRectEx(list, min, gui.vec2(min.x + size, min.y + size), theme.imU32(theme.track), gui.px(3), 1, 0);
+    c.ImDrawList_AddRectEx(list, min, gui.vec2(min.x + size, min.y + size), theme.imU32(theme.track), gui.px(gui.box_rounding), 1, 0);
 }
 
 /// Draws the bottom of the page: the running export with its progress and Cancel, or what the
 /// last one wrote, with Show in folder.
 fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
     const list = c.ImGui_GetWindowDrawList();
-    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.panel), gui.px(6), 0);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.panel), gui.px(section_rounding), 0);
     const x = min.x + gui.px(section_padding);
     const right = max.x - gui.px(section_padding);
     const first_top = min.y + gui.px(section_padding);
@@ -580,10 +619,10 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
             if (link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
             shortcuts.tooltip("Cancel", .cancel);
         }
-        c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
+        c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(progress_room)));
         // The progress bar, on the second line.
-        const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
-        gui.progressBar(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), batch.progress());
+        const bar_y = second_top + (gui.px(small_line) - gui.px(progress_height)) / 2;
+        gui.progressBar(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(progress_height)), batch.progress());
         return;
     }
 
@@ -595,7 +634,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         return;
     };
     if (link(gui.vec2(right, first_top), "Show in folder")) showFolder(summary.folder.text());
-    c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(summary.line.text(), right - x - gui.px(120)));
+    c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(summary.line.text(), right - x - gui.px(summary_room)));
     fonts.pushSized(.mono, fonts.small_size);
     c.ImDrawList_AddText(list, gui.vec2(x, second_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), gui.elideStart(summary.files.text(), right - x));
     fonts.pop();
@@ -614,7 +653,7 @@ fn link(top_right: gui.Vec2, label: [:0]const u8) bool {
     const ink = theme.imU32(if (hovered) theme.text else theme.text_secondary);
     const y = corner.y + (gui.px(line) - size.y) / 2;
     c.ImDrawList_AddText(list, gui.vec2(corner.x, y), ink, label);
-    const underline = y + size.y + gui.px(1);
+    const underline = y + size.y + gui.px(link_underline);
     c.ImDrawList_AddLine(list, gui.vec2(corner.x, underline), gui.vec2(corner.x + size.x, underline), ink);
     return clicked;
 }
@@ -697,7 +736,7 @@ fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
     defer c.ImGui_EndDisabled();
     for (std.enums.values(FileChoice)) |choice| {
         const label = choice.label();
-        const pill_width = c.ImGui_CalcTextSize(label).x + gui.px(10 * 2 + 2);
+        const pill_width = gui.fittedWidth(label, pill_padding);
         if (at.x > x and at.x + pill_width > x + width) {
             at = gui.vec2(x, at.y + height + gui.px(pill_gap));
         }
@@ -719,7 +758,7 @@ fn drawUnavailable(label: [:0]const u8, size: gui.Vec2) void {
     _ = c.ImGui_InvisibleButton(label, size, 0);
     const list = c.ImGui_GetWindowDrawList();
     const far = gui.vec2(corner.x + size.x, corner.y + size.y);
-    gui.dashedRoundedRect(list, corner, far, theme.imU32(theme.border), gui.px(4));
+    gui.dashedRoundedRect(list, corner, far, theme.imU32(theme.border), gui.px(gui.choice_rounding));
     const text_size = c.ImGui_CalcTextSize(label);
     c.ImDrawList_AddText(list, gui.vec2(corner.x + (size.x - text_size.x) / 2, corner.y + (size.y - text_size.y) / 2), theme.imU32(theme.text_tertiary), label);
 }
@@ -762,7 +801,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
 
     rowLabel(list, x, y, "Color space");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (row - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(combo_padding), (row - c.ImGui_GetFontSize()) / 2));
     if (gui.comboOf(icc.Space, "space", &exporting.spaces, state.space, spaceLabel, control_width / gui.scale)) |picked| state.space = picked;
     y += row + gui.px(grid_gap);
 
@@ -776,22 +815,22 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
         rowLabel(list, x, y, "Long edge");
         c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
         fonts.pushSized(.mono, fonts.small_size);
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
-        c.ImGui_SetNextItemWidth(gui.px(90));
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_SetNextItemWidth(gui.px(edge_field_width));
         _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
         c.ImGui_PopStyleVar();
         fonts.pop();
         if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
         const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
         const unit = if (state.customEdge() == null) "px" else "px";
-        c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(90 + 8), unit_y), theme.imU32(theme.text_tertiary), unit);
+        c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(edge_field_width + unit_gap), unit_y), theme.imU32(theme.text_tertiary), unit);
         y += row + gui.px(grid_gap);
     }
 
     rowLabel(list, x, y, "File names");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
     fonts.pushSized(.mono, fonts.small_size);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField("names", &state.pattern, default_pattern, control_width / gui.scale);
     c.ImGui_PopStyleVar();
     fonts.pop();
@@ -800,7 +839,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     }
     y += row;
     if (exporting.checkPattern(std.mem.sliceTo(&state.pattern, 0))) |_| {} else |err| {
-        y += gui.px(4);
+        y += gui.px(problem_gap);
         const problem = switch (err) {
             error.NoFrameNumber => "{frame} missing",
             error.UnknownField => "Unknown field",
@@ -812,10 +851,10 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     y += gui.px(grid_gap);
 
     rowLabel(list, x, y, "Folder");
-    const choose_width = c.ImGui_CalcTextSize("Choose").x + gui.px(10 * 2 + 2);
+    const choose_width = gui.fittedWidth("Choose", pill_padding);
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
-    _ = gui.textField("folder", &state.folder, "Roll/exports", (control_width - choose_width - gui.px(6)) / gui.scale);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
+    _ = gui.textField("folder", &state.folder, "Roll/exports", (control_width - choose_width - gui.px(field_gap)) / gui.scale);
     c.ImGui_PopStyleVar();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Relative to the library");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x + control_width - choose_width, y));
@@ -847,7 +886,7 @@ fn chooseFolder(state: *State, ctx: context.Context) void {
 fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, top: f32, width: f32) f32 {
     const r = &ctx.library.rolls.items[roll_index];
     const list = c.ImGui_GetWindowDrawList();
-    const value_x = x + gui.px(22 + 6 + 100 + 6);
+    const value_x = x + gui.px(metadata_check_width + metadata_spacing + metadata_name_width + metadata_spacing);
     const value_width = x + width - value_x;
     const row = gui.px(detail_row);
     var y = top;
@@ -869,7 +908,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
             .fixed => |fixed| {
                 const text_y = y + (row - c.ImGui_GetFontSize()) / 2;
                 const quiet = fixed.quiet or fixed.text == null;
-                c.ImDrawList_AddText(list, gui.vec2(value_x + gui.px(10), text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(fixed.text orelse "Not set", value_width - gui.px(10)));
+                c.ImDrawList_AddText(list, gui.vec2(value_x + gui.px(value_inset), text_y), theme.imU32(if (quiet) theme.text_tertiary else theme.text), gui.elideEnd(fixed.text orelse "Not set", value_width - gui.px(value_inset)));
                 if (fixed.why) |why| {
                     c.ImGui_SetCursorScreenPos(gui.vec2(value_x, y));
                     _ = c.ImGui_InvisibleButton(each.label, gui.vec2(value_width, row), 0);
@@ -882,7 +921,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
 
     // The roll's own fields: a name and a value each, and Add.
     metadataCheck(list, x, y, "Own fields", &state.include.fields);
-    const add_width = c.ImGui_CalcTextSize("Add field").x + gui.px(10 * 2 + 2);
+    const add_width = gui.fittedWidth("Add field", pill_padding);
     c.ImGui_SetCursorScreenPos(gui.vec2(x + width - add_width, y));
     const add = gui.buttonOf(.normal, "Add field", gui.vec2(add_width / gui.scale, detail_row));
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Written to XMP");
@@ -890,23 +929,23 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
     syncFields(state, ctx.gpa, r);
     var remove: ?usize = null;
     var edited = false;
-    const name_width = gui.px(100);
+    const name_width = gui.px(metadata_name_width);
     const value_left = value_x;
     const remove_size = row;
     for (state.custom.items, 0..) |*field, i| {
         c.ImGui_PushIDInt(@intCast(i));
         defer c.ImGui_PopID();
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
-        c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(22 + 6), y));
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(metadata_check_width + metadata_spacing), y));
         if (state.focus_new_field and i + 1 == state.custom.items.len) {
             c.ImGui_SetKeyboardFocusHere();
             state.focus_new_field = false;
         }
         c.ImGui_BeginDisabled(!field.fits);
-        _ = gui.textField("name", &field.name, "Name", (name_width - gui.px(6)) / gui.scale);
+        _ = gui.textField("name", &field.name, "Name", (name_width - gui.px(metadata_spacing)) / gui.scale);
         edited = trackEdit(state, .{ .field_name = i }) or edited;
         c.ImGui_SetCursorScreenPos(gui.vec2(value_left, y));
-        _ = gui.textField("value", &field.value, "Value", (value_width - remove_size - gui.px(6)) / gui.scale);
+        _ = gui.textField("value", &field.value, "Value", (value_width - remove_size - gui.px(metadata_spacing)) / gui.scale);
         edited = trackEdit(state, .{ .field_value = i }) or edited;
         c.ImGui_EndDisabled();
         c.ImGui_PopStyleVar();
@@ -915,7 +954,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
         const hovered = c.ImGui_IsItemHovered(0);
         if (hovered) c.ImGui_SetTooltip("Remove");
         const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
-        gui.cross(list, centre, gui.px(4), gui.px(1.5), if (hovered) theme.text else theme.text_tertiary);
+        gui.cross(list, centre, gui.px(remove_arm), gui.px(remove_thickness), if (hovered) theme.text else theme.text_tertiary);
         y += row + gui.px(metadata_gap);
     }
     if (add) state.focus_new_field = true;
@@ -938,11 +977,11 @@ const MetadataRow = struct {
 fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag: *bool) void {
     const row = gui.px(detail_row);
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-    if (c.ImGui_InvisibleButton(gui.print("{s}##check", .{label}), gui.vec2(gui.px(22 + 6 + 100), row), 0)) flag.* = !flag.*;
+    if (c.ImGui_InvisibleButton(gui.print("{s}##check", .{label}), gui.vec2(gui.px(metadata_check_width + metadata_spacing + metadata_name_width), row), 0)) flag.* = !flag.*;
     const hovered = c.ImGui_IsItemHovered(0);
-    const box = gui.vec2(x + gui.px(4), y + (row - gui.px(metadata_check)) / 2);
+    const box = gui.vec2(x + gui.px(metadata_check_inset), y + (row - gui.px(metadata_check)) / 2);
     gui.checkBox(list, box, gui.px(metadata_check), flag.*, hovered);
-    c.ImDrawList_AddText(list, gui.vec2(x + gui.px(22 + 6), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
+    c.ImDrawList_AddText(list, gui.vec2(x + gui.px(metadata_check_width + metadata_spacing), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
 }
 
 /// Draws the field for one of the roll's details. It shows the roll's value except while you're
@@ -955,7 +994,7 @@ fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.D
     const fits = value.len <= buffer.len;
     if (!state.isEditing(.{ .detail = which })) showCut(buffer, value);
     c.ImGui_SetCursorScreenPos(at);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
     c.ImGui_BeginDisabled(!fits);
     _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
     c.ImGui_EndDisabled();
