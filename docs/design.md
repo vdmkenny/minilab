@@ -246,8 +246,23 @@ binary PNM, which is what SANE's scanimage writes. They should be 16-bit and lin
 read too, with a warning: 8 bits is too few for linear data, so an 8-bit file almost always has a
 gamma curve applied, and nothing undoes that yet.
 
-A roll stores every scan as a 16-bit PPM, whatever it was imported from, so the rest of the app only
-has to read one format.
+A roll stores every raw scan as a 16-bit PPM, whatever it was imported from, so the rest of the app
+only has to read one format.
+
+**Finished scans.** Lab scans, and scans from a scanner that inverts by itself (say a Kodak slide
+scanner), arrive as finished positives in JPEG. minilab doesn't invert them. The roll keeps the JPEG
+exactly as it came, copied or moved into `scans/`, and reads it by undoing the sRGB curve, so the
+pipeline works in linear light. Each frame is saved as developed, with `finished` settings: a
+positive at an exposure of 1, which gives back the picture as it was. Automatic settings and Reset
+leave a finished frame that way, and the look, saturation and exposure still work on top. A roll
+that starts with JPEGs has Finished scans as its input; its film type and stock stay what the film
+was, as metadata. A JPEG's embedded ICC profile isn't used yet: lab scans are almost always sRGB.
+
+**Folders and the library on disk.** `minilab import` and a drop on a roll's row take folders: a
+folder stands for the scans directly in it, in natural order (2 before 10). The app looks at the
+library's folders every two seconds, and reads the rolls again when one was added, removed or
+renamed, or a roll's frames changed. Saving a file in place doesn't count, so its own saves don't
+trigger it.
 
 ## 6. Film formats and frame detection
 
@@ -615,7 +630,8 @@ Rolls/
     roll.json            film type, stock, format, camera, lens, dates, notes, scanner, own fields
     flat.ppm             camera rolls only: the flat field, as shot
     scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import and
-                         never changed; the frames of a strip share one
+                         never changed; the frames of a strip share one. Finished scans
+                         are kept as their own JPEGs (scans/01.jpg)
     frames/01.json ...   crop, turns, film base, look, develop settings (worked out), rating
     thumbs/01.ppm ...    reduced copies of the scans, for quick previews
     preview.ppm          the last preview of the film holder, from Scan

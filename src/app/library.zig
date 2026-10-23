@@ -30,6 +30,9 @@ pub const Library = struct {
     /// Thumbnails dropped during a frame. ImGui may still draw them in that frame, so they're only
     /// released once it has been drawn (`releaseRetired`).
     retired: std.ArrayList(Texture) = .empty,
+    /// What the library's folders looked like on disk when `refresh` last looked, or null before
+    /// it first does.
+    on_disk: ?u64 = null,
     gpa: std.mem.Allocator,
 
     /// Loads the library at `path`. `home` is the user's home folder, used for the label.
@@ -100,6 +103,43 @@ pub const Library = struct {
         library.rolls = rolls;
     }
 
+    /// Reads the rolls again if the library changed on disk since the last look, say from rolls
+    /// added by `minilab import` or in the Finder, or frames added to one. Returns whether it did.
+    pub fn refresh(library: *Library, gpa: std.mem.Allocator, io: std.Io) bool {
+        const now = library.fingerprint(io) catch return false;
+        const before = library.on_disk;
+        library.on_disk = now;
+        if (before == null or before.? == now) return false;
+        library.reload(gpa, io) catch |err| {
+            std.log.err("can't read the library again: {t}", .{err});
+            return false;
+        };
+        return true;
+    }
+
+    /// A fingerprint of the library's folders: the times of the library's folder, and of each
+    /// roll's folder and frames folder. Adding, removing or renaming anything in them changes
+    /// it. Saving a file in place doesn't, so the app's own saves don't count.
+    fn fingerprint(library: *const Library, io: std.Io) !u64 {
+        const cwd = std.Io.Dir.cwd();
+        var hasher: std.hash.Wyhash = .init(0);
+        var dir = try cwd.openDir(io, library.path, .{ .iterate = true });
+        defer dir.close(io);
+        hasher.update(std.mem.asBytes(&(try dir.stat(io)).mtime.nanoseconds));
+        var each = dir.iterate();
+        while (try each.next(io)) |entry| {
+            if (entry.kind != .directory) continue;
+            hasher.update(entry.name);
+            for ([_][]const u8{ ".", roll.frames_dir }) |sub| {
+                var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+                const path = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ entry.name, sub }) catch continue;
+                const stat = dir.statFile(io, path, .{}) catch continue;
+                hasher.update(std.mem.asBytes(&stat.mtime.nanoseconds));
+            }
+        }
+        return hasher.final();
+    }
+
     /// The index of the roll in the folder at `path`.
     pub fn find(library: *const Library, path: []const u8) ?usize {
         for (library.rolls.items, 0..) |r, i| {
@@ -143,9 +183,10 @@ pub const Library = struct {
     /// What `importScans` added: the frames from index `first` onwards, from `files` files.
     pub const Imported = struct { first: usize, files: usize };
 
-    /// Adds the scans at `paths` (PNM, TIFF or camera RAW) to roll `index` as new frames, in the
-    /// order given: one frame per scan, or one per frame on a strip. A camera roll's frames are
-    /// divided by its flat field. A scan that can't be read is logged and skipped.
+    /// Adds the scans at `paths` (PNM, TIFF, camera RAW, or finished JPEGs, which are copied) to
+    /// roll `index` as new frames, in the order given: one frame per scan, or one per frame on a
+    /// strip. A camera roll's frames are divided by its flat field. A scan that can't be read is
+    /// logged and skipped.
     pub fn importScans(library: *Library, gpa: std.mem.Allocator, io: std.Io, index: usize, paths: []const []const u8) Imported {
         const r = &library.rolls.items[index];
         var imported: Imported = .{ .first = r.frames.items.len, .files = 0 };
@@ -155,7 +196,7 @@ pub const Library = struct {
         };
         defer if (flat) |*f| f.deinit(gpa);
         for (paths) |path| {
-            _ = r.importFile(gpa, io, path, if (flat) |*f| f else null) catch |err| {
+            _ = r.importFile(gpa, io, path, if (flat) |*f| f else null, .copy) catch |err| {
                 std.log.err("can't add {s} to {s}: {t}", .{ path, r.info.name, err });
                 continue;
             };

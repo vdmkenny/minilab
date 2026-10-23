@@ -17,11 +17,15 @@ const usage =
     \\      [--workspace <name>]         start in rolls, scan, develop, export or looks
     \\      [--shortcuts]                show the keyboard shortcuts
     \\      [--screenshot <file.png>]    draw the screen without a window and save it
-    \\  minilab import <roll name> <scan>...
+    \\  minilab import <roll name> <scan or folder>...
     \\      [--library <folder>] [--stock <name>] [--film colour|bw|slide]
-    \\      [--flat <file>]              add scans to a roll, and make the roll if it doesn't exist
-    \\                                   yet. Takes PPM or PGM, 16-bit linear TIFF or camera RAW.
-    \\                                   A strip scan becomes one frame per frame found on it.
+    \\      [--flat <file>] [--move]     add scans to a roll, and make the roll if it doesn't exist
+    \\                                   yet. Takes PPM or PGM, 16-bit linear TIFF, camera RAW, or
+    \\                                   JPEG for finished pictures such as a lab's scans, which
+    \\                                   the roll keeps as they are. A folder adds the scans in it.
+    \\                                   --move moves finished pictures into the roll instead of
+    \\                                   copying them. A strip scan becomes one frame per frame
+    \\                                   found on it.
     \\                                   --flat is a shot of the light with no film in front of
     \\                                   it: the roll keeps it as its flat field and divides each
     \\                                   frame by it, to even out the light
@@ -518,6 +522,8 @@ const ImportOptions = struct {
     kind: minilab.develop.FilmKind = .colour_negative,
     /// A shot of the light source with no film, for the roll's flat field.
     flat: ?[]const u8 = null,
+    /// Whether finished pictures move into the roll rather than being copied.
+    transfer: minilab.roll.Transfer = .copy,
 };
 
 fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]const u8) !ImportOptions {
@@ -534,6 +540,8 @@ fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]
             if (std.mem.eql(u8, arg, "--stock")) options.stock = value;
             if (std.mem.eql(u8, arg, "--flat")) options.flat = value;
             if (std.mem.eql(u8, arg, "--film")) options.kind = try parseFilm(value, .full);
+        } else if (std.mem.eql(u8, arg, "--move")) {
+            options.transfer = .move;
         } else try positional.append(arena, arg);
     }
     if (positional.items.len < 2) return error.MissingArgument;
@@ -562,8 +570,10 @@ fn importScans(gpa: std.mem.Allocator, io: std.Io, options: ImportOptions) !void
     }
     var flat = try roll.flatField(gpa, io);
     defer if (flat) |*f| f.deinit(gpa);
-    for (options.scans) |scan| {
-        const added = try roll.importFile(gpa, io, scan, if (flat) |*f| f else null);
+    const scans = try minilab.input.expand(gpa, io, options.scans);
+    defer minilab.input.freeExpanded(gpa, scans);
+    for (scans) |scan| {
+        const added = try roll.importFile(gpa, io, scan, if (flat) |*f| f else null, options.transfer);
         if (added.count == 1) {
             std.debug.print("{s} → {s} frame {d}\n", .{ scan, options.roll, added.first + 1 });
         } else {

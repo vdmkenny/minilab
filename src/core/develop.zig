@@ -197,6 +197,15 @@ pub const Settings = struct {
     stock_curves: ?stock_curves.Curves = null,
     /// For a slide shot with a camera, how to bring the camera's colour to sRGB. Null for a scan.
     slide_colour: ?SlideColour = null,
+    /// Whether the scan is a finished picture, such as a lab's scan, rather than a raw scan of the
+    /// film. It develops as `finishedPicture` has it, and automatic settings leave it that way.
+    finished: bool = false,
+
+    /// The settings for a finished picture: a positive at an exposure of 1, so the picture comes
+    /// out just as it went in. The look and saturation can still change it.
+    pub fn finishedPicture() Settings {
+        return .{ .kind = .colour_positive, .exposure = 1, .finished = true };
+    }
 
     /// Returns the curves, in the form `automatic` takes them.
     pub fn curves(settings: *const Settings) ?*const stock_curves.Curves {
@@ -848,6 +857,14 @@ test "a new stock measures the frame again and keeps the user's choices" {
     const none = restocked(restocked_settings, stats, null, null);
     try std.testing.expectEqual(null, none.stock_curves);
     try std.testing.expectEqual(WhiteBalance.auto_neutral, none.white_balance);
+}
+
+test "a finished picture develops to just what it was" {
+    const prepared: Prepared = .init(.finishedPicture());
+    for ([_][3]u16{ .{ 0, 0, 0 }, .{ 1000, 30000, 65535 }, .{ 12345, 23456, 34567 } }) |raw| {
+        const out = pixel(prepared, raw);
+        for (out, raw) |o, r| try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(r)) / image.full_scale, o, 1e-6);
+    }
 }
 
 test "a slide shot with a camera comes out in sRGB, its light white" {

@@ -473,8 +473,9 @@ pub const State = struct {
                 rl.frames.items[index].height = frame.scan_height;
                 rl.saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
             }
-            if (saved.crop == null) {
-                // An uncropped frame gets the detected crop, if detection is sure of it.
+            if (saved.crop == null and !saved.settings.finished) {
+                // An uncropped frame gets the detected crop, if detection is sure of it. A finished
+                // picture is already just the frame.
                 if (frame.detect(gpa, rl.info.format.format(), saved.dpi orelse rl.info.dpi)) |area| {
                     try frame.setGeometry(gpa, area, saved.quarter_turns, saved.mirrored);
                     rl.frames.items[index].crop = area;

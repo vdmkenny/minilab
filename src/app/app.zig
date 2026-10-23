@@ -1,6 +1,7 @@
 //! The app: its window, the workspaces in the header, and the one loop that draws them.
 
 const std = @import("std");
+const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
 const gui = @import("../ui/gui.zig");
@@ -15,6 +16,7 @@ const context = @import("context.zig");
 const scan_view = @import("scan_view.zig");
 const export_view = @import("export_view.zig");
 const looks_view = @import("looks_view.zig");
+const version = @import("../version.zig");
 
 pub const Workspace = context.Workspace;
 
@@ -46,6 +48,8 @@ const start_height = 900;
 const screenshot_frames = 4;
 const screenshot_frames_max = 600;
 const header_height = 44;
+/// How often the app looks for rolls and frames added on disk from outside it.
+const library_check_ms = 2000;
 
 const Notice = context.Notice;
 
@@ -82,10 +86,16 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     for (options.open) |path| try develop.openLoose(gpa, io, &library, path);
 
     var frames_drawn: usize = 0;
+    var library_checked: u64 = 0;
     var panels: Panels = .all;
     var show_help = options.shortcuts;
     while (!window.close_asked) {
         if (!window.beginFrame()) continue;
+        // Pick up rolls and frames added on disk from outside the app.
+        if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
+            library_checked = c.SDL_GetTicks();
+            _ = library.refresh(gpa, io);
+        }
         gui.newFrame();
         const keys = shortcuts.poll();
         for (std.enums.values(Workspace)) |w| {
@@ -203,7 +213,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
 
 /// Handles scans dropped on the window: adds them to the open roll, or opens them outside any roll
 /// when none is open.
-fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, paths: []const []const u8, notice: *Notice) void {
+fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, dropped: []const []const u8, notice: *Notice) void {
+    // A folder stands for the scans in it.
+    const paths = minilab.input.expand(gpa, io, dropped) catch |err| {
+        notice.set("Can't read what was dropped · {t}", .{err});
+        return;
+    };
+    defer minilab.input.freeExpanded(gpa, paths);
     if (develop.rollIndex(library)) |r| {
         const imported = library.importScans(gpa, io, r, paths);
         const added = library.rolls.items[r].frames.items.len - imported.first;
@@ -234,9 +250,16 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     const name_size = c.ImGui_CalcTextSize("minilab");
     c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
     fonts.pop();
+    // The version, small, beside the name.
+    fonts.pushSized(.mono, 10);
+    const version_text = gui.print("{s}", .{version.string});
+    const version_size = c.ImGui_CalcTextSize(version_text);
+    const version_x = origin.x + gui.px(16 + 20 + 8 + 6) + name_size.x;
+    c.ImDrawList_AddText(list, gui.vec2(version_x, middle - version_size.y / 2 + gui.px(1)), theme.imU32(theme.text_tertiary), version_text);
+    fonts.pop();
 
     // The workspaces, as tabs.
-    var x = origin.x + gui.px(16 + 20 + 8) + name_size.x + gui.px(20);
+    var x = version_x + version_size.x + gui.px(20);
     const tab_height = c.ImGui_GetTextLineHeight() * 1.4 + gui.px(16);
     for (std.enums.values(Workspace)) |w| {
         const label = w.label();

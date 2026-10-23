@@ -1,7 +1,7 @@
-//! Reads scans from files (design section 5). Three kinds of file can hold a scan: binary PNM, as
+//! Reads scans from files (design section 5). Four kinds of file can hold a scan: binary PNM, as
 //! SANE's scanimage writes it; TIFF from other scanning software, such as VueScan's or
-//! SilverFast's raw output; and camera RAW, through LibRaw. They all come out the same way: linear
-//! 16-bit transmission in the scanner's or the camera's own channels, with full scale at 65535.
+//! SilverFast's raw output; camera RAW, through LibRaw; and JPEG, for finished pictures such as a
+//! lab's scans. They all come out the same way: linear 16-bit values, with full scale at 65535.
 //!
 //! - PNM and TIFF are taken as they are. They should be 16-bit and linear. We read 8-bit files
 //!   too, widened to 16 bits, but with a warning: they're probably gamma-encoded, and nothing
@@ -9,6 +9,8 @@
 //! - Camera RAW is demosaiced with no white balance, no colour matrix and no gamma (`raw.read`),
 //!   and scaled so that the sensor's white level is full scale. Its white balance and matrix come
 //!   along with it, for slides (`develop.SlideColour`).
+//! - JPEG is a finished picture, encoded in sRGB. We undo the sRGB curve, so the pipeline's
+//!   output, encoded again, matches the file. An embedded profile other than sRGB isn't used.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -16,6 +18,8 @@ const pnm = @import("../io/pnm.zig");
 const tiff = @import("../io/codecs/tiff.zig");
 const raw = @import("../io/codecs/raw.zig");
 const develop = @import("develop.zig");
+const jpeg = @import("../io/codecs/jpeg.zig");
+const encode = @import("encode.zig");
 
 const log = std.log.scoped(.input);
 
@@ -26,24 +30,115 @@ pub const Kind = enum {
     pnm,
     tiff,
     camera_raw,
+    /// A finished picture, such as a lab's scan or one from a scanner that inverts by itself.
+    jpeg,
 
-    /// Works out the kind of file at `path` from its extension. Anything that isn't PNM or TIFF is
-    /// taken to be a camera RAW file, which LibRaw then reads or refuses. Many RAW formats are
-    /// TIFF inside, so the contents can't tell them apart.
+    /// Works out the kind of file at `path` from its extension. Anything that isn't PNM, TIFF or
+    /// JPEG is taken to be a camera RAW file, which LibRaw then reads or refuses. Many RAW formats
+    /// are TIFF inside, so the contents can't tell them apart.
     pub fn of(path: []const u8) Kind {
         const extension = std.fs.path.extension(path);
         for (pnm_extensions) |e| if (std.ascii.eqlIgnoreCase(extension, e)) return .pnm;
         for (tiff_extensions) |e| if (std.ascii.eqlIgnoreCase(extension, e)) return .tiff;
+        for (jpeg_extensions) |e| if (std.ascii.eqlIgnoreCase(extension, e)) return .jpeg;
         return .camera_raw;
+    }
+
+    /// Whether files of this kind are finished pictures rather than raw scans.
+    pub fn finished(kind: Kind) bool {
+        return kind == .jpeg;
     }
 };
 
 const pnm_extensions = [_][]const u8{ ".ppm", ".pnm", ".pgm" };
 const tiff_extensions = [_][]const u8{ ".tif", ".tiff" };
+const jpeg_extensions = [_][]const u8{ ".jpg", ".jpeg" };
+
+/// Whether `path` has the extension of a file we read scans from.
+pub fn readable(path: []const u8) bool {
+    const extension = std.fs.path.extension(path);
+    if (extension.len < 2) return false;
+    var names = std.mem.splitScalar(u8, extensions, ';');
+    while (names.next()) |name| {
+        if (std.ascii.eqlIgnoreCase(extension[1..], name)) return true;
+    }
+    return false;
+}
+
+/// The scans at `paths`, with each folder among them replaced by the files in it that `readable`
+/// takes, in natural order (2 before 10). Folders inside folders aren't opened, and hidden files
+/// are left out. Free the result with `freeExpanded`.
+pub fn expand(gpa: std.mem.Allocator, io: std.Io, paths: []const []const u8) ![][]u8 {
+    var out: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (out.items) |p| gpa.free(p);
+        out.deinit(gpa);
+    }
+    for (paths) |path| {
+        var dir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
+            error.NotDir => {
+                try out.append(gpa, try gpa.dupe(u8, path));
+                continue;
+            },
+            else => return err,
+        };
+        defer dir.close(io);
+        const start = out.items.len;
+        var each = dir.iterate();
+        while (try each.next(io)) |entry| {
+            if (entry.kind != .file or entry.name[0] == '.' or !readable(entry.name)) continue;
+            try out.append(gpa, try std.fs.path.join(gpa, &.{ path, entry.name }));
+        }
+        std.mem.sort([]u8, out.items[start..], {}, naturalLess);
+    }
+    return out.toOwnedSlice(gpa);
+}
+
+/// Frees what `expand` returned.
+pub fn freeExpanded(gpa: std.mem.Allocator, paths: []const []u8) void {
+    for (paths) |p| gpa.free(p);
+    gpa.free(paths);
+}
+
+/// Whether `a` comes before `b` with runs of digits compared as numbers, so IMG_2 comes before
+/// IMG_10.
+fn naturalLess(_: void, a: []const u8, b: []const u8) bool {
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < a.len and j < b.len) {
+        if (std.ascii.isDigit(a[i]) and std.ascii.isDigit(b[j])) {
+            const a_end = digitsEnd(a, i);
+            const b_end = digitsEnd(b, j);
+            const x = std.mem.trimStart(u8, a[i..a_end], "0");
+            const y = std.mem.trimStart(u8, b[j..b_end], "0");
+            if (x.len != y.len) return x.len < y.len;
+            switch (std.mem.order(u8, x, y)) {
+                .lt => return true,
+                .gt => return false,
+                .eq => {},
+            }
+            i = a_end;
+            j = b_end;
+            continue;
+        }
+        const x = std.ascii.toLower(a[i]);
+        const y = std.ascii.toLower(b[j]);
+        if (x != y) return x < y;
+        i += 1;
+        j += 1;
+    }
+    return a.len - i < b.len - j;
+}
+
+fn digitsEnd(text: []const u8, start: usize) usize {
+    var end = start;
+    while (end < text.len and std.ascii.isDigit(text[end])) end += 1;
+    return end;
+}
 
 /// The extensions of the files we read scans from, without their dots, the way SDL's file
-/// dialogs take them: PNM, TIFF, and the camera RAW formats of the makers LibRaw reads.
-pub const extensions = "ppm;pnm;pgm;tif;tiff;" ++ raw_extensions;
+/// dialogs take them: PNM, TIFF, JPEG, and the camera RAW formats of the makers LibRaw reads.
+pub const extensions = "ppm;pnm;pgm;tif;tiff;jpg;jpeg;" ++ raw_extensions;
 pub const raw_extensions = "dng;nef;nrw;cr2;cr3;crw;arw;srf;sr2;raf;orf;rw2;rwl;pef;srw;3fr;fff;iiq;erf;kdc;dcr;mos;mrw;x3f";
 
 /// Bits per sample in the file. Camera RAW counts as 16, since it's linear whatever the sensor's
@@ -65,9 +160,10 @@ pub const Read = struct {
     }
 
     /// Whether we can take the samples as linear. An 8-bit file almost never is: 8 bits are too
-    /// few for linear data, so software that writes them applies a gamma.
+    /// few for linear data, so software that writes them applies a gamma. A JPEG's sRGB curve is
+    /// undone on reading, so it counts as linear.
     pub fn linear(read_scan: Read) bool {
-        return read_scan.depth == .sixteen;
+        return read_scan.depth == .sixteen or read_scan.kind == .jpeg;
     }
 };
 
@@ -100,6 +196,11 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
                 .sixteen => .sixteen,
             } };
         },
+        .jpeg => {
+            var decoded = try jpeg.read(gpa, bytes);
+            defer decoded.deinit(gpa);
+            return .{ .scan = try linearFromSrgb8(gpa, decoded.image), .kind = kind, .depth = .eight };
+        },
         .camera_raw => {
             const decoded = try raw.read(gpa, bytes, .{});
             toFullScale(decoded.scan, decoded.white);
@@ -112,6 +213,19 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
             };
         },
     }
+}
+
+/// `picture`, encoded in sRGB, as linear 16-bit values.
+fn linearFromSrgb8(gpa: std.mem.Allocator, picture: image.Encoded8) !image.Scan {
+    var table: [256]u16 = undefined;
+    for (&table, 0..) |*entry, v| {
+        entry.* = @intFromFloat(@round(encode.linearFromSrgb(@as(f32, @floatFromInt(v)) / 255) * image.full_scale));
+    }
+    const scan: image.Scan = try .init(gpa, picture.width, picture.height);
+    for (scan.pixels, picture.pixels) |*out, p| {
+        for (out, p) |*o, v| o.* = table[v];
+    }
+    return scan;
 }
 
 /// Scales `scan`, whose samples run from 0 to `white`, so that `white` is full scale.
@@ -131,6 +245,51 @@ test "the kind comes from the extension, in any case" {
     try std.testing.expectEqual(Kind.tiff, Kind.of("strip.tiff"));
     try std.testing.expectEqual(Kind.camera_raw, Kind.of("DSC_0044.NEF"));
     try std.testing.expectEqual(Kind.camera_raw, Kind.of("frame.dng"));
+    try std.testing.expectEqual(Kind.jpeg, Kind.of("IMG_0001.JPG"));
+    try std.testing.expect(readable("lab/scan.jpeg"));
+    try std.testing.expect(readable("DSC_0044.NEF"));
+    try std.testing.expect(!readable("notes.txt"));
+    try std.testing.expect(!readable("folder"));
+}
+
+test "names sort with their numbers as numbers" {
+    try std.testing.expect(naturalLess({}, "IMG_2.jpg", "IMG_10.jpg"));
+    try std.testing.expect(!naturalLess({}, "IMG_10.jpg", "IMG_2.jpg"));
+    try std.testing.expect(naturalLess({}, "img_0009.JPG", "IMG_0010.jpg"));
+    try std.testing.expect(naturalLess({}, "scan", "scan 2"));
+}
+
+test "a folder expands to the scans in it, in order, and a file stays itself" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for ([_][]const u8{ "IMG_10.jpg", "IMG_2.JPG", "notes.txt", ".hidden.jpg" }) |name| try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "" });
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    const lone = try std.fs.path.join(gpa, &.{ folder, "IMG_10.jpg" });
+    defer gpa.free(lone);
+    const found = try expand(gpa, io, &.{ folder, lone });
+    defer freeExpanded(gpa, found);
+    try std.testing.expectEqual(@as(usize, 3), found.len);
+    try std.testing.expectEqualStrings("IMG_2.JPG", std.fs.path.basename(found[0]));
+    try std.testing.expectEqualStrings("IMG_10.jpg", std.fs.path.basename(found[1]));
+    try std.testing.expectEqualStrings(lone, found[2]);
+}
+
+test "a JPEG reads as linear, and encodes back to what it was" {
+    const gpa = std.testing.allocator;
+    var picture: image.Encoded8 = try .init(gpa, 8, 8);
+    defer picture.deinit(gpa);
+    for (picture.pixels, 0..) |*p, i| p.* = @splat(@intCast(i * 4));
+    const file = try jpeg.write(gpa, picture, .{ .quality = 100 });
+    defer gpa.free(file);
+    var read_back = try decode(gpa, .jpeg, file);
+    defer read_back.deinit(gpa);
+    try std.testing.expect(read_back.linear());
+    // Mid grey in sRGB is about a fifth of full scale in linear light.
+    const middle: f32 = @floatFromInt(read_back.scan.pixels[32][0]);
+    try std.testing.expectApproxEqAbs(encode.linearFromSrgb(128.0 / 255.0), middle / image.full_scale, 0.02);
 }
 
 test "a 16-bit TIFF is linear and an 8-bit one isn't" {

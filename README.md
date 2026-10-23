@@ -45,7 +45,11 @@ install anything else, except SANE if you want to scan on macOS or Linux.
 The app has five workspaces, roughly one per step:
 
 - **Rolls** shows each roll as a contact sheet, with its film, its format and how many frames
-  you've developed. Click New roll to start one.
+  you've developed. Click New roll to start one. Drop scans, or a folder of them, on a roll's row
+  to add them. Rolls added from outside the app, say with `minilab import`, show up by themselves.
+- **Finished scans** are pictures that are already positives: a lab's JPEGs, or a scanner's that
+  inverts by itself. A roll keeps them as the files they are and shows them unchanged, with the
+  usual look, saturation and exposure on top if you want them.
 - **Scan** shows the scanner's preview with the frames minilab found on it. You can fix any
   frame's box, then queue the frames up and scan them into a roll.
 - **Develop** is where a negative becomes a picture. You see the negative and the positive side
@@ -91,7 +95,7 @@ colour) applied on top of Neutral.
 ## Command line
 
 ```
-minilab import <roll name> <scan.ppm>... [--library <folder>] [--stock <name>] [--film colour|bw|slide]
+minilab import <roll name> <scan or folder>... [--library <folder>] [--stock <name>] [--film colour|bw|slide] [--move]
 minilab looks
 minilab develop <scan.ppm> <out.tif|out.ppm> [--look <look>] [--depth 8|16]
 minilab develop-roll <out folder> <scan.ppm>... [--look <look>]
@@ -102,6 +106,8 @@ minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
 
 `minilab --help` lists every option, and every command takes `--verbose`. `--look` takes a look
 name from `minilab looks`, like `glassmeter:kodak-portra-400`, or the path to a .cube file.
+`import` takes folders as well as files, and `--move` moves finished scans (JPEGs) into the roll
+instead of copying them. Raw scans are always converted, so their originals stay put.
 
 ## Scanning
 
