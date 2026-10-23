@@ -16,6 +16,7 @@ const context = @import("context.zig");
 const scan_view = @import("scan_view.zig");
 const export_view = @import("export_view.zig");
 const looks_view = @import("looks_view.zig");
+const version = @import("../version.zig");
 
 pub const Workspace = context.Workspace;
 
@@ -249,9 +250,16 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     const name_size = c.ImGui_CalcTextSize("minilab");
     c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
     fonts.pop();
+    // The version, small, beside the name.
+    fonts.pushSized(.mono, 10);
+    const version_text = gui.print("{s}", .{version.string});
+    const version_size = c.ImGui_CalcTextSize(version_text);
+    const version_x = origin.x + gui.px(16 + 20 + 8 + 6) + name_size.x;
+    c.ImDrawList_AddText(list, gui.vec2(version_x, middle - version_size.y / 2 + gui.px(1)), theme.imU32(theme.text_tertiary), version_text);
+    fonts.pop();
 
     // The workspaces, as tabs.
-    var x = origin.x + gui.px(16 + 20 + 8) + name_size.x + gui.px(20);
+    var x = version_x + version_size.x + gui.px(20);
     const tab_height = c.ImGui_GetTextLineHeight() * 1.4 + gui.px(16);
     for (std.enums.values(Workspace)) |w| {
         const label = w.label();

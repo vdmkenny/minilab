@@ -70,8 +70,10 @@ pub fn readable(path: []const u8) bool {
 /// are left out. Free the result with `freeExpanded`.
 pub fn expand(gpa: std.mem.Allocator, io: std.Io, paths: []const []const u8) ![][]u8 {
     var out: std.ArrayList([]u8) = .empty;
-    errdefer freeExpanded(gpa, out.items);
-    errdefer out.deinit(gpa);
+    errdefer {
+        for (out.items) |p| gpa.free(p);
+        out.deinit(gpa);
+    }
     for (paths) |path| {
         var dir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
             error.NotDir => {
