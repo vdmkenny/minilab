@@ -290,15 +290,36 @@ pub fn rowLabel(label: []const u8) void {
     c.ImGui_SameLineEx(x + px(label_column + label_gap), 0);
 }
 
+/// How long a drop-down's list gets before it scrolls.
+pub const ListHeight = enum {
+    /// ImGui's usual eight items.
+    regular,
+    /// As tall as the screen allows, up to `tall_list_height`.
+    tall,
+};
+
+/// The tallest a tall drop-down list gets, in the design's pixels.
+const tall_list_height = 360;
+
+/// Opens a drop-down `width` wide in the design's pixels (0 fills the row), showing `preview`. It
+/// has a small chevron, like a native drop-down, instead of ImGui's arrow button. When it returns
+/// true, add the list's items and then call `c.ImGui_EndCombo`.
+pub fn beginCombo(id: []const u8, preview: []const u8, width: f32, height: ListHeight) bool {
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    var flags: c.ImGuiComboFlags = c.ImGuiComboFlags_NoArrowButton;
+    if (height == .tall) {
+        c.ImGui_SetNextWindowSizeConstraints(vec2(0, 0), vec2(std.math.floatMax(f32), px(tall_list_height)), null, null);
+        flags |= c.ImGuiComboFlags_HeightLargest;
+    }
+    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, print("{s}", .{preview}).ptr, flags);
+    chevron();
+    return open;
+}
+
 /// A drop-down of `items`, `width` wide in the design's pixels (0 fills the row). Returns the
 /// chosen index when it changes.
 pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32) ?usize {
-    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
-    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
-    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton);
-    // A small chevron, like a native drop-down has, instead of ImGui's arrow button.
-    chevron();
-    if (!open) return null;
+    if (!beginCombo(id, if (chosen < items.len) items[chosen] else "", width, .regular)) return null;
     defer c.ImGui_EndCombo();
     var picked: ?usize = null;
     for (items, 0..) |item, i| {
@@ -316,12 +337,7 @@ var search_buffer: [64:0]u8 = @splat(0);
 /// An item matches when it contains every word typed, ignoring case. Enter picks the first match.
 /// Returns the chosen index when it changes.
 pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32, hint: [:0]const u8) ?usize {
-    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
-    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
-    c.ImGui_SetNextWindowSizeConstraints(vec2(0, 0), vec2(std.math.floatMax(f32), px(360)), null, null);
-    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton | c.ImGuiComboFlags_HeightLargest);
-    chevron();
-    if (!open) return null;
+    if (!beginCombo(id, if (chosen < items.len) items[chosen] else "", width, .tall)) return null;
     defer c.ImGui_EndCombo();
     if (c.ImGui_IsWindowAppearing()) {
         search_buffer = @splat(0);
@@ -367,7 +383,7 @@ pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 }
 
 /// Draws a drop-down's small chevron at the right of the item just drawn.
-pub fn chevron() void {
+fn chevron() void {
     const max = c.ImGui_GetItemRectMax();
     const middle = (c.ImGui_GetItemRectMin().y + max.y) / 2;
     const tip = vec2(max.x - px(14), middle + px(2.5));

@@ -796,7 +796,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
 
 /// Draws a grid row's label, centred in the row's height.
 fn rowLabel(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8) void {
-    c.ImDrawList_AddText(list, gui.vec2(x, y + (gui.px(control_height) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
+    gui.textIn(list, x, y, gui.px(control_height), theme.text_secondary, label);
 }
 
 /// Opens the system's folder dialog, starting at the folder that's chosen now.

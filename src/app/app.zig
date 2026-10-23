@@ -4,6 +4,7 @@ const std = @import("std");
 const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
+const icon = @import("../platform/icon.zig");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -321,21 +322,18 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + height));
 }
 
-/// Draws the app's mark, 20 pixels square, at `corner`: a frame of film with perforations above
-/// and below.
+/// Draws the app's mark, the icon's film strip, 20 pixels square at `corner`.
 fn drawMark(list: *c.ImDrawList, corner: gui.Vec2) void {
     const ink = theme.imU32(theme.accent);
-    const thickness = gui.px(1.5);
+    const thickness = gui.px(icon.stroke);
     const p = struct {
-        fn at(o: gui.Vec2, x: f32, y: f32) gui.Vec2 {
-            return gui.vec2(o.x + gui.px(x), o.y + gui.px(y));
+        fn at(o: gui.Vec2, point: [2]f32) gui.Vec2 {
+            return gui.vec2(o.x + gui.px(point[0]), o.y + gui.px(point[1]));
         }
     }.at;
-    c.ImDrawList_AddRectEx(list, p(corner, 2, 4), p(corner, 18, 16), ink, gui.px(1.5), thickness, 0);
-    c.ImDrawList_AddLineEx(list, p(corner, 2, 7), p(corner, 18, 7), ink, thickness);
-    c.ImDrawList_AddLineEx(list, p(corner, 2, 13), p(corner, 18, 13), ink, thickness);
-    for ([_]f32{ 5, 9, 13 }) |x| {
-        c.ImDrawList_AddLineEx(list, p(corner, x, 4), p(corner, x, 7), ink, thickness);
-        c.ImDrawList_AddLineEx(list, p(corner, x, 13), p(corner, x, 16), ink, thickness);
-    }
+    const o = icon.outline;
+    const min = p(corner, .{ o.centre[0] - o.half[0], o.centre[1] - o.half[1] });
+    const max = p(corner, .{ o.centre[0] + o.half[0], o.centre[1] + o.half[1] });
+    c.ImDrawList_AddRectEx(list, min, max, ink, gui.px(o.radius), thickness, 0);
+    for (icon.segments) |s| c.ImDrawList_AddLineEx(list, p(corner, s[0]), p(corner, s[1]), ink, thickness);
 }

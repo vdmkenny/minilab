@@ -1418,9 +1418,9 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     // The title: which frame, and its format.
     const film = labels.filmSize(format.size);
     const shape_text = switch (box.shape) {
-        .roll => ratioLabel(format.ratio()),
+        .roll => labels.ratio(format.ratio()),
         .free => "measured",
-        .custom => ratioLabel(box.ratio),
+        .custom => labels.ratio(box.ratio),
     };
     const rotated: []const u8 = if (preview.axis == .y) ", shown rotated" else "";
     y += titleAt(list, x, y, gui.print("Frame {d}", .{index + 1}), gui.print("{s} {s} · {s}{s}", .{ film, format.name, shape_text, rotated })) + gui.px(section_gap);
@@ -1434,7 +1434,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     // Shape.
     y += gui.lineAt(list, x, y, theme.text_secondary, "Shape") + gui.px(group_gap);
     c.ImGui_PushID("shape");
-    const shape_labels = [_][:0]const u8{ gui.print("Roll format, {s}", .{ratioLabel(format.ratio())}), "Free", "Custom ratio" };
+    const shape_labels = [_][:0]const u8{ gui.print("Roll format, {s}", .{labels.ratio(format.ratio())}), "Free", "Custom ratio" };
     if (pills(&shape_labels, @backingInt(box.shape), x, &y, width, false)) |picked| {
         box.shape = @fromBackingInt(@intCast(picked));
         if (box.shape == .custom) box.ratio = box.length / box.height;
@@ -2239,13 +2239,6 @@ const dash_gap = 3;
 
 fn drawDashedQuad(list: *c.ImDrawList, corners: [4]gui.Vec2, color: u32, thickness: f32) void {
     for (0..4) |i| gui.dashedLine(list, corners[i], corners[(i + 1) % 4], color, thickness, gui.px(dash), gui.px(dash_gap));
-}
-
-/// A ratio the way people say it (3:2, 4:3, 1:1), or else just the number.
-fn ratioLabel(r: f32) []const u8 {
-    const known = [_]struct { f32, []const u8 }{ .{ 1.5, "3:2" }, .{ 1.0, "1:1" }, .{ 4.0 / 3.0, "4:3" }, .{ 0.75, "3:4" }, .{ 2.0 / 3.0, "2:3" }, .{ 1.25, "5:4" }, .{ 0.8, "4:5" }, .{ 2.0, "2:1" }, .{ 3.0, "3:1" } };
-    for (known) |k| if (@abs(r - k[0]) < 0.02) return k[1];
-    return gui.print("{d:.2}:1", .{r});
 }
 
 test "boxes crop by their inset" {

@@ -574,11 +574,7 @@ pub const State = struct {
     /// way to import another .cube.
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
-        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-        c.ImGui_SetNextWindowSizeConstraints(gui.vec2(0, 0), gui.vec2(std.math.floatMax(f32), gui.px(360)), null, null);
-        const open = c.ImGui_BeginCombo("##look", gui.print("{s}", .{frame.look.label()}).ptr, c.ImGuiComboFlags_NoArrowButton | c.ImGuiComboFlags_HeightLargest);
-        gui.chevron();
-        if (!open) return;
+        if (!gui.beginCombo("look", frame.look.label(), 0, .tall)) return;
         defer c.ImGui_EndCombo();
         if (c.ImGui_IsWindowAppearing()) {
             state.look_choices.deinit(gpa);

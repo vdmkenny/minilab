@@ -31,8 +31,8 @@ pub fn sizeAndRatio(id: formats.Standard) [:0]const u8 {
 }
 
 /// A ratio the way people say it (3:2, 4:3, 1:1), or else just the number.
-fn ratio(r: f32) []const u8 {
-    const known = [_]struct { f32, []const u8 }{ .{ 1.5, "3:2" }, .{ 1.0, "1:1" }, .{ 4.0 / 3.0, "4:3" }, .{ 0.75, "3:4" }, .{ 2.0 / 3.0, "2:3" }, .{ 1.25, "5:4" }, .{ 2.0, "2:1" }, .{ 3.0, "3:1" } };
+pub fn ratio(r: f32) []const u8 {
+    const known = [_]struct { f32, []const u8 }{ .{ 1.5, "3:2" }, .{ 1.0, "1:1" }, .{ 4.0 / 3.0, "4:3" }, .{ 0.75, "3:4" }, .{ 2.0 / 3.0, "2:3" }, .{ 1.25, "5:4" }, .{ 0.8, "4:5" }, .{ 2.0, "2:1" }, .{ 3.0, "3:1" } };
     for (known) |k| if (@abs(r - k[0]) < 0.02) return k[1];
     return gui.print("{d:.2}:1", .{r});
 }
