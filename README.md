@@ -55,7 +55,8 @@ The app has five workspaces, roughly one per step:
   for stars, X to reject, U to take the reject back.
 - **Export** saves TIFF or JPEG files in sRGB, Display P3, Adobe RGB or ProPhoto RGB, with the
   roll's metadata in them, at full size or with the long edge cut down to a size you pick. A star
-  filter picks the frames by rating, and rejected frames start out unticked.
+  filter picks the frames by rating, and rejected frames start out unticked. You can also fix the
+  roll's camera, lens, date, copyright and notes there, and add metadata fields of your own.
 - **Looks** lists the looks you can develop with, and lets you make your own (see below).
 
 Picking a film stock in Develop does more than label the roll. Film doesn't respond to light in a

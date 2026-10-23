@@ -36,6 +36,17 @@ pub const Metadata = struct {
     /// The frame's rating as `xmp:Rating` takes it: -1 for rejected, or 1 to 5 stars. Null leaves
     /// it out.
     rating: ?i8 = null,
+    /// The roll's notes, written as the caption (`dc:description`).
+    notes: ?[]const u8 = null,
+    /// Fields of your own. Ones without a name are left out.
+    fields: []const Field = &.{},
+};
+
+/// A metadata field of your own: a name and a value. XMP gets them as a list in minilab's
+/// namespace, since they aren't any standard property.
+pub const Field = struct {
+    name: []const u8,
+    value: []const u8,
 };
 
 pub const Develop = struct {
@@ -113,12 +124,35 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
     if (m.rating) |v| try w.print("    xmp:Rating=\"{d}\"\n", .{v});
     if (m.develop) |d| try writeDevelop(w, d);
     try w.writeAll("  >\n");
+    if (m.notes) |v| {
+        try w.writeAll("   <dc:description>\n    <rdf:Alt>\n     <rdf:li xml:lang=\"x-default\">");
+        try escaped(w, v);
+        try w.writeAll("</rdf:li>\n    </rdf:Alt>\n   </dc:description>\n");
+    }
+    try writeFields(w, m.fields);
     if (m.copyright) |v| {
         try w.writeAll("   <dc:rights>\n    <rdf:Alt>\n     <rdf:li xml:lang=\"x-default\">");
         try escaped(w, v);
         try w.writeAll("</rdf:li>\n    </rdf:Alt>\n   </dc:rights>\n");
     }
     try w.writeAll("  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>\n");
+}
+
+/// Writes the fields with a name as `minilab:Fields`, a bag of name and value pairs.
+fn writeFields(w: *std.Io.Writer, fields: []const Field) std.Io.Writer.Error!void {
+    var named: usize = 0;
+    for (fields) |f| named += @intFromBool(f.name.len > 0);
+    if (named == 0) return;
+    try w.writeAll("   <minilab:Fields>\n    <rdf:Bag>\n");
+    for (fields) |f| {
+        if (f.name.len == 0) continue;
+        try w.writeAll("     <rdf:li rdf:parseType=\"Resource\">\n      <minilab:Name>");
+        try escaped(w, f.name);
+        try w.writeAll("</minilab:Name>\n      <minilab:Value>");
+        try escaped(w, f.value);
+        try w.writeAll("</minilab:Value>\n     </rdf:li>\n");
+    }
+    try w.writeAll("    </rdf:Bag>\n   </minilab:Fields>\n");
 }
 
 fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
@@ -553,6 +587,16 @@ test "XMP escapes what the roll says and gives dates as dates" {
     try std.testing.expect(std.mem.indexOf(u8, other, "DateCreated") == null);
     try std.testing.expect(std.mem.indexOf(u8, other, "minilab:Shot=\"summer\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, other, "xmp:Rating") == null);
+
+    var described = example;
+    described.notes = "Rain & fog";
+    described.fields = &.{ .{ .name = "Developer", .value = "Cs41 <fresh>" }, .{ .name = "", .value = "left out" } };
+    const with_fields = try xmp(gpa, described);
+    defer gpa.free(with_fields);
+    try std.testing.expect(std.mem.indexOf(u8, with_fields, "<rdf:li xml:lang=\"x-default\">Rain &amp; fog</rdf:li>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_fields, "<minilab:Name>Developer</minilab:Name>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_fields, "<minilab:Value>Cs41 &lt;fresh&gt;</minilab:Value>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, with_fields, "left out") == null);
 
     var rejected = example;
     rejected.rating = -1;
