@@ -98,6 +98,79 @@ pub fn heading(value: []const u8) void {
     fonts.pop();
 }
 
+// Text on a draw list, for panels laid out by hand.
+
+/// The design's line height, as a multiple of the text size.
+pub const line_spacing = 1.4;
+/// A section heading's text size, in the design's pixels.
+pub const heading_size = 12;
+
+/// The height of a line of text `size` design pixels high.
+pub fn lineFor(size: f32) f32 {
+    return px(size * line_spacing);
+}
+
+/// The height of a line in the current font.
+pub fn lineHeight() f32 {
+    return c.ImGui_GetFontSize() * line_spacing;
+}
+
+/// Draws `text` in the current font, centred in a line box `height` high with its top left at
+/// `x`, `y`.
+pub fn textIn(list: *c.ImDrawList, x: f32, y: f32, height: f32, color: theme.Color, value: []const u8) void {
+    c.ImDrawList_AddText(list, vec2(x, y + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(color), print("{s}", .{value}));
+}
+
+/// Draws `text` on one line in the current font, at the design's line height. Returns the line's
+/// height.
+pub fn lineAt(list: *c.ImDrawList, x: f32, y: f32, color: theme.Color, value: []const u8) f32 {
+    textIn(list, x, y, lineHeight(), color, value);
+    return lineHeight();
+}
+
+/// A section heading on a draw list, like `heading`. Returns its height.
+pub fn headingAt(list: *c.ImDrawList, x: f32, y: f32, value: []const u8) f32 {
+    fonts.pushSized(.semibold, heading_size);
+    defer fonts.pop();
+    return lineAt(list, x, y, theme.text_secondary, value);
+}
+
+/// The most lines a paragraph wraps to.
+const max_lines = 16;
+
+/// Splits `value` into the lines it wraps to at `width` in the current font, as ImGui wraps
+/// words.
+pub fn wrapLines(value: []const u8, width: f32, buffer: [][]const u8) [][]const u8 {
+    const font = c.ImGui_GetFont();
+    const size = c.ImGui_GetFontSize();
+    var n: usize = 0;
+    var rest = std.mem.trim(u8, value, " ");
+    while (rest.len > 0 and n < buffer.len) {
+        const start: [*]const u8 = rest.ptr;
+        const end = c.ImFont_CalcWordWrapPosition(font, size, start, start + rest.len, width);
+        var cut: usize = @intFromPtr(end) - @intFromPtr(start);
+        if (cut == 0) cut = rest.len;
+        buffer[n] = std.mem.trimEnd(u8, rest[0..cut], " ");
+        n += 1;
+        rest = std.mem.trimStart(u8, rest[cut..], " ");
+    }
+    return buffer[0..n];
+}
+
+/// The height of `value` wrapped at `width`, at the design's line height.
+pub fn paragraphHeight(value: []const u8, width: f32) f32 {
+    var buffer: [max_lines][]const u8 = undefined;
+    return @as(f32, @floatFromInt(wrapLines(value, width, &buffer).len)) * lineHeight();
+}
+
+/// Draws `value` wrapped at `width`, at the design's line height. Returns its height.
+pub fn paragraphAt(list: *c.ImDrawList, x: f32, y: f32, width: f32, color: theme.Color, value: []const u8) f32 {
+    var buffer: [max_lines][]const u8 = undefined;
+    const lines = wrapLines(value, width, &buffer);
+    for (lines, 0..) |l, i| _ = lineAt(list, x, y + @as(f32, @floatFromInt(i)) * lineHeight(), color, l);
+    return @as(f32, @floatFromInt(lines.len)) * lineHeight();
+}
+
 /// A page or panel title: `size` pixels, semibold.
 pub fn title(value: []const u8, size: f32) void {
     fonts.pushSized(.semibold, size);

@@ -274,7 +274,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
 
     // The workspaces, as tabs.
     var x = version_x + version_size.x + gui.px(20);
-    const tab_height = c.ImGui_GetTextLineHeight() * 1.4 + gui.px(16);
+    const tab_height = gui.lineHeight() + gui.px(16);
     for (std.enums.values(Workspace)) |w| {
         const label = w.label();
         const tab_width = c.ImGui_CalcTextSize(label).x + gui.px(24);

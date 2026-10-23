@@ -280,7 +280,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     var action: ?Action = null;
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
-    const line = c.ImGui_GetTextLineHeight() * 1.4;
+    const line = gui.lineHeight();
     const card_height = gui.px(card_padding_y * 2 + 21 + 17 + 3 * 3 + 6 + 3 + 3) + line * 3;
     const format = r.info.format.format();
 
@@ -516,7 +516,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     const notes_x = c.ImGui_GetCursorPosX();
     gui.textColored(theme.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
-    _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), c.ImGui_GetTextLineHeight() * 1.4 * 3 + gui.px(12)), 0, null, null);
+    _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * 3 + gui.px(12)), 0, null, null);
     gui.rowLabel("Input");
     if (gui.combo("input", &input_names, form.input, 0)) |picked| form.input = picked;
     const chosen = state.flat_dialog.take(gpa, io);

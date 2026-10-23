@@ -1009,7 +1009,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const list = c.ImGui_GetWindowDrawList();
     // The tallest thing on the toolbar is the Split / Negative / Positive box.
     const toolbar_height = gui.px(26 + 6 + 16) + 1;
-    const info_height = gui.px(12 * 1.4 + 16) + 1;
+    const info_height = gui.lineFor(12) + gui.px(16) + 1;
 
     // The toolbar.
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));

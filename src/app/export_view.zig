@@ -46,9 +46,9 @@ const field_name_capacity = 64;
 const metadata_check = 13;
 const export_height = 40;
 const section_padding = 12;
-/// Line heights: the design sets lines at 1.4 times the text size.
-const line = 13 * 1.4;
-const small_line = 12 * 1.4;
+/// Line heights, in the design's pixels, for 13-pixel text and headings.
+const line = fonts.ui_size * gui.line_spacing;
+const small_line = gui.heading_size * gui.line_spacing;
 
 const path_field = 1024;
 
@@ -369,7 +369,7 @@ fn drawNoRoll() ?context.Workspace {
     fonts.pushSized(.semibold, title_size);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), "Export");
     fonts.pop();
-    at.y += gui.px(title_size * 1.4 + block_gap);
+    at.y += gui.lineFor(title_size) + gui.px(block_gap);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), "No roll open");
     at.y += gui.px(line + block_gap);
     c.ImGui_SetCursorScreenPos(at);
@@ -640,11 +640,11 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     const running = state.running != null;
 
     // FILE.
-    heading(list, gui.vec2(x, y), "FILE");
+    _ = gui.headingAt(list, x, y, "FILE");
     y += gui.px(small_line + block_gap);
     y = drawFileChoices(state, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, formatNote(state));
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, formatNote(state));
     y += gui.px(block_gap);
 
     c.ImGui_BeginDisabled(running);
@@ -653,11 +653,11 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
 
     // METADATA.
     y += gui.px(block_gap + 6);
-    heading(list, gui.vec2(x, y), "METADATA");
+    _ = gui.headingAt(list, x, y, "METADATA");
     y += gui.px(small_line + block_gap);
     y = drawMetadata(state, ctx, roll_index, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
 
     // Export, at the bottom.
     const button_y = @max(y + gui.px(block_gap), origin.y + height - gui.px(panel_padding + export_height));
@@ -675,38 +675,6 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, button_y + gui.px(export_height + panel_padding)));
     c.ImGui_Dummy(gui.vec2(0, 0));
-}
-
-/// Draws a section heading at `at`, on the 12-pixel line the design gives it.
-fn heading(list: *c.ImDrawList, at: gui.Vec2, label: [:0]const u8) void {
-    fonts.pushSized(.semibold, 12);
-    c.ImDrawList_AddText(list, gui.vec2(at.x, at.y + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
-    fonts.pop();
-}
-
-/// Draws `text` from `at`, wrapped at `width`, with the design's line height. Returns its height.
-fn wrapped(list: *c.ImDrawList, at: gui.Vec2, width: f32, colour: theme.Color, text: []const u8) f32 {
-    var y = at.y;
-    var rest = std.mem.trim(u8, text, " ");
-    const offset = (gui.px(line) - c.ImGui_GetFontSize()) / 2;
-    while (rest.len > 0) {
-        // The longest run of whole words that fits. A word longer than the line gets a line of
-        // its own.
-        var end: usize = rest.len;
-        if (c.ImGui_CalcTextSize(gui.print("{s}", .{rest})).x > width) {
-            var fits: usize = 0;
-            var i: usize = 0;
-            while (std.mem.indexOfScalarPos(u8, rest, i, ' ')) |space| : (i = space + 1) {
-                if (c.ImGui_CalcTextSize(gui.print("{s}", .{rest[0..space]})).x > width) break;
-                fits = space;
-            }
-            end = if (fits > 0) fits else std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
-        }
-        c.ImDrawList_AddText(list, gui.vec2(at.x, y + offset), theme.imU32(colour), gui.print("{s}", .{rest[0..end]}));
-        y += gui.px(line);
-        rest = std.mem.trimStart(u8, rest[end..], " ");
-    }
-    return y - at.y;
 }
 
 /// Draws the file choices (TIFF 16-bit, TIFF 8-bit, JPEG and HEIC HDR) as pills that wrap.
@@ -827,7 +795,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
             error.UnknownField => "Unknown field",
             error.UnclosedBrace => "Unclosed brace",
         };
-        y += wrapped(list, gui.vec2(control_x, y), control_width, theme.accent, problem);
+        y += gui.paragraphAt(list, control_x, y, control_width, theme.accent, problem);
         y -= gui.px(line) - c.ImGui_GetFontSize();
     }
     y += gui.px(grid_gap);

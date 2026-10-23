@@ -84,8 +84,6 @@ const slide_mount_rounding = 0.06;
 const plain_film_margin_mm = 2;
 /// The smallest a drag can make a box, in preview pixels.
 const min_box_px = 8;
-/// The design's line height, as a multiple of the font size.
-const line_spacing = 1.4;
 
 const mm_per_inch = formats.mm_per_inch;
 /// The resolution previews are scanned at, or the scanner's next one up.
@@ -666,7 +664,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
         else => true,
     };
 
-    y += headingAt(list, x, y, "SCANNER") + gui.px(scanner_gap);
+    y += gui.headingAt(list, x, y, "SCANNER") + gui.px(scanner_gap);
 
     // The device.
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -702,12 +700,12 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
             if (gui.buttonOf(.normal, "Scanner settings", gui.vec2(0, pill_height))) state.settings_open = true;
             y += gui.px(pill_height) + gui.px(scanner_gap);
         }
-        y += paragraphAt(list, x, y, width, theme.text_tertiary, filmAreaNote(caps, ctx, roll_index)) + gui.px(scanner_gap);
+        y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, filmAreaNote(caps, ctx, roll_index)) + gui.px(scanner_gap);
     } else if (!busy) {
         if (phase == .unavailable) {
             y = drawDriverSetup(ctx, list, x, y, width);
         } else if (state.problem) |problem| {
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, problem) + gui.px(scanner_gap);
+            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, problem) + gui.px(scanner_gap);
         }
         // Looking again also loads the drivers again, once they're installed.
         c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -719,7 +717,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
 
     // Film type.
-    y += lineAt(list, x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
+    y += gui.lineAt(list, x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
     c.ImGui_PushID("film");
     {
         var labels_: [std.enums.values(FilmType).len][:0]const u8 = undefined;
@@ -744,10 +742,10 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
         if (!caps.film_setting) break :blk gui.print("No film mode", .{});
         break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, ctx, caps), state.film.why() });
     } else gui.print("Scanner mode: Positive Film · {s}", .{state.film.why()});
-    y += paragraphAt(list, x, y, width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
 
     // Resolution.
-    y += lineAt(list, x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
+    y += gui.lineAt(list, x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
     var choices: [max_resolution_choices]u32 = undefined;
     const resolutions = resolutionChoices(state, &choices);
     if (resolutions.len > 0) {
@@ -764,12 +762,12 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
         c.ImGui_PopID();
         y += gui.px(group_gap);
     }
-    y += paragraphAt(list, x, y, width, theme.text_tertiary, sizeNote(state, ctx, roll_index)) + gui.px(scanner_gap);
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, sizeNote(state, ctx, roll_index)) + gui.px(scanner_gap);
 
     // Margin.
     const field_height = gui.px(pill_height);
-    const label_y = y + (field_height - lineHeight()) / 2;
-    _ = lineAt(list, x, label_y, theme.text_secondary, "Margin around frames");
+    const label_y = y + (field_height - gui.lineHeight()) / 2;
+    _ = gui.lineAt(list, x, label_y, theme.text_secondary, "Margin around frames");
     drawMarginField(state, gui.vec2(x + width - gui.px(margin_field_width), y));
     y += field_height + gui.px(scanner_gap);
 
@@ -810,11 +808,11 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
     var y = top;
     switch (builtin.os.tag) {
         .windows => {
-            y += lineAt(list, x, y, theme.text, "Scanner driver needed") + gui.px(group_gap);
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Maker's TWAIN driver") + gui.px(scanner_gap);
+            y += gui.lineAt(list, x, y, theme.text, "Scanner driver needed") + gui.px(group_gap);
+            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "Maker's TWAIN driver") + gui.px(scanner_gap);
         },
         .macos => {
-            y += lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(scanner_gap);
+            y += gui.lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(scanner_gap);
             var has_homebrew = false;
             for (homebrew_paths) |path| {
                 if (std.Io.Dir.cwd().access(ctx.io, path, .{})) |_| has_homebrew = true else |_| {}
@@ -837,8 +835,8 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
             y = setupStep(list, x, y, width, "3", "Refresh", null);
         },
         else => {
-            y += lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(group_gap);
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "sane-backends package") + gui.px(scanner_gap);
+            y += gui.lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(group_gap);
+            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "sane-backends package") + gui.px(scanner_gap);
         },
     }
     return y;
@@ -851,17 +849,17 @@ const step_indent = 22;
 /// below it.
 fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]const u8, name: []const u8, detail: ?[]const u8) f32 {
     const radius = gui.px(9);
-    const middle = top + lineHeight() / 2;
+    const middle = top + gui.lineHeight() / 2;
     c.ImDrawList_AddCircleFilled(list, gui.vec2(x + radius, middle), radius, theme.imU32(theme.control), 16);
     fonts.pushSized(.mono, 11);
     const size = c.ImGui_CalcTextSize(number);
     c.ImDrawList_AddText(list, gui.vec2(x + radius - size.x / 2, middle - size.y / 2), theme.imU32(theme.text), number);
     fonts.pop();
     var y = top;
-    y += lineAt(list, x + gui.px(step_indent), y, theme.text_secondary, name);
+    y += gui.lineAt(list, x + gui.px(step_indent), y, theme.text_secondary, name);
     if (detail) |text| {
         fonts.pushSized(.mono, 12);
-        y += paragraphAt(list, x + gui.px(step_indent), y, width - gui.px(step_indent), theme.text_tertiary, text);
+        y += gui.paragraphAt(list, x + gui.px(step_indent), y, width - gui.px(step_indent), theme.text_tertiary, text);
         fonts.pop();
     }
     return y + gui.px(group_gap);
@@ -877,12 +875,12 @@ fn drawProfile(list: *c.ImDrawList, x: f32, y: f32, width: f32, caps: scan.Capab
     const text_width = width - (text_x - x) - pad_x;
     var raw_buffer: [96]u8 = undefined;
     const message = if (caps.profile) |p| gui.print("Profile: {s}", .{p.summary}) else gui.print("{s}", .{raw.label(&raw_buffer)});
-    const text_height = paragraphHeight(message, text_width);
+    const text_height = gui.paragraphHeight(message, text_width);
     const height = text_height + 2 * pad_y;
     c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.raised), gui.px(5), 0);
     const icon_at = gui.vec2(x + pad_x, y + (height - icon) / 2);
     if (caps.profile != null or raw.linear) drawTick(list, icon_at, theme.ready) else drawInfo(list, icon_at, gui.px(14), theme.text_secondary);
-    _ = paragraphAt(list, text_x, y + pad_y, text_width, theme.text_secondary, message);
+    _ = gui.paragraphAt(list, text_x, y + pad_y, text_width, theme.text_secondary, message);
     return height;
 }
 
@@ -1179,7 +1177,7 @@ fn drawNoRoll() bool {
     var y = origin.y + gui.px(main_padding_y);
     fonts.pushSized(.semibold, 18);
     c.ImDrawList_AddText(list, gui.vec2(x, y), theme.imU32(theme.text), "No roll open");
-    y += c.ImGui_GetFontSize() * line_spacing;
+    y += gui.lineHeight();
     fonts.pop();
     y += gui.px(section_gap);
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -1206,12 +1204,12 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     var y = top;
     const dpi_shown: u32 = if (state.preview) |p| @intFromFloat(@round(p.dpi[0])) else if (state.capabilities) |caps| caps.resolutionFrom(preview_dpi) orelse preview_dpi else preview_dpi;
     const label = gui.print("Preview · {d} dpi", .{dpi_shown});
-    y += lineAt(list, x, y, theme.text_secondary, label) + gui.px(8);
+    y += gui.lineAt(list, x, y, theme.text_secondary, label) + gui.px(8);
 
     // The film area scaled to fill the column's height, with its width following.
     const area: scan.Area = if (state.preview) |p| p.area else if (state.capabilities) |caps| caps.area else .{ .x = 0, .y = 0, .width = 33.02, .height = 244.348 };
-    const mono_line = gui.px(12) * line_spacing;
-    const below = gui.px(8) + mono_line + gui.px(8) + 2 * lineHeight();
+    const mono_line = gui.lineFor(12);
+    const below = gui.px(8) + mono_line + gui.px(8) + 2 * gui.lineHeight();
     const room = top + height - y - below;
     // Once there are frames, the strip is drawn as straight film, as in the design: the film's
     // own width, and the length the preview covers. Before that, we draw the scan as it lies.
@@ -1412,7 +1410,7 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
         const chip = if (weak) gui.print("{d} ?", .{i + 1}) else gui.print("{d}", .{i + 1});
         const size = c.ImGui_CalcTextSize(chip);
         const chip_min = gui.vec2(min.x + gui.px(3), min.y + gui.px(3));
-        const chip_max = gui.vec2(chip_min.x + size.x + gui.px(6), chip_min.y + gui.px(10) * line_spacing);
+        const chip_max = gui.vec2(chip_min.x + size.x + gui.px(6), chip_min.y + gui.lineFor(10));
         c.ImDrawList_AddRectFilledEx(list, chip_min, chip_max, theme.imU32(if (weak) theme.text else theme.accent), gui.px(2), 0);
         c.ImDrawList_AddText(list, gui.vec2(chip_min.x + gui.px(3), chip_min.y + (chip_max.y - chip_min.y - size.y) / 2), theme.imU32(theme.on_accent), chip);
         fonts.pop();
@@ -1445,13 +1443,13 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     const format = info.format.format();
     const preview = if (state.preview) |*p| p else {
         y += titleAt(list, x, y, "No preview yet", null) + gui.px(section_gap);
-        _ = paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, "No preview");
+        _ = gui.paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, "No preview");
         return;
     };
     const index = state.selected orelse {
         y += titleAt(list, x, y, "No frames", null) + gui.px(section_gap);
         const why = state.detect_note orelse "Detect frames, or add them by hand";
-        y += paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, why) + gui.px(section_gap);
+        y += gui.paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, why) + gui.px(section_gap);
         c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
         if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, button_height))) addFrame(state, ctx.gpa, preview, format);
         return;
@@ -1475,7 +1473,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     }
 
     // Shape.
-    y += lineAt(list, x, y, theme.text_secondary, "Shape") + gui.px(group_gap);
+    y += gui.lineAt(list, x, y, theme.text_secondary, "Shape") + gui.px(group_gap);
     c.ImGui_PushID("shape");
     const shape_labels = [_][:0]const u8{ gui.print("Roll format, {s}", .{ratioLabel(format.ratio())}), "Free", "Custom ratio" };
     if (pills(&shape_labels, @backingInt(box.shape), x, &y, width, false)) |picked| {
@@ -1517,7 +1515,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         box.hand = true;
         state.boxes_dirty = true;
     }
-    y += lineHeight() + gui.px(section_gap);
+    y += gui.lineHeight() + gui.px(section_gap);
 
     // The frame tools.
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -1693,10 +1691,10 @@ fn drawCheckNote(state: *const State, preview: *const Preview, index: usize, lis
     const icon = gui.px(16);
     const text_x = x + pad_x + icon + gui.px(10);
     const text_width = x + width - pad_x - text_x;
-    const height = paragraphHeight(message, text_width) + 2 * pad_y;
+    const height = gui.paragraphHeight(message, text_width) + 2 * pad_y;
     gui.dashedRect(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.text_secondary), 1, gui.px(dash), gui.px(dash_gap));
-    drawInfo(list, gui.vec2(x + pad_x, y + pad_y + (lineHeight() - icon) / 2), icon, theme.text);
-    _ = paragraphAt(list, text_x, y + pad_y, text_width, theme.text, message);
+    drawInfo(list, gui.vec2(x + pad_x, y + pad_y + (gui.lineHeight() - icon) / 2), icon, theme.text);
+    _ = gui.paragraphAt(list, text_x, y + pad_y, text_width, theme.text, message);
     return height;
 }
 
@@ -1928,15 +1926,15 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
     const width = size.x - 1 - gui.px(2 * panel_padding);
     var y = origin.y + gui.px(panel_padding);
 
-    y += headingAt(list, x, y, "QUEUE") + gui.px(queue_gap);
+    y += gui.headingAt(list, x, y, "QUEUE") + gui.px(queue_gap);
     if (targetRoll(state, ctx)) |r| {
         const info = ctx.library.rolls.items[r].info;
-        y += lineAt(list, x, y, theme.text, gui.print("Into {s} · {s}", .{ info.name, info.stock orelse labels.filmKind(info.kind) })) + gui.px(group_gap);
+        y += gui.lineAt(list, x, y, theme.text, gui.print("Into {s} · {s}", .{ info.name, info.stock orelse labels.filmKind(info.kind) })) + gui.px(group_gap);
     }
     const count = if (state.scanning or state.queue.items.len > 0) state.queue.items.len else state.boxes.items.len;
     const deep = if (state.capabilities) |caps| caps.deep else true;
     const summary = gui.print("{d} {s} · {d} dpi · {d}-bit", .{ count, if (count == 1) "frame" else "frames", state.dpi, @as(u32, if (deep) 48 else 24) });
-    y += lineAt(list, x, y, theme.text_secondary, summary) + gui.px(queue_gap);
+    y += gui.lineAt(list, x, y, theme.text_secondary, summary) + gui.px(queue_gap);
 
     const worker = state.worker;
     for (0..count) |i| {
@@ -1984,7 +1982,7 @@ fn targetRoll(state: *const State, ctx: context.Context) ?usize {
 fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, item: QueueItem, worker: ?*Worker) struct { height: f32, check: bool } {
     const pad_x = gui.px(queue_row_padding_x);
     const pad_y = gui.px(queue_row_padding_y);
-    const line = lineHeight();
+    const line = gui.lineHeight();
     const running = item.status == .scanning;
     const height = 2 * pad_y + line + if (running) gui.px(group_gap + progress_height) else 0;
     const filled = item.status != .waiting and item.status != .cancelled;
@@ -2191,69 +2189,18 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
 
 // Drawing helpers.
 
-/// The height of one line of text, at the design's line height.
-fn lineHeight() f32 {
-    return c.ImGui_GetFontSize() * line_spacing;
-}
-
-/// Draws `text` on one line at `x`, `y`, centred in the design's line height. Returns the line
-/// height.
-fn lineAt(list: *c.ImDrawList, x: f32, y: f32, color: theme.Color, text: []const u8) f32 {
-    const shown = gui.print("{s}", .{text});
-    c.ImDrawList_AddText(list, gui.vec2(x, y + (lineHeight() - c.ImGui_GetFontSize()) / 2), theme.imU32(color), shown);
-    return lineHeight();
-}
-
-/// Draws a panel heading: 12 pixels, semibold, in the secondary colour. Returns its height.
-fn headingAt(list: *c.ImDrawList, x: f32, y: f32, text: [:0]const u8) f32 {
-    fonts.pushSized(.semibold, 12);
-    defer fonts.pop();
-    return lineAt(list, x, y, theme.text_secondary, text);
-}
-
 /// Draws a title like "Frame 4" at 18 pixels, then `detail` in the secondary colour on the same
 /// baseline. Returns the row's height.
 fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:0]const u8) f32 {
     fonts.pushSized(.semibold, 18);
     const title_size = c.ImGui_CalcTextSize(title);
-    const height = c.ImGui_GetFontSize() * line_spacing;
+    const height = gui.lineHeight();
     const title_top = y + (height - c.ImGui_GetFontSize()) / 2;
     c.ImDrawList_AddText(list, gui.vec2(x, title_top), theme.imU32(theme.text), title);
     const baseline = title_top + c.ImGui_GetFontSize() * 0.8;
     fonts.pop();
     if (detail) |d| c.ImDrawList_AddText(list, gui.vec2(x + title_size.x + gui.px(10), baseline - c.ImGui_GetFontSize() * 0.8), theme.imU32(theme.text_secondary), d);
     return height;
-}
-
-/// Splits `text` into the lines it wraps to at `width`.
-fn wrapLines(text: []const u8, width: f32, buffer: [][]const u8) [][]const u8 {
-    const font = c.ImGui_GetFont();
-    const size = c.ImGui_GetFontSize();
-    var n: usize = 0;
-    var rest = text;
-    while (rest.len > 0 and n < buffer.len) {
-        const start: [*]const u8 = rest.ptr;
-        const end_ptr = c.ImFont_CalcWordWrapPosition(font, size, start, start + rest.len, width);
-        var cut: usize = @intFromPtr(end_ptr) - @intFromPtr(start);
-        if (cut == 0) cut = rest.len;
-        buffer[n] = std.mem.trimEnd(u8, rest[0..cut], " ");
-        n += 1;
-        rest = std.mem.trimStart(u8, rest[cut..], " ");
-    }
-    return buffer[0..n];
-}
-
-fn paragraphHeight(text: []const u8, width: f32) f32 {
-    var buffer: [16][]const u8 = undefined;
-    return @as(f32, @floatFromInt(wrapLines(text, width, &buffer).len)) * lineHeight();
-}
-
-/// Draws `text` wrapped at `width`, with the design's line height. Returns its height.
-fn paragraphAt(list: *c.ImDrawList, x: f32, y: f32, width: f32, color: theme.Color, text: []const u8) f32 {
-    var buffer: [16][]const u8 = undefined;
-    const lines = wrapLines(text, width, &buffer);
-    for (lines, 0..) |l, i| _ = lineAt(list, x, y + @as(f32, @floatFromInt(i)) * lineHeight(), color, l);
-    return @as(f32, @floatFromInt(lines.len)) * lineHeight();
 }
 
 /// Draws a row of choices that wraps at `width`, or with `fill`, a single row whose choices share
@@ -2292,7 +2239,7 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (height - c.ImGui_GetFontSize()) / 2));
     defer c.ImGui_PopStyleVar();
     const list = c.ImGui_GetWindowDrawList();
-    _ = lineAt(list, x, y.* + (height - lineHeight()) / 2, theme.text_secondary, label);
+    _ = gui.lineAt(list, x, y.* + (height - gui.lineHeight()) / 2, theme.text_secondary, label);
     const slider_x = x + gui.px(slider_label_column + 10);
     const slider_width = width - gui.px(slider_label_column + 10 + 10 + slider_value_column + gui.reset_space);
     c.ImGui_SetCursorScreenPos(gui.vec2(slider_x, y.*));
@@ -2322,7 +2269,7 @@ fn signed(comptime format: []const u8, v: f32) [:0]const u8 {
 fn checkbox(label: [:0]const u8, checked: *bool) bool {
     const box = gui.px(14);
     const label_size = c.ImGui_CalcTextSize(label);
-    const height = lineHeight();
+    const height = gui.lineHeight();
     const origin = c.ImGui_GetCursorScreenPos();
     const clicked = c.ImGui_InvisibleButton(label, gui.vec2(box + gui.px(8) + label_size.x, height), 0);
     if (clicked) checked.* = !checked.*;
