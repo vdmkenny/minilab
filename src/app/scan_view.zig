@@ -199,12 +199,16 @@ const Box = struct {
         return box.along + box.length / 2;
     }
 
+    /// How much of the box's length and height the crop keeps.
+    fn insetShare(box: Box) f32 {
+        return 1 - 2 * box.inset / 100;
+    }
+
     /// The crop: the box minus the inset.
     fn crop(box: Box) Box {
         var out = box;
-        const share = 1 - 2 * box.inset / 100;
-        out.length *= share;
-        out.height *= share;
+        out.length *= box.insetShare();
+        out.height *= box.insetShare();
         return out;
     }
 };
@@ -253,10 +257,15 @@ const Preview = struct {
         return preview.pxPerMm()[if (preview.axis == .y) 1 else 0];
     }
 
+    /// Preview pixels per mm across the strip.
+    fn acrossPerMm(preview: Preview) f32 {
+        return preview.pxPerMm()[if (preview.axis == .y) 0 else 1];
+    }
+
     /// Converts a box in strip coordinates to an image rectangle: x0, y0, x1, y1.
     fn rect(preview: Preview, box: Box) [4]f32 {
-        const a0 = box.along - box.length / 2;
-        const a1 = box.along + box.length / 2;
+        const a0 = box.start();
+        const a1 = box.end();
         const c0 = box.across - box.height / 2;
         const c1 = box.across + box.height / 2;
         return if (preview.axis == .y) .{ c0, a0, c1, a1 } else .{ a0, c0, a1, c1 };
@@ -1255,7 +1264,7 @@ const StripMap = struct {
             .corner = corner,
             .shown = shown,
             .along = shown.y / preview.alongSize(),
-            .across = across_per_mm / preview.pxPerMm()[if (preview.axis == .y) 0 else 1],
+            .across = across_per_mm / preview.acrossPerMm(),
         };
     }
 
@@ -1263,7 +1272,7 @@ const StripMap = struct {
     fn rect(map: StripMap, box: Box) [2]gui.Vec2 {
         const middle = map.corner.x + map.shown.x / 2;
         const half = box.height * map.across / 2;
-        const top = map.corner.y + (box.along - box.length / 2) * map.along;
+        const top = map.corner.y + box.start() * map.along;
         return .{ gui.vec2(middle - half, top), gui.vec2(middle + half, top + box.length * map.along) };
     }
 };
@@ -1274,7 +1283,7 @@ fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmS
     if (film.filmWidthMm()) |w| return w;
     var widest: f32 = 0;
     for (state.boxes.items) |box| widest = @max(widest, box.height);
-    return widest / preview.pxPerMm()[if (preview.axis == .y) 0 else 1] + 2 * plain_film_margin_mm;
+    return widest / preview.acrossPerMm() + 2 * plain_film_margin_mm;
 }
 
 /// Draws mounted slides down the column: each frame's picture in a slide mount, on the dark of the
@@ -1323,15 +1332,9 @@ fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, lis
         const right = std.math.clamp(r[2] / size.x, 0, 1);
         const lower = std.math.clamp(r[3] / size.y, 0, 1);
         const corners = map.rect(box.crop());
-        const min = corners[0];
-        const max = corners[1];
         // Along the strip means down the column, so for a strip lying along x the picture is
         // turned.
-        if (preview.axis == .y) {
-            c.ImDrawList_AddImageQuadEx(list, texture.ref(), min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), gui.vec2(left, upper), gui.vec2(right, upper), gui.vec2(right, lower), gui.vec2(left, lower), c.IM_COL32_WHITE);
-        } else {
-            c.ImDrawList_AddImageQuadEx(list, texture.ref(), min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), gui.vec2(left, lower), gui.vec2(left, upper), gui.vec2(right, upper), gui.vec2(right, lower), c.IM_COL32_WHITE);
-        }
+        drawImage(list, texture.ref(), corners[0], corners[1], .{ left, upper, right, lower }, preview.axis == .x);
     }
 }
 
@@ -1384,9 +1387,9 @@ fn moveBox(state: *State, preview: *const Preview, index: usize, along: f32, acr
     const box = &state.boxes.items[index];
     box.along = std.math.clamp(box.along + along, 0, preview.alongSize());
     if (!box.full_height) box.across = std.math.clamp(box.across + across, 0, preview.acrossSize());
-    box.hand = true;
+    // Placed by hand, so it no longer needs checking.
     box.check = .none;
-    state.boxes_dirty = true;
+    markEdited(state, box);
 }
 
 fn selectedBox(state: *const State) ?Box {
@@ -1439,8 +1442,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         box.shape = @fromBackingInt(@intCast(picked));
         if (box.shape == .custom) box.ratio = box.length / box.height;
         reshape(box, preview, format);
-        box.hand = true;
-        state.boxes_dirty = true;
+        markEdited(state, box);
     }
     c.ImGui_PopID();
     y += gui.px(section_gap);
@@ -1448,20 +1450,17 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     // Inset, rotation, and the custom ratio.
     c.ImGui_PushID("sliders");
     if (sliderRowAt(x, &y, width, "Inset", &box.inset, 0, max_inset, "{d:.1}%", 0)) {
-        box.hand = true;
-        state.boxes_dirty = true;
+        markEdited(state, box);
     }
     y += gui.px(8);
     if (sliderRowAt(x, &y, width, "Rotation", &box.rotation, -max_rotation, max_rotation, "{d:.1}°", box.detected_rotation)) {
-        box.hand = true;
-        state.boxes_dirty = true;
+        markEdited(state, box);
     }
     if (box.shape == .custom) {
         y += gui.px(8);
         if (sliderRowAt(x, &y, width, "Ratio", &box.ratio, 0.5, 3, "{d:.2}", format.ratio())) {
             reshape(box, preview, format);
-            box.hand = true;
-            state.boxes_dirty = true;
+            markEdited(state, box);
         }
     }
     c.ImGui_PopID();
@@ -1469,10 +1468,9 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
 
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
     if (gui.checkboxWith("Full height of the opening", &box.full_height, .{ .gap = 8, .height = gui.lineHeight(), .label_color = theme.text })) {
-        if (!box.full_height) box.height = @min(box.height, format.height_mm * preview.pxPerMm()[if (preview.axis == .y) 0 else 1]);
+        if (!box.full_height) box.height = @min(box.height, format.height_mm * preview.acrossPerMm());
         reshape(box, preview, format);
-        box.hand = true;
-        state.boxes_dirty = true;
+        markEdited(state, box);
     }
     y += gui.lineHeight() + gui.px(section_gap);
 
@@ -1563,18 +1561,22 @@ fn drawRegion(list: *c.ImDrawList, preview: *const Preview, region: Box, origin:
     const top = r[1] / h;
     const right = r[2] / w;
     const bottom = r[3] / h;
-    const p1 = origin;
-    const p2 = gui.vec2(origin.x + shown.x, origin.y);
-    const p3 = gui.vec2(origin.x + shown.x, origin.y + shown.y);
-    const p4 = gui.vec2(origin.x, origin.y + shown.y);
+    const far = gui.vec2(origin.x + shown.x, origin.y + shown.y);
     // The film past the edge of the scan, where the region runs off it.
-    c.ImDrawList_AddRectFilled(list, p1, p3, theme.imU32(theme.header));
-    if (preview.axis == .y) {
-        // Turned clockwise, so the top left as shown is the image's bottom left.
-        c.ImDrawList_AddImageQuadEx(list, texture.ref(), p1, p2, p3, p4, gui.vec2(left, bottom), gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom), 0xFFFFFFFF);
-    } else {
-        c.ImDrawList_AddImageQuadEx(list, texture.ref(), p1, p2, p3, p4, gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom), gui.vec2(left, bottom), 0xFFFFFFFF);
-    }
+    c.ImDrawList_AddRectFilled(list, origin, far, theme.imU32(theme.header));
+    drawImage(list, texture.ref(), origin, far, .{ left, top, right, bottom }, preview.axis == .y);
+}
+
+/// Draws the part of `texture` from `uv[0]`, `uv[1]` (left, top) to `uv[2]`, `uv[3]` (right,
+/// bottom) into the rectangle from `min` to `max`. When `turned`, it's turned a quarter turn
+/// clockwise, so the top left as shown is the image's bottom left.
+fn drawImage(list: *c.ImDrawList, texture: c.ImTextureRef, min: gui.Vec2, max: gui.Vec2, uv: [4]f32, turned: bool) void {
+    const left, const top, const right, const bottom = uv;
+    const corners: [4]gui.Vec2 = if (turned)
+        .{ gui.vec2(left, bottom), gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom) }
+    else
+        .{ gui.vec2(left, top), gui.vec2(right, top), gui.vec2(right, bottom), gui.vec2(left, bottom) };
+    c.ImDrawList_AddImageQuadEx(list, texture, min, gui.vec2(max.x, min.y), max, gui.vec2(min.x, max.y), corners[0], corners[1], corners[2], corners[3], c.IM_COL32_WHITE);
 }
 
 /// The corners of the rectangle from `min` to `max`, turned `degrees` clockwise around its
@@ -1602,7 +1604,7 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
     const flip = preview.axis == .y;
     const locked = box.shape != .free;
     if (locked and box.full_height) return moveBox(state, preview, index, if (flip) -dx else dx, 0);
-    const share = 1 - 2 * box.inset / 100;
+    const share = box.insetShare();
     const right = corner == 1 or corner == 2;
     const bottom = corner == 2 or corner == 3;
     const length = @max(box.length + (if (right) dx else -dx) / share, min_box_px);
@@ -1617,8 +1619,13 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
         box.height = height;
     }
     box.length = length;
-    box.hand = true;
     box.check = .none;
+    markEdited(state, box);
+}
+
+/// Marks `box` as edited by hand, so detecting again keeps it, and has the boxes saved.
+fn markEdited(state: *State, box: *Box) void {
+    box.hand = true;
     state.boxes_dirty = true;
 }
 
@@ -1683,7 +1690,7 @@ fn pitchNote(state: *const State, preview: *const Preview, index: usize) []const
 
 fn addFrame(state: *State, gpa: std.mem.Allocator, preview: *const Preview, format: formats.Format) void {
     const per_mm = preview.alongPerMm();
-    const across_per_mm = preview.pxPerMm()[if (preview.axis == .y) 0 else 1];
+    const across_per_mm = preview.acrossPerMm();
     const height = preview.opening orelse format.height_mm * across_per_mm;
     var box: Box = .{
         .along = preview.alongSize() / 2,
@@ -1770,7 +1777,7 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     defer detection.deinit(ctx.gpa);
     preview.axis = detection.axis;
     preview.detected = true;
-    const across_per_mm = preview.pxPerMm()[if (detection.axis == .y) 0 else 1];
+    const across_per_mm = preview.acrossPerMm();
     preview.opening = detection.opening_mm * across_per_mm;
 
     keepHandBoxes(state);
