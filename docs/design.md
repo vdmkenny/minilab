@@ -454,6 +454,18 @@ height), away from the holder. That's the same idea as NLP's border buffer.
 These are our own algorithms, so they're written down in the code's docs and covered by tests,
 not just buried in the code.
 
+### The loupe
+
+Develop's viewer shows a reduced copy of the scan, so even its 100% view isn't the scan's full
+detail. The loupe is: with it on (L, or the Loupe box on the toolbar), a circle follows the cursor
+over the picture and shows that spot at the scan's own resolution, one scan pixel to one screen
+pixel. It's rendered on its own: the point under the cursor goes back through the turns, the
+mirror and the crop to the scan (`Frame.scanPoint`), and a square of the full scan around it is
+cut, turned and developed with the frame's settings and look, the same way the preview is. Over the
+negative side of the viewer it shows the negative. The full scan is read the first time the loupe
+is used on a frame, and kept while the frame is open. The loupe renders again only when the point
+or the settings change. A pick (film base or neutral) still works with it on, at its centre.
+
 ## 8. Settings and sync
 
 Every frame has a settings file of its own. It holds the crop, the turns, the film base, the look
