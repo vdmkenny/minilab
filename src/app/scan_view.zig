@@ -325,6 +325,9 @@ pub const State = struct {
 
     /// The roll whose preview this is, as a path.
     roll_path: ?[]u8 = null,
+    /// The roll the preview being made is for, as a path. It's the open roll when the preview
+    /// was asked for, which may have changed by the time the preview comes.
+    preview_for: ?[]u8 = null,
     preview: ?Preview = null,
     boxes: std.ArrayList(Box) = .empty,
     selected: ?usize = null,
@@ -352,6 +355,7 @@ pub const State = struct {
         state.boxes.deinit(gpa);
         state.queue.deinit(gpa);
         if (state.roll_path) |p| gpa.free(p);
+        if (state.preview_for) |p| gpa.free(p);
         if (state.queue_roll) |p| gpa.free(p);
         state.* = undefined;
     }
@@ -463,7 +467,12 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             if (failed.stage == .open) state.device = null;
         },
         .preview => |*picture| {
-            setPreview(state, ctx, picture.*);
+            defer if (state.preview_for) |p| {
+                gpa.free(p);
+                state.preview_for = null;
+            };
+            const for_open = if (state.preview_for) |p| state.roll_path != null and std.mem.eql(u8, p, state.roll_path.?) else true;
+            if (for_open) setPreview(state, ctx, picture.*) else keepPreview(ctx, state.preview_for.?, picture.*);
             return;
         },
         .frame_started => |index| if (queueItem(state, index)) |item| {
@@ -755,7 +764,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     c.ImGui_SetCursorScreenPos(gui.vec2(x, actions_y));
     c.ImGui_BeginDisabled(!ready);
     const preview_label: [:0]const u8 = if (phase == .previewing) gui.print("Previewing {d}%##preview", .{percent(worker)}) else "Preview";
-    if (gui.buttonOf(.normal, preview_label, gui.vec2(half / gui.scale, action_height))) startPreview(state);
+    if (gui.buttonOf(.normal, preview_label, gui.vec2(half / gui.scale, action_height))) startPreview(state, ctx.gpa);
     c.ImGui_EndDisabled();
     c.ImGui_SetCursorScreenPos(gui.vec2(x + half + gui.px(8), actions_y));
     c.ImGui_BeginDisabled(state.preview == null or state.scanning);
@@ -1129,10 +1138,12 @@ fn percent(worker: ?*Worker) u32 {
     return @intFromFloat(@round(w.progress.fraction() * 100));
 }
 
-fn startPreview(state: *State) void {
+fn startPreview(state: *State, gpa: std.mem.Allocator) void {
     const worker = state.worker orelse return;
     const caps = state.capabilities orelse return;
     const dpi = caps.resolutionFrom(preview_dpi) orelse return;
+    if (state.preview_for) |p| gpa.free(p);
+    state.preview_for = if (state.roll_path) |p| gpa.dupe(u8, p) catch null else null;
     worker.submit(.{ .preview = .{
         .source = caps.source,
         .film = scanner_film,
@@ -2036,15 +2047,40 @@ fn setPreview(state: *State, ctx: context.Context, picture: scan_worker.Preview)
         .scan = picture.scan,
         .dpi = picture.dpi,
         .area = picture.area,
-        .axis = if (picture.scan.height >= picture.scan.width) .y else .x,
+        .axis = axisOf(picture.scan),
     };
     uploadPreview(state, ctx);
     savePreview(state, ctx);
-    // The preview belongs to the roll it was asked for, which may not be the open one any more:
-    // a preview takes a minute, and this runs while other workspaces show.
+    // The roll open in Scan, which is the one the preview was asked for (`handleEvent`). Develop
+    // may have another open by now, since a preview takes a minute.
     const roll_index = if (state.roll_path) |path| ctx.library.find(path) else null;
     detect(state, ctx, roll_index);
     savePreviewSettings(state, ctx);
+}
+
+/// Keeps a preview that came after you switched to another roll in the roll it was asked for:
+/// in its folder, with no frames yet, so they're found when that roll opens in Scan again.
+fn keepPreview(ctx: context.Context, folder: []const u8, picture: scan_worker.Preview) void {
+    var preview = picture.scan;
+    defer preview.deinit(ctx.gpa);
+    const cwd = std.Io.Dir.cwd();
+    const image_path = std.fs.path.join(ctx.gpa, &.{ folder, preview_file }) catch return;
+    defer ctx.gpa.free(image_path);
+    const settings_path = std.fs.path.join(ctx.gpa, &.{ folder, preview_settings_file }) catch return;
+    defer ctx.gpa.free(settings_path);
+    const bytes = minilab.pnm.write(ctx.gpa, u16, preview) catch return;
+    defer ctx.gpa.free(bytes);
+    const saved: Saved = .{ .dpi = picture.dpi, .area = picture.area, .axis = axisOf(preview) };
+    const json = std.json.Stringify.valueAlloc(ctx.gpa, saved, .{ .whitespace = .indent_2 }) catch return;
+    defer ctx.gpa.free(json);
+    cwd.writeFile(ctx.io, .{ .sub_path = image_path, .data = bytes }) catch |err| return std.log.err("can't keep the preview: {t}", .{err});
+    cwd.writeFile(ctx.io, .{ .sub_path = settings_path, .data = json }) catch |err| return std.log.err("can't keep the preview: {t}", .{err});
+    ctx.notice.set("Preview kept with its roll", .{});
+}
+
+/// Which way a preview's strip runs: along its longer side.
+fn axisOf(preview: minilab.image.Scan) frames.Axis {
+    return if (preview.height >= preview.width) .y else .x;
 }
 
 /// Puts the preview on the GPU the way the strip looks on a light table, with its base nearly

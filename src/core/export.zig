@@ -150,7 +150,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
 
     if (frame.crop) |area| {
         // The frame's crop reaches outside its scan.
-        if (area.width == 0 or area.height == 0 or area.x + area.width > scan.width or area.y + area.height > scan.height) return error.CropOutsideScan;
+        if (!area.fitsIn(scan.width, scan.height)) return error.CropOutsideScan;
         owned = try scan.crop(gpa, area);
         current = owned.?;
     }
@@ -563,7 +563,7 @@ pub const Batch = struct {
                 .number = index + 1,
                 .scan_path = try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, frame.scan }),
                 .frame = frame,
-                .look = try catalog.resolve(gpa, io, frame.look).copy(arena),
+                .look = try (try catalog.resolve(gpa, io, frame.look)).copy(arena),
                 .stem = try fileStem(arena, request.pattern, .{
                     .roll = batch.info.name,
                     .frame = index + 1,

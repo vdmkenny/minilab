@@ -47,6 +47,9 @@ const start_height = 900;
 /// something never finishes loading.
 const screenshot_frames = 4;
 const screenshot_frames_max = 600;
+/// How many frames in a row the page has to have loaded before a screenshot. A window that has
+/// just opened, like a confirmation, is only measured on its first frame and drawn on the next.
+const screenshot_loaded_frames = 2;
 const header_height = 44;
 /// How often the app looks for rolls and frames added on disk from outside it.
 const library_check_ms = 2000;
@@ -86,6 +89,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     for (options.open) |path| try develop.openLoose(gpa, io, &library, path);
 
     var frames_drawn: usize = 0;
+    var loaded_frames: usize = 0;
     var library_checked: u64 = 0;
     var panels: Panels = .all;
     var show_help = options.shortcuts;
@@ -207,7 +211,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
                 .looks => looks.settled(),
                 .rolls => true,
             };
-            if ((frames_drawn >= screenshot_frames and loaded) or frames_drawn == screenshot_frames_max) {
+            loaded_frames = if (loaded) loaded_frames + 1 else 0;
+            if ((frames_drawn >= screenshot_frames and loaded_frames >= screenshot_loaded_frames) or frames_drawn == screenshot_frames_max) {
                 try window.capture(.{ theme.page.x, theme.page.y, theme.page.z, 1 }, path);
                 return;
             }

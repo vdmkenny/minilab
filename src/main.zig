@@ -152,8 +152,8 @@ fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) minilab.stock_cu
 /// .cube file. `catalog` holds what it reads.
 fn lookNamed(gpa: std.mem.Allocator, io: std.Io, catalog: *minilab.look.Catalog, name: []const u8) !minilab.look.Resolved {
     if (std.mem.eql(u8, name, "neutral")) return .neutral;
-    if (std.mem.eql(u8, name, "frontier")) return catalog.resolve(gpa, io, .frontier);
-    if (minilab.bundled_looks.find(name)) |index| return catalog.resolve(gpa, io, .ofBundled(index));
+    if (std.mem.eql(u8, name, "frontier")) return try catalog.resolve(gpa, io, .frontier);
+    if (minilab.bundled_looks.find(name)) |index| return try catalog.resolve(gpa, io, .ofBundled(index));
     if (!isCubeFile(name)) {
         std.log.err("no look is called {s}: `minilab looks` lists them", .{name});
         std.process.exit(usage_status);

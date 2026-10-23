@@ -191,8 +191,12 @@ pub fn developScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8, longest
         defer reduced.deinit(gpa);
         if (minilab.framing.findWithGaps(gpa, reduced, raw.width, raw.height, null, minilab.formats.Standard.default.format(), .colour_negative)) |found| {
             frame = found.frame;
-            gap_base = minilab.framing.measureBase(gpa, raw, found.gaps) catch null;
-        } else |_| {}
+            gap_base = try minilab.framing.measureBase(gpa, raw, found.gaps);
+        } else |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // No frame found: the whole scan is the frame.
+            else => {},
+        }
     }
     const cropped = frame.width != raw.width or frame.height != raw.height;
     var scan = if (cropped) try raw.crop(gpa, frame) else raw;

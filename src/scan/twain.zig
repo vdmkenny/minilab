@@ -647,8 +647,8 @@ pub const Scanner = struct {
             defer r.deinit(gpa);
             if (r.range) |range| {
                 try interface.appendResolutionsInRange(gpa, &resolutions, range[0], range[1], range[2]);
-            } else for (r.items.items) |v| try resolutions.append(gpa, @intFromFloat(@round(v)));
-            if (resolutions.items.len == 0) if (r.current) |v| try resolutions.append(gpa, @intFromFloat(@round(v)));
+            } else for (r.items.items) |v| if (interface.resolutionOf(v)) |dpi| try resolutions.append(gpa, dpi);
+            if (resolutions.items.len == 0) if (r.current) |v| if (interface.resolutionOf(v)) |dpi| try resolutions.append(gpa, dpi);
         }
         std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));
 
@@ -800,7 +800,9 @@ pub const Scanner = struct {
         // A source may say "don't care" (all ones) for its preferred size, and that isn't a real
         // size.
         const preferred = if (setup.preferred == std.math.maxInt(u32)) 0 else setup.preferred;
-        const size: u32 = @max(preferred, setup.min_buffer, @as(u32, @intCast(row_bytes)));
+        // A source reporting a row too big for a transfer buffer can't be scanned from.
+        const row_size = std.math.cast(u32, row_bytes) orelse return error.Failed;
+        const size: u32 = @max(preferred, setup.min_buffer, row_size);
         if (size > max_transfer_bytes) return error.Failed;
         const buffer = try gpa.alloc(u8, size);
         defer gpa.free(buffer);

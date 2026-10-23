@@ -161,9 +161,12 @@ const Own = struct {
         if (own.result != null) own.stale = true;
     }
 
-    fn save(own: *const Own, gpa: std.mem.Allocator, io: std.Io) void {
-        draft.save(gpa, io, own.path, .{ .references = own.references, .options = own.options, .pairs = own.pairs.items }) catch |err| {
+    /// Writes the look's file. A failure goes in the header's notice, since every edit relies on
+    /// this.
+    fn save(own: *const Own, ctx: context.Context) void {
+        draft.save(ctx.gpa, ctx.io, own.path, .{ .references = own.references, .options = own.options, .pairs = own.pairs.items }) catch |err| {
             std.log.err("can't save the look {s}: {t}", .{ own.name, err });
+            ctx.notice.set("{s} not saved · {t}", .{ own.name, err });
         };
     }
 
@@ -284,7 +287,7 @@ const Previews = struct {
 /// Renders `small` with `settings` and the look `id`, and puts the result on the GPU.
 fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: minilab.develop.Settings, id: minilab.look.Id) !Texture {
     const gpa = ctx.gpa;
-    var linear = try minilab.look.render(gpa, small, settings, ctx.library.looks.resolve(gpa, ctx.io, id));
+    var linear = try minilab.look.render(gpa, small, settings, try ctx.library.looks.resolve(gpa, ctx.io, id));
     defer linear.deinit(gpa);
     var encoded = try minilab.encode.toSrgb8(gpa, linear);
     defer encoded.deinit(gpa);
@@ -397,6 +400,7 @@ pub const State = struct {
             // Pair them up in name order.
             std.mem.sort([]const u8, ours.items, {}, byName);
             std.mem.sort([]const u8, theirs.items, {}, byName);
+            var added: usize = 0;
             for (ours.items, theirs.items) |o, t| {
                 const where = findFrame(ctx.library, o);
                 own.append(ctx.gpa, .{
@@ -406,10 +410,14 @@ pub const State = struct {
                     .stock = if (where) |w| w.stock else null,
                     .held_out = draft.heldOutByDefault(own.pairs.items.len),
                     .placement = if (where) |w| w.placement else null,
-                }) catch return;
-            }
-            own.save(ctx.gpa, ctx.io);
-            ctx.notice.set("Added {d} pairs to {s}", .{ ours.items.len, own.name });
+                }) catch |err| {
+                    ctx.notice.set("Added {d} of {d} pairs · {t}", .{ added, ours.items.len, err });
+                    break;
+                };
+                added += 1;
+            } else ctx.notice.set("Added {d} pairs to {s}", .{ added, own.name });
+            // Keep what was added, even when the rest wasn't.
+            if (added > 0) own.save(ctx);
             return;
         }
         state.startMatch(ctx, index, theirs.items);
@@ -548,7 +556,7 @@ pub const State = struct {
                         aligned = true;
                     }
                 }
-                if (aligned) own.save(ctx.gpa, ctx.io);
+                if (aligned) own.save(ctx);
             },
             .match => |*task| {
                 var added: usize = 0;
@@ -564,8 +572,10 @@ pub const State = struct {
                     }) catch break;
                     added += 1;
                 }
-                if (added > 0) own.save(ctx.gpa, ctx.io);
-                if (added == task.references.len) {
+                if (added > 0) own.save(ctx);
+                if (task.failure) |err| {
+                    ctx.notice.set("Matching stopped · {t}", .{err});
+                } else if (added == task.references.len) {
                     ctx.notice.set("Found frames for all {d} references", .{added});
                 } else {
                     ctx.notice.set("Found frames for {d} of {d} references · no good match for the rest", .{ added, task.references.len });
@@ -603,7 +613,10 @@ pub const State = struct {
             ctx.notice.set("No frames to match · add our scans too, or scan the roll first", .{});
             return;
         }
-        var task = work.Match.init(ctx.gpa, references, count) catch return;
+        var task = work.Match.init(ctx.gpa, references, count) catch |err| {
+            ctx.notice.set("Can't match · {t}", .{err});
+            return;
+        };
         var n: usize = 0;
         for (library.rolls.items, 0..) |*r, i| {
             if (open != null and open != i) continue;
@@ -646,6 +659,18 @@ pub const State = struct {
     }
 
     /// Makes a new look, "Look N", with no pairs yet, and selects it.
+    /// Adds an empty look called `name` to the list, with its folder in the library's Looks.
+    fn makeLook(state: *State, ctx: context.Context, name: []const u8) !*Own {
+        const root = try looks.saved.folderOf(ctx.gpa, ctx.library.path);
+        defer ctx.gpa.free(root);
+        const path = try std.fs.path.join(ctx.gpa, &.{ root, name });
+        defer ctx.gpa.free(path);
+        var own = try Own.open(ctx.gpa, ctx.io, .{ .name = @constCast(name), .path = path, .saved = false });
+        errdefer own.deinit(ctx.gpa);
+        try state.own.append(ctx.gpa, own);
+        return &state.own.items[state.own.items.len - 1];
+    }
+
     fn newLook(state: *State, ctx: context.Context) void {
         var number: usize = state.own.items.len + 1;
         const name = while (true) : (number += 1) {
@@ -654,16 +679,12 @@ pub const State = struct {
                 if (std.ascii.eqlIgnoreCase(o.name, candidate)) break;
             } else break candidate;
         };
-        const root = looks.saved.folderOf(ctx.gpa, ctx.library.path) catch return;
-        defer ctx.gpa.free(root);
-        const path = std.fs.path.join(ctx.gpa, &.{ root, name }) catch return;
-        defer ctx.gpa.free(path);
-        var own = Own.open(ctx.gpa, ctx.io, .{ .name = @constCast(name), .path = path, .saved = false }) catch return;
-        own.save(ctx.gpa, ctx.io);
-        state.own.append(ctx.gpa, own) catch {
-            own.deinit(ctx.gpa);
+        const own = state.makeLook(ctx, name) catch |err| {
+            std.log.err("can't make the look {s}: {t}", .{ name, err });
+            ctx.notice.set("Can't make a look · {t}", .{err});
             return;
         };
+        own.save(ctx);
         state.selected = .{ .own = state.own.items.len - 1 };
         state.pair = 0;
         ctx.notice.set("Made {s} · add pairs next", .{name});
@@ -1043,7 +1064,8 @@ fn drawList(state: *State, ctx: context.Context) void {
             .imported => |s| s == i,
             else => false,
         };
-        const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, id.*);
+        // Out of memory shows as a look that can't be read, which is what it is for now.
+        const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, id.*) catch .neutral;
         var buffer: [64]u8 = undefined;
         const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "Can't be read";
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), size, selected)) select(state, .{ .imported = i });
@@ -1405,7 +1427,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (height - c.ImGui_GetFontSize()) / 2));
     if (gui.combo("references", &names, @backingInt(own.references), combo_width / gui.scale)) |picked| {
         own.references = sources[picked];
-        own.save(ctx.gpa, ctx.io);
+        own.save(ctx);
     }
     c.ImGui_PopStyleVar();
     x += combo_width + gui.px(10);
@@ -1503,7 +1525,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
             if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.job == null)) {
                 p.held_out = !p.held_out;
                 own.changed();
-                own.save(ctx.gpa, ctx.io);
+                own.save(ctx);
             }
             if (c.ImGui_MenuItemEx("Remove pair", null, false, state.job == null)) remove = i;
             c.ImGui_EndPopup();
@@ -1512,7 +1534,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         if (c.ImGui_InvisibleButton("use", gui.vec2(widths[4], row_height), 0) and state.job == null) {
             p.held_out = !p.held_out;
             own.changed();
-            own.save(ctx.gpa, ctx.io);
+            own.save(ctx);
         }
         const use_hovered = c.ImGui_IsItemHovered(0);
         if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
@@ -1565,7 +1587,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     c.ImGui_Dummy(gui.vec2(0, 0));
     if (remove) |i| {
         own.remove(ctx.gpa, i);
-        own.save(ctx.gpa, ctx.io);
+        own.save(ctx);
         state.figures.release(ctx.gpu);
     }
     return at.y + box_height;
@@ -1663,7 +1685,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
             return;
         },
         .imported => |i| {
-            const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, state.imported.items[i]);
+            const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, state.imported.items[i]) catch .neutral;
             var buffer: [64]u8 = undefined;
             const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "can't be read";
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
@@ -1687,7 +1709,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
         c.ImGui_PushIDInt(@intCast(i));
         if (modelOption(list, gui.vec2(origin.x, y), width, option[0], option[1], option[2], busy)) |h| {
             own.changed();
-            own.save(ctx.gpa, ctx.io);
+            own.save(ctx);
             y += h;
         } else y += optionHeight(width, option[2]);
         c.ImGui_PopID();
