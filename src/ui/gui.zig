@@ -373,26 +373,43 @@ pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
     c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.on_accent), 1.8 * unit, 0);
 }
 
+/// Draws a check box `size` square at `min`: ticked, or empty and lighter while `hovered`.
+pub fn checkBox(list: *c.ImDrawList, min: Vec2, size: f32, checked: bool, hovered: bool) void {
+    if (checked) return tickedBox(list, min, size);
+    const max = vec2(min.x + size, min.y + size);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
+    c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
+}
+
+/// How a check box with a label is laid out.
+pub const CheckboxOptions = struct {
+    /// The gap between the box and the label, in the design's pixels.
+    gap: f32 = 6,
+    /// The row's height, or null for a control's height.
+    height: ?f32 = null,
+    label_color: theme.Color = theme.text_secondary,
+};
+
+/// The size of a check box with a label, in the design's pixels.
+const checkbox_size = 14;
+
 /// A small check box with its label, drawn the way the design draws one. Returns true when it was
 /// clicked.
 pub fn checkbox(label: [:0]const u8, checked: *bool) bool {
-    const box = px(14);
+    return checkboxWith(label, checked, .{});
+}
+
+pub fn checkboxWith(label: [:0]const u8, checked: *bool, options: CheckboxOptions) bool {
+    const box = px(checkbox_size);
     const label_size = c.ImGui_CalcTextSize(label.ptr);
-    const height = c.ImGui_GetFrameHeight();
+    const height = options.height orelse c.ImGui_GetFrameHeight();
     const origin = c.ImGui_GetCursorScreenPos();
-    const clicked = c.ImGui_InvisibleButton(label.ptr, vec2(box + px(6) + label_size.x, height), 0);
+    const clicked = c.ImGui_InvisibleButton(label.ptr, vec2(box + px(options.gap) + label_size.x, height), 0);
     if (clicked) checked.* = !checked.*;
-    const hovered = c.ImGui_IsItemHovered(0);
     const list = c.ImGui_GetWindowDrawList();
     const min = vec2(origin.x, origin.y + (height - box) / 2);
-    const max = vec2(min.x + box, min.y + box);
-    if (checked.*) {
-        tickedBox(list, min, box);
-    } else {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
-        c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
-    }
-    c.ImDrawList_AddText(list, vec2(max.x + px(6), origin.y + (height - label_size.y) / 2), theme.imU32(theme.text_secondary), label.ptr);
+    checkBox(list, min, box, checked.*, c.ImGui_IsItemHovered(0));
+    c.ImDrawList_AddText(list, vec2(min.x + box + px(options.gap), origin.y + (height - label_size.y) / 2), theme.imU32(options.label_color), label.ptr);
     return clicked;
 }
 

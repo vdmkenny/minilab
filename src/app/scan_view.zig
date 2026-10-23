@@ -1509,7 +1509,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     y += gui.px(section_gap);
 
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-    if (checkbox("Full height of the opening", &box.full_height)) {
+    if (gui.checkboxWith("Full height of the opening", &box.full_height, .{ .gap = 8, .height = gui.lineHeight(), .label_color = theme.text })) {
         if (!box.full_height) box.height = @min(box.height, format.height_mm * preview.pxPerMm()[if (preview.axis == .y) 0 else 1]);
         reshape(box, preview, format);
         box.hand = true;
@@ -2266,29 +2266,6 @@ fn signed(comptime format: []const u8, v: f32) [:0]const u8 {
 
 /// A check box drawn the way the design has it here: the label in the text colour, 8 pixels after
 /// the box.
-fn checkbox(label: [:0]const u8, checked: *bool) bool {
-    const box = gui.px(14);
-    const label_size = c.ImGui_CalcTextSize(label);
-    const height = gui.lineHeight();
-    const origin = c.ImGui_GetCursorScreenPos();
-    const clicked = c.ImGui_InvisibleButton(label, gui.vec2(box + gui.px(8) + label_size.x, height), 0);
-    if (clicked) checked.* = !checked.*;
-    const hovered = c.ImGui_IsItemHovered(0);
-    const list = c.ImGui_GetWindowDrawList();
-    const min = gui.vec2(origin.x, origin.y + (height - box) / 2);
-    const max = gui.vec2(min.x + box, min.y + box);
-    if (checked.*) {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.accent), gui.px(3), 0);
-        const ink = theme.imU32(theme.on_accent);
-        c.ImDrawList_AddLineEx(list, gui.vec2(min.x + gui.px(3), min.y + gui.px(7)), gui.vec2(min.x + gui.px(6), min.y + gui.px(10)), ink, gui.px(1.8));
-        c.ImDrawList_AddLineEx(list, gui.vec2(min.x + gui.px(6), min.y + gui.px(10)), gui.vec2(min.x + gui.px(11), min.y + gui.px(4)), ink, gui.px(1.8));
-    } else {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
-        c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), gui.px(3), 1, 0);
-    }
-    c.ImDrawList_AddText(list, gui.vec2(max.x + gui.px(8), origin.y + (height - label_size.y) / 2), theme.imU32(theme.text), label.ptr);
-    return clicked;
-}
 
 /// A button with a border, secondary text and no fill, for the design's less important actions.
 fn quietButton(label: [:0]const u8, size: gui.Vec2) bool {

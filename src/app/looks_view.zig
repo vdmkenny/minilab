@@ -1701,17 +1701,7 @@ fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, na
     if (clicked) checked.* = !checked.*;
 
     const box = gui.px(13);
-    const min = gui.vec2(at.x, at.y + gui.px(3));
-    const max = gui.vec2(min.x + box, min.y + box);
-    if (checked.*) {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.accent), gui.px(3), 0);
-        const ink = theme.imU32(theme.on_accent);
-        c.ImDrawList_AddLineEx(list, gui.vec2(min.x + gui.px(3), min.y + gui.px(6.5)), gui.vec2(min.x + gui.px(5.5), min.y + gui.px(9.5)), ink, gui.px(1.8));
-        c.ImDrawList_AddLineEx(list, gui.vec2(min.x + gui.px(5.5), min.y + gui.px(9.5)), gui.vec2(min.x + gui.px(10), min.y + gui.px(3.5)), ink, gui.px(1.8));
-    } else {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
-        c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), gui.px(3), 1, 0);
-    }
+    gui.checkBox(list, gui.vec2(at.x, at.y + gui.px(3)), box, checked.*, hovered);
     const x = at.x + box + gui.px(8);
     gui.textIn(list, x, at.y, gui.lineFor(13), theme.text, name);
     _ = gui.paragraphAt(list, x, at.y + gui.lineFor(13), width - box - gui.px(8), theme.text_tertiary, note);

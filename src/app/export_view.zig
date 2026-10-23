@@ -933,13 +933,7 @@ fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag:
     if (c.ImGui_InvisibleButton(gui.print("{s}##check", .{label}), gui.vec2(gui.px(22 + 6 + 100), row), 0)) flag.* = !flag.*;
     const hovered = c.ImGui_IsItemHovered(0);
     const box = gui.vec2(x + gui.px(4), y + (row - gui.px(metadata_check)) / 2);
-    if (flag.*) {
-        drawCheck(list, box, gui.px(metadata_check), true);
-    } else {
-        const far = gui.vec2(box.x + gui.px(metadata_check), box.y + gui.px(metadata_check));
-        c.ImDrawList_AddRectFilledEx(list, box, far, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
-        c.ImDrawList_AddRectEx(list, box, far, theme.imU32(theme.track), gui.px(3), 1, 0);
-    }
+    gui.checkBox(list, box, gui.px(metadata_check), flag.*, hovered);
     c.ImDrawList_AddText(list, gui.vec2(x + gui.px(22 + 6), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
 }
 
