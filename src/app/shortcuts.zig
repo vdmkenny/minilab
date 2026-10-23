@@ -318,6 +318,24 @@ const groups = [_]struct { []const u8, []const Command }{
     .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .help, .quit, .cancel } },
 };
 
+// Every command has keys and a place in the help panel, and no two commands share keys.
+comptime {
+    @setEvalBranchQuota(100_000);
+    for (std.enums.values(Command)) |command| {
+        var bound = false;
+        for (bindings) |b| bound = bound or b.command == command;
+        if (!bound) @compileError("no keys for " ++ @tagName(command));
+        var listed: usize = 0;
+        for (groups) |group| for (group[1]) |in_group| {
+            listed += @intFromBool(in_group == command);
+        };
+        if (listed != 1) @compileError(@tagName(command) ++ " should be in one help group");
+    }
+    for (bindings, 0..) |a, i| for (bindings[i + 1 ..]) |b| {
+        if (a.chord == b.chord) @compileError(@tagName(a.command) ++ " and " ++ @tagName(b.command) ++ " have the same keys");
+    };
+}
+
 /// Draws the help panel over the window, listing every shortcut. Returns false once it's closed.
 pub fn drawHelp() bool {
     var open = true;

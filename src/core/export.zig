@@ -626,15 +626,23 @@ pub const Batch = struct {
     }
 };
 
+/// Copies `info` and all the text in it into `arena`.
 fn copyInfo(arena: std.mem.Allocator, info: roll.Info) !roll.Info {
     var copy = info;
-    copy.name = try arena.dupe(u8, info.name);
-    inline for (.{ "stock", "created", "camera", "lens", "shot", "copyright", "notes", "scanner" }) |field| {
-        if (@field(info, field)) |text| @field(copy, field) = try arena.dupe(u8, text);
+    const info_type = @typeInfo(roll.Info).@"struct";
+    inline for (info_type.field_names, info_type.field_types) |name, Field| {
+        const value = @field(info, name);
+        @field(copy, name) = switch (Field) {
+            []const u8 => try arena.dupe(u8, value),
+            ?[]const u8 => if (value) |text| try arena.dupe(u8, text) else null,
+            []const roll.Field => fields: {
+                const own = try arena.alloc(roll.Field, value.len);
+                for (own, value) |*copied, f| copied.* = .{ .name = try arena.dupe(u8, f.name), .value = try arena.dupe(u8, f.value) };
+                break :fields own;
+            },
+            else => value,
+        };
     }
-    const own = try arena.alloc(roll.Field, info.fields.len);
-    for (own, info.fields) |*copied, f| copied.* = .{ .name = try arena.dupe(u8, f.name), .value = try arena.dupe(u8, f.value) };
-    copy.fields = own;
     return copy;
 }
 

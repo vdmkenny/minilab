@@ -54,7 +54,7 @@ pub const Builtin = enum {
 /// as a string.
 pub const Id = struct {
     bytes: [capacity]u8 = undefined,
-    len: u8 = 0,
+    len: std.math.IntFittingRange(0, capacity) = 0,
 
     pub const capacity = 160;
     const cube_prefix = "cube:";
