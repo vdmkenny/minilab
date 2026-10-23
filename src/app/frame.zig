@@ -150,6 +150,12 @@ pub const Frame = struct {
     /// the way the settings ask.
     pub fn measure(frame: *Frame, kind: develop.FilmKind) void {
         const keep = frame.settings;
+        // A finished picture has nothing to work out: it stays as it is.
+        if (keep.finished) {
+            frame.settings = .finishedPicture();
+            frame.stale = true;
+            return;
+        }
         frame.settings = develop.automatic(kind, frame.gap_base orelse frame.whole.thinnest, frame.centre, keep.curves());
         if (frame.gap_base != null) frame.settings.base_source = .gaps;
         keepUserChoices(&frame.settings, keep);
@@ -159,6 +165,7 @@ pub const Frame = struct {
     /// The automatic settings for the frame on its current film base. Develop's sliders reset to
     /// these.
     pub fn automaticSettings(frame: *const Frame) develop.Settings {
+        if (frame.settings.finished) return .finishedPicture();
         return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre, frame.settings.curves());
     }
 
@@ -239,6 +246,7 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.tint = keep.tint;
     settings.stock_curves = keep.stock_curves;
     settings.slide_colour = keep.slide_colour;
+    settings.finished = keep.finished;
 }
 
 /// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.

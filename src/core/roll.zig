@@ -9,9 +9,10 @@
 //!     preview.json       the frames' boxes on it, hand edits included
 //!     flat.ppm           camera rolls only: the flat field, if the roll has one
 //!
-//! Scans are kept as 16-bit binary PPM, whatever they were imported from (`input.zig`): linear
+//! Raw scans are kept as 16-bit binary PPM, whatever they were imported from (`input.zig`): linear
 //! transmission in the scanner's or the camera's channels. A scan usually holds one frame. A
-//! strip holds several, which share the scan and each have their own crop.
+//! strip holds several, which share the scan and each have their own crop. Finished pictures,
+//! such as a lab's scans, are kept as the files they came in (scans/01.jpg …), unchanged.
 //!
 //! A library is a folder of rolls.
 
@@ -45,12 +46,15 @@ pub const Input = enum {
     scanner,
     camera_raw,
     tiff_files,
+    /// Finished pictures: a lab's scans, or a scanner's that inverts by itself.
+    finished,
 
     pub fn label(input: Input) []const u8 {
         return switch (input) {
             .scanner => "Scanner",
             .camera_raw => "Camera RAW",
             .tiff_files => "TIFF files",
+            .finished => "Finished scans",
         };
     }
 
@@ -60,9 +64,15 @@ pub const Input = enum {
             .pnm => .scanner,
             .camera_raw => .camera_raw,
             .tiff => .tiff_files,
+            .jpeg => .finished,
         };
     }
 };
+
+/// What importing does with a finished picture's file: copy it into the roll, or move it there. A
+/// raw scan is always converted into the roll's own file, so its original stays where it is
+/// either way.
+pub const Transfer = enum { copy, move };
 
 /// The frames one scan added to a roll: `count` of them, starting at index `first`.
 pub const Added = struct {
@@ -311,14 +321,15 @@ pub const Roll = struct {
     /// first. A roll that's still empty and has no flat field takes its input from the file's
     /// kind. A camera RAW file's colour goes with its frames, for slides. With a flat field, which
     /// has already made the light behind the film white, only its matrix goes with them.
-    pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField) !Added {
+    pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField, transfer: Transfer) !Added {
         var read = try file_input.read(gpa, io, path);
         defer read.deinit(gpa);
-        if (flat) |f| try f.apply(read.scan);
         if (flat == null and roll.frames.items.len == 0 and roll.info.input != Input.of(read.kind)) {
             roll.info.input = .of(read.kind);
             try roll.saveInfo(io);
         }
+        if (read.kind.finished()) return roll.addFinished(gpa, io, path, read.scan, transfer);
+        if (flat) |f| try f.apply(read.scan);
         var slide = read.camera;
         if (flat != null) {
             if (slide) |*s| s.balance = @splat(1);
@@ -335,6 +346,40 @@ pub const Roll = struct {
         return roll.addImageWith(gpa, io, scan, dpi, null);
     }
 
+    /// Adds the finished picture in the file at `path` as one frame that shows it as it is. The
+    /// file goes into the roll unchanged, copied or moved, so the roll keeps the lab's own bytes.
+    /// `picture` is the file read into linear values, for the thumbnail.
+    fn addFinished(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, picture: image.Scan, transfer: Transfer) !Added {
+        const arena = roll.arena.allocator();
+        const first = roll.frames.items.len;
+        errdefer roll.frames.shrinkRetainingCapacity(first);
+        var lower: [max_extension]u8 = undefined;
+        const extension = std.fs.path.extension(path);
+        const name = try roll.nextScanName(std.ascii.lowerString(&lower, extension[0..@min(extension.len, max_extension)]));
+
+        var thumbnail = try image.downscale(gpa, picture, thumbnail_longest);
+        defer thumbnail.deinit(gpa);
+        const thumbnail_bytes = try pnm.write(gpa, u16, thumbnail);
+        defer gpa.free(thumbnail_bytes);
+        {
+            var temporary = roll.scratch();
+            defer temporary.deinit();
+            const a = temporary.allocator();
+            const thumbnail_name = try std.fmt.allocPrint(a, "{s}.ppm", .{std.fs.path.stem(name)});
+            try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, thumbnail_name }), .data = thumbnail_bytes });
+            try placeFile(gpa, io, path, try std.fs.path.join(a, &.{ roll.path, scans_dir, name }), transfer);
+        }
+        try roll.frames.append(arena, .{
+            .scan = name,
+            .width = picture.width,
+            .height = picture.height,
+            .settings = .finishedPicture(),
+            .developed = true,
+        });
+        try roll.saveFrame(io, first);
+        return .{ .first = first, .count = 1 };
+    }
+
     /// Like `addImage`, for a scan with a camera's colour, `slide`, which its frames use when
     /// they're slides.
     fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32, slide: ?develop.SlideColour) !Added {
@@ -342,7 +387,7 @@ pub const Roll = struct {
         const first = roll.frames.items.len;
         // Frames added before a failure would have no file, so they're removed again.
         errdefer roll.frames.shrinkRetainingCapacity(first);
-        const name = try roll.nextScanName();
+        const name = try roll.nextScanName(".ppm");
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
         defer reduced.deinit(gpa);
@@ -382,16 +427,18 @@ pub const Roll = struct {
         return .{ .first = first, .count = roll.frames.items.len - first };
     }
 
-    /// Picks a name for the next scan file, numbered like the next frame unless a frame already
-    /// uses that name.
-    fn nextScanName(roll: *Roll) ![]const u8 {
+    /// Picks a name for the next scan file, with `extension`: numbered like the next frame, unless
+    /// a frame's scan already has that number, whatever its extension, since thumbnails are named
+    /// by the number alone.
+    fn nextScanName(roll: *Roll, extension: []const u8) ![]const u8 {
         const arena = roll.arena.allocator();
         var number = roll.frames.items.len + 1;
         while (true) : (number += 1) {
-            const name = try std.fmt.allocPrint(arena, "{d:0>2}.ppm", .{number});
+            var digits: [24]u8 = undefined;
+            const stem = try std.fmt.bufPrint(&digits, "{d:0>2}", .{number});
             for (roll.frames.items) |f| {
-                if (std.mem.eql(u8, f.scan, name)) break;
-            } else return name;
+                if (std.mem.eql(u8, std.fs.path.stem(f.scan), stem)) break;
+            } else return std.fmt.allocPrint(arena, "{s}{s}", .{ stem, extension });
         }
     }
 
@@ -489,6 +536,23 @@ const max_median_frames = 256;
 
 /// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on
 /// it.
+/// The longest extension a finished picture's file keeps, dot included.
+const max_extension = 8;
+
+/// Puts the file at `from` at `to`: a copy, or the file itself for a move. A move that can't
+/// rename, say from another disk, copies the file and deletes the original once the copy is
+/// written.
+fn placeFile(gpa: std.mem.Allocator, io: Io, from: []const u8, to: []const u8, transfer: Transfer) !void {
+    const cwd = Io.Dir.cwd();
+    if (transfer == .move) {
+        if (cwd.rename(from, cwd, to, io)) |_| return else |_| {}
+    }
+    const bytes = try cwd.readFileAlloc(io, from, gpa, .limited(file_input.max_file_bytes));
+    defer gpa.free(bytes);
+    try cwd.writeFile(io, .{ .sub_path = to, .data = bytes });
+    if (transfer == .move) try cwd.deleteFile(io, from);
+}
+
 fn thumbnailLongest(scan: image.Scan, found: []const framing.Found) usize {
     if (found.len < 2) return thumbnail_longest;
     var shortest: usize = std.math.maxInt(usize);
@@ -689,6 +753,7 @@ test "a frame saved before ratings has none, and too many stars come down to fiv
 
 const synthetic = @import("../frames/synthetic.zig");
 const codecs_tiff = @import("../io/codecs/tiff.zig");
+const codecs_jpeg = @import("../io/codecs/jpeg.zig");
 
 /// Makes a roll in a new folder of `tmp` for a test, along with the folder's path.
 fn testRoll(tmp: *std.testing.TmpDir, info: Info) !Roll {
@@ -725,13 +790,57 @@ test "a 16-bit TIFF imports as the same pixels, kept as a PPM" {
     defer gpa.free(path);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = file });
 
-    const added = try roll.importFile(gpa, io, path, null);
+    const added = try roll.importFile(gpa, io, path, null, .copy);
     try std.testing.expectEqual(Added{ .first = 0, .count = 1 }, added);
     try std.testing.expectEqual(Input.tiff_files, roll.info.input);
     try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan);
     var kept = try keptScan(&roll, 0);
     defer kept.deinit(gpa);
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, kept.pixels);
+}
+
+test "a finished picture goes into the roll as it is, copied or moved, and develops unchanged" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var roll = try testRoll(&tmp, .{ .name = "Lab scans", .stock = "Kodak Portra 400" });
+    defer roll.close();
+
+    var picture: image.Encoded8 = try .init(gpa, 30, 20);
+    defer picture.deinit(gpa);
+    for (picture.pixels, 0..) |*p, i| p.* = .{ @intCast(i % 256), 128, @intCast(255 - i % 256) };
+    const file = try codecs_jpeg.write(gpa, picture, .{ .quality = 95 });
+    defer gpa.free(file);
+    const copied = try std.fs.path.join(gpa, &.{ roll.path, "IMG_0001.JPG" });
+    defer gpa.free(copied);
+    const moved = try std.fs.path.join(gpa, &.{ roll.path, "IMG_0002.jpg" });
+    defer gpa.free(moved);
+    for ([_][]const u8{ copied, moved }) |p| try Io.Dir.cwd().writeFile(io, .{ .sub_path = p, .data = file });
+
+    try std.testing.expectEqual(Added{ .first = 0, .count = 1 }, try roll.importFile(gpa, io, copied, null, .copy));
+    try std.testing.expectEqual(Added{ .first = 1, .count = 1 }, try roll.importFile(gpa, io, moved, null, .move));
+    try std.testing.expectEqual(Input.finished, roll.info.input);
+    // The roll keeps the files' own bytes, under the frames' numbers.
+    try std.testing.expectEqualStrings("01.jpg", roll.frames.items[0].scan);
+    try std.testing.expectEqualStrings("02.jpg", roll.frames.items[1].scan);
+    for (0..2) |i| {
+        const kept = try roll.scanPath(gpa, i);
+        defer gpa.free(kept);
+        const bytes = try Io.Dir.cwd().readFileAlloc(io, kept, gpa, .limited(1 << 20));
+        defer gpa.free(bytes);
+        try std.testing.expectEqualSlices(u8, file, bytes);
+        const frame = roll.frames.items[i];
+        try std.testing.expect(frame.developed and frame.settings.finished);
+        try std.testing.expectEqual(@as(usize, 30), frame.width);
+    }
+    // A copy leaves the original, and a move takes it.
+    try Io.Dir.cwd().access(io, copied, .{});
+    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, moved, .{}));
+    // The thumbnail is there for the Rolls page.
+    var thumbnail = try roll.frameThumbnail(gpa, io, 1);
+    defer thumbnail.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 30), thumbnail.width);
 }
 
 test "a strip imports as one frame per frame on it, sharing the scan" {
@@ -821,7 +930,7 @@ test "a camera roll's frames are divided by its flat field on import" {
     const path = try std.fs.path.join(gpa, &.{ roll.path, "frame.ppm" });
     defer gpa.free(path);
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = ppm });
-    _ = try roll.importFile(gpa, io, path, &flat);
+    _ = try roll.importFile(gpa, io, path, &flat, .copy);
     var kept = try keptScan(&roll, 0);
     defer kept.deinit(gpa);
     // Even all the way across, at the film's share of the brightest light.

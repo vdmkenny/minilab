@@ -1,6 +1,7 @@
 //! The app: its window, the workspaces in the header, and the one loop that draws them.
 
 const std = @import("std");
+const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
 const gui = @import("../ui/gui.zig");
@@ -46,6 +47,8 @@ const start_height = 900;
 const screenshot_frames = 4;
 const screenshot_frames_max = 600;
 const header_height = 44;
+/// How often the app looks for rolls and frames added on disk from outside it.
+const library_check_ms = 2000;
 
 const Notice = context.Notice;
 
@@ -82,10 +85,16 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     for (options.open) |path| try develop.openLoose(gpa, io, &library, path);
 
     var frames_drawn: usize = 0;
+    var library_checked: u64 = 0;
     var panels: Panels = .all;
     var show_help = options.shortcuts;
     while (!window.close_asked) {
         if (!window.beginFrame()) continue;
+        // Pick up rolls and frames added on disk from outside the app.
+        if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
+            library_checked = c.SDL_GetTicks();
+            _ = library.refresh(gpa, io);
+        }
         gui.newFrame();
         const keys = shortcuts.poll();
         for (std.enums.values(Workspace)) |w| {
@@ -203,7 +212,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
 
 /// Handles scans dropped on the window: adds them to the open roll, or opens them outside any roll
 /// when none is open.
-fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, paths: []const []const u8, notice: *Notice) void {
+fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, dropped: []const []const u8, notice: *Notice) void {
+    // A folder stands for the scans in it.
+    const paths = minilab.input.expand(gpa, io, dropped) catch |err| {
+        notice.set("Can't read what was dropped · {t}", .{err});
+        return;
+    };
+    defer minilab.input.freeExpanded(gpa, paths);
     if (develop.rollIndex(library)) |r| {
         const imported = library.importScans(gpa, io, r, paths);
         const added = library.rolls.items[r].frames.items.len - imported.first;
