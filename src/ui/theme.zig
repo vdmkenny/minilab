@@ -34,6 +34,8 @@ pub const histogram_ground = hex(0x1A1A1B);
 /// A selected card or row, one step lighter than the panel.
 pub const raised = hex(0x2A2A2D);
 pub const sprocket = hex(0x4A4A4E);
+/// The film of the strips on Rolls.
+pub const film = hex(0x0E0E0F);
 /// The scanner's film holder, where it covers the film's edges.
 pub const holder = hex(0x121213);
 /// The track of a slider to the right of its thumb.

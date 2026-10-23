@@ -110,6 +110,15 @@ pub const Perforations = struct {
     inset_mm: f32,
 };
 
+/// The size we draw the registration holes of 126, 110 and APS at, how far in from the edge, and
+/// how far apart APS's two are, in mm. These are drawing sizes: we don't have the formats' real ones
+/// to hand.
+pub const registration_hole = struct {
+    pub const size_mm = 1.5;
+    pub const inset_mm = 1;
+    pub const spacing_mm = 3;
+};
+
 /// Whether a frame's length follows from its height.
 pub const RatioLock = enum {
     /// The length follows from the height and the format's ratio.

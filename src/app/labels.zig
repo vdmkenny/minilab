@@ -37,10 +37,10 @@ fn ratio(r: f32) []const u8 {
     return gui.print("{d:.2}:1", .{r});
 }
 
-/// The note under the frames, like "35mm full frame, 3:2, for the whole roll."
+/// The note under the frames, like "35mm full frame · 3:2 · whole roll".
 pub fn rollFormatNote(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    return gui.print("{s} {s}, {s}, for the whole roll.", .{ filmSize(f.size), f.name, ratio(f.ratio()) });
+    return gui.print("{s} {s} · {s} · whole roll", .{ filmSize(f.size), f.name, ratio(f.ratio()) });
 }
 
 /// The film size as people say it: "35mm" rather than "135".

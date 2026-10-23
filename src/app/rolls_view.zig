@@ -24,7 +24,12 @@ const card_padding_x = 14;
 const card_padding_y = 12;
 const thumb_height = 64;
 const thumb_gap = 4;
-const sprocket_band = 8;
+/// The film before the first frame and after the last, in mm.
+const leader_mm: f32 = 3;
+/// The narrowest gap between frames on the strip, in mm, for film whose frames have none.
+const min_frame_gap_mm: f32 = 1;
+/// The border around each sheet of sheet film, in mm.
+const sheet_border_mm: f32 = 1.5;
 const row_gap = 12;
 const form_width = 340;
 const search_width = 240;
@@ -124,12 +129,12 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
     if (library.rolls.items.len == 0) {
-        gui.paragraph(theme.text_tertiary, "No rolls yet. Make one with New roll; then scan into it, or drop scans on its row.");
+        gui.paragraph(theme.text_tertiary, "No rolls yet · New roll to start");
     } else if (shown == 0) {
-        gui.paragraph(theme.text_tertiary, "No roll matches.");
+        gui.paragraph(theme.text_tertiary, "No matching rolls");
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
-    gui.paragraph(theme.text_tertiary, "Undeveloped frames show the raw scan. A roll is a folder: raw scans that are never changed, one settings file per frame, and the exports.");
+    gui.paragraph(theme.text_tertiary, "Undeveloped frames: raw scan");
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
@@ -185,7 +190,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
     if (state.focus_search) c.ImGui_SetKeyboardFocusHere();
     state.focus_search = false;
     _ = gui.textField("search", &state.search, "Search name, stock, camera", search_width);
-    shortcuts.tooltip("Finds rolls by name, stock or camera", .find);
+    shortcuts.tooltip("Search rolls", .find);
     c.ImGui_SameLineEx(0, gui.px(10));
     if (gui.combo("film size", &filter_names, state.size_filter, filter_width / gui.scale)) |picked| state.size_filter = picked;
     c.ImGui_SameLineEx(0, gui.px(10));
@@ -194,7 +199,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
         state.show_form = !state.show_form;
         state.form = .{};
     }
-    shortcuts.tooltip("A new roll in the library", .new_roll);
+    shortcuts.tooltip("New roll", .new_roll);
     // The plus sign, then the label, laid out as in the design: 12 pixels in, a 14-pixel icon,
     // then a 6-pixel gap.
     const list = c.ImGui_GetWindowDrawList();
@@ -245,70 +250,69 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
     }
 
-    // The filmstrip, centred in the row's height.
-    const number_height = gui.px(15);
-    const strip_height = gui.px(sprocket_band * 2 + thumb_gap * 2 + thumb_height + 3) + number_height;
-    const strip_x = origin.x + gui.px(card_width + 12);
-    const strip_top = origin.y + (card_height - strip_height) / 2;
-    const thumbs_top = strip_top + gui.px(sprocket_band + thumb_gap);
+    // The filmstrip: the film drawn to its own proportions, centred in the row's height, with the
+    // frame numbers under it.
     const height = gui.px(thumb_height);
+    const per_mm = height / format.height_mm;
+    const film_mm = format.size.filmWidthMm();
+    const sheets = film_mm == null;
+    const band = @round((film_mm orelse format.height_mm + 2 * sheet_border_mm) * per_mm);
+    const gap = @max(format.size.typicalGapMm(), min_frame_gap_mm) * per_mm;
+    const leader = (if (sheets) sheet_border_mm else leader_mm) * per_mm;
+    const number_height = gui.px(15);
+    const strip_x = origin.x + gui.px(card_width + 12);
+    const strip_top = @round(origin.y + (card_height - band - gui.px(3) - number_height) / 2);
+    const thumbs_top = strip_top + @round((band - height) / 2);
     const width = @round(height * format.ratio());
     const right = c.ImGui_GetWindowPos().x + c.ImGui_GetWindowWidth() - gui.px(page_padding_x);
     const more_width = gui.px(14 * 2) + c.ImGui_CalcTextSize("+00 more").x;
-    var fit = @max(1, @as(usize, @intFromFloat(@floor((right - strip_x + gui.px(thumb_gap)) / (width + gui.px(thumb_gap))))));
-    if (fit < total) fit = @max(1, @as(usize, @intFromFloat(@floor((right - strip_x - more_width) / (width + gui.px(thumb_gap))))));
+    // Each frame takes its width and the gap after it; sheets each have their own border.
+    const step = width + if (sheets) 2 * leader + gap else gap;
+    const room = right - strip_x + gap - if (sheets) 0 else 2 * leader;
+    var fit = @max(1, @as(usize, @intFromFloat(@floor(room / step))));
+    if (fit < total) fit = @max(1, @as(usize, @intFromFloat(@floor((room - more_width - gui.px(thumb_gap)) / step))));
     const shown = @min(total, fit);
+    const strip_end = strip_x + @as(f32, @floatFromInt(shown)) * step - gap + if (sheets) 0 else 2 * leader;
+    const film_ink = theme.imU32(theme.film);
+    if (shown > 0 and !sheets) {
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(strip_x, strip_top), gui.vec2(strip_end, strip_top + band), film_ink, gui.px(2), 0);
+        drawHoles(list, format.size, strip_x, strip_end, strip_top, band, per_mm, strip_x + leader, step, shown);
+    }
 
-    var x = strip_x;
+    var x = strip_x + if (sheets) 0 else leader;
     for (0..shown) |frame| {
-        const corner = gui.vec2(x, thumbs_top);
-        const far = gui.vec2(x + width, thumbs_top + height);
+        const picture_x = x + if (sheets) leader else 0;
+        if (sheets) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, strip_top), gui.vec2(x + width + 2 * leader, strip_top + band), film_ink, gui.px(2), 0);
+        const corner = gui.vec2(picture_x, thumbs_top);
+        const far = gui.vec2(picture_x + width, thumbs_top + height);
+        const numbers_y = strip_top + band + gui.px(3);
         c.ImGui_SetCursorScreenPos(corner);
         c.ImGui_PushIDInt(@intCast(frame));
-        if (c.ImGui_InvisibleButton("frame", gui.vec2(width, height + gui.px(3) + number_height), 0)) action = .{ .open = .{ .roll = index, .frame = frame } };
+        if (c.ImGui_InvisibleButton("frame", gui.vec2(width, numbers_y + number_height - thumbs_top), 0)) action = .{ .open = .{ .roll = index, .frame = frame } };
         c.ImGui_PopID();
         if (library.thumbnail(gpa, .{ .roll = index, .frame = frame })) |t| {
-            gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(2));
+            gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(1));
         } else {
-            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(2), 0);
+            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(1), 0);
         }
         fonts.pushSized(.mono, 11);
         const number = gui.print("{d:0>2}", .{frame + 1});
         const number_width = c.ImGui_CalcTextSize(number).x;
-        c.ImDrawList_AddText(list, gui.vec2(x + (width - number_width) / 2, far.y + gui.px(3)), theme.imU32(theme.text_tertiary), number);
+        c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.text_tertiary), number);
         fonts.pop();
-        x += width + gui.px(thumb_gap);
+        x += step;
     }
     if (total > shown) {
-        const corner = gui.vec2(x, thumbs_top);
+        const corner = gui.vec2(strip_end + gui.px(thumb_gap), thumbs_top);
         c.ImGui_SetCursorScreenPos(corner);
         if (c.ImGui_InvisibleButton("more", gui.vec2(more_width, height), 0)) action = .{ .open = .{ .roll = index, .frame = shown } };
         gui.dashedRect(list, corner, gui.vec2(corner.x + more_width, corner.y + height), theme.imU32(theme.border), 1, gui.px(4), gui.px(3));
         const more = gui.print("+{d} more", .{total - shown});
         const size = c.ImGui_CalcTextSize(more);
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.text_secondary), more);
-        x += more_width + gui.px(thumb_gap);
     }
     if (total == 0) {
-        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet: scan into this roll, or drop scans here.");
-    }
-
-    // The film's holes: rows along both edges, or a few per frame along the top edge.
-    const holes: formats.Holes = if (total == 0) .none else format.size.holes();
-    const edges = [_]f32{ strip_top + gui.px(sprocket_band / 2), thumbs_top + height + gui.px(3) + number_height + gui.px(thumb_gap + sprocket_band / 2) };
-    const ink = theme.imU32(theme.sprocket);
-    switch (holes) {
-        .none => {},
-        .rows => for (edges) |y| {
-            var hole = strip_x + gui.px(6);
-            while (hole < right) : (hole += gui.px(12)) c.ImDrawList_AddCircleFilled(list, gui.vec2(hole, y), gui.px(1.6), ink, 8);
-        },
-        .per_frame => |count| {
-            var frame_x = strip_x;
-            while (frame_x < right) : (frame_x += width + gui.px(thumb_gap)) {
-                for (0..count) |k| c.ImDrawList_AddCircleFilled(list, gui.vec2(frame_x + gui.px(6) + @as(f32, @floatFromInt(k)) * gui.px(7), edges[0]), gui.px(2), ink, 8);
-            }
-        },
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet · scan or drop scans here");
     }
 
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
@@ -319,6 +323,40 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
         }
     }
     return action;
+}
+
+/// Punches the film's holes into a strip from `left` to `right`, `band` high: rows along both
+/// edges, or one or two along the top edge at the start of each of `frames` frames, the first at
+/// `first_frame` and the rest `step` apart. They're drawn in the page's colour, so they look cut out.
+fn drawHoles(list: *c.ImDrawList, size: formats.FilmSize, left: f32, right: f32, top: f32, band: f32, per_mm: f32, first_frame: f32, step: f32, frames: usize) void {
+    const ink = theme.imU32(theme.page);
+    switch (size.holes()) {
+        .none => {},
+        .rows => |p| {
+            const pitch = p.pitch_mm * per_mm;
+            const length = p.length_mm * per_mm;
+            const across = p.height_mm * per_mm;
+            const inset = p.inset_mm * per_mm;
+            const radius = @min(length, across) / 4;
+            var at = left + (pitch - length) / 2;
+            while (at + length <= right) : (at += pitch) {
+                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + inset), gui.vec2(at + length, top + inset + across), ink, radius, 0);
+                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + band - inset - across), gui.vec2(at + length, top + band - inset), ink, radius, 0);
+            }
+        },
+        .per_frame => |count| {
+            const hole = formats.registration_hole;
+            const side = hole.size_mm * per_mm;
+            const y = top + hole.inset_mm * per_mm;
+            for (0..frames) |i| {
+                const start = first_frame + @as(f32, @floatFromInt(i)) * step;
+                for (0..count) |k| {
+                    const centre = start + (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * hole.spacing_mm * per_mm;
+                    c.ImDrawList_AddRectFilledEx(list, gui.vec2(centre - side / 2, y), gui.vec2(centre + side / 2, y + side), ink, side / 4, 0);
+                }
+            }
+        },
+    }
 }
 
 /// Draws the new-roll panel. Returns the new roll's index once it's made.
@@ -371,7 +409,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     gui.rowLabel("Format");
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
     c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-    gui.paragraph(theme.text_tertiary, "One format for the whole roll; detection snaps every frame to it. Sizes are nominal and measured from the scan.");
+    gui.paragraph(theme.text_tertiary, "One format per roll · nominal sizes, measured from the scan");
     gui.rowLabel("Camera");
     _ = gui.textField("camera", &form.camera, "[Camera]", 0);
     gui.rowLabel("Lens");
@@ -400,7 +438,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
         c.ImGui_PopID();
         c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-        gui.paragraph(theme.text_tertiary, "Optional: the light source with no film, at the frames' exposure. Every frame imported is divided by it, to even out the light.");
+        gui.paragraph(theme.text_tertiary, "Optional · the light with no film, same exposure · evens out the light");
     }
 
     // The button sits at the bottom of the panel.
@@ -426,9 +464,9 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     }) catch |err| {
         std.log.err("can't make the roll: {t}", .{err});
         form.problem = switch (err) {
-            error.RollExists => "The library has a roll of that name already.",
-            error.BadRollName => "A roll's name can't hold / \\ or :, or be . or ..",
-            else => "The roll couldn't be made; the log says why.",
+            error.RollExists => "Name already used",
+            error.BadRollName => "Invalid name · no / \\ or :, not . or ..",
+            else => "Roll not created",
         };
         return null;
     };
