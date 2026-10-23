@@ -421,7 +421,7 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
         state.applyFilter(r);
     }
     c.ImGui_PopStyleVar();
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Choose frames by stars · rejected ones left out");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Rejected left out");
     c.ImGui_SetCursorScreenPos(gui.vec2(all_x, top));
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
     shortcuts.tooltip("Selects every frame of the roll", .select_all);
@@ -792,7 +792,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
         _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
         c.ImGui_PopStyleVar();
         fonts.pop();
-        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("Pixels · {d} to {d} · smaller frames keep their size", .{ min_custom_edge, max_custom_edge }).ptr);
+        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
         const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
         const unit = if (state.customEdge() == null) "px · full resolution until set" else "px";
         c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(90 + 8), unit_y), theme.imU32(theme.text_tertiary), unit);
@@ -896,7 +896,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
     const add_width = c.ImGui_CalcTextSize("Add field").x + gui.px(10 * 2 + 2);
     c.ImGui_SetCursorScreenPos(gui.vec2(x + width - add_width, y));
     const add = gui.buttonOf(.normal, "Add field", gui.vec2(add_width / gui.scale, detail_row));
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("A field of your own · written into the files' XMP");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Written to XMP");
     y += row + gui.px(metadata_gap);
     syncFields(state, ctx.gpa, r);
     var remove: ?usize = null;
@@ -922,7 +922,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
         c.ImGui_SetCursorScreenPos(gui.vec2(x + width - remove_size, y));
         if (c.ImGui_InvisibleButton("remove", gui.vec2(remove_size, remove_size), 0)) remove = i;
         const hovered = c.ImGui_IsItemHovered(0);
-        if (hovered) c.ImGui_SetTooltip("Remove the field");
+        if (hovered) c.ImGui_SetTooltip("Remove");
         const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
         const arm = gui.px(4);
         const ink = theme.imU32(if (hovered) theme.text else theme.text_tertiary);
@@ -972,7 +972,7 @@ fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.D
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
     c.ImGui_PopStyleVar();
-    if (which == .shot and c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("2026, 2026-10 or 2026-10-22 go in as dates · anything else as text");
+    if (which == .shot and c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("YYYY, YYYY-MM or YYYY-MM-DD");
     if (trackEdit(state, .{ .detail = which })) {
         r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
     }

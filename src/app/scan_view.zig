@@ -671,9 +671,6 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
             y = drawDriverSetup(ctx, list, x, y, width);
         } else if (state.problem) |problem| {
             y += paragraphAt(list, x, y, width, theme.text_tertiary, problem) + gui.px(scanner_gap);
-        } else if (state.devices.len == 0) {
-            // The device list says no scanner was found.
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Check the USB cable and power") + gui.px(scanner_gap);
         }
         // Looking again also loads the drivers again, once they're installed.
         c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -759,60 +756,52 @@ const sane_install = "brew install sane-backends";
 const homebrew_paths = [_][]const u8{ "/opt/homebrew/bin/brew", "/usr/local/bin/brew" };
 
 /// Draws the steps to get scanner drivers when minilab can't find any: on a Mac, Homebrew and then
-/// SANE, with a button for each step; on Linux, the distribution's SANE package; on Windows, the
-/// scanner maker's TWAIN driver. Refresh, drawn after this, picks them up. Returns the y below.
+/// SANE, with a button for each; on Linux, the SANE package; on Windows, the maker's TWAIN driver.
+/// The Refresh after it picks them up. Returns the y below.
 fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, width: f32) f32 {
     var y = top;
     switch (builtin.os.tag) {
         .windows => {
             y += lineAt(list, x, y, theme.text, "Scanner driver needed") + gui.px(group_gap);
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Install the scanner maker's TWAIN driver") + gui.px(scanner_gap);
-            return y;
+            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Maker's TWAIN driver") + gui.px(scanner_gap);
         },
         .macos => {
-            y += lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(group_gap);
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Free drivers for most scanners · installed once with Homebrew") + gui.px(scanner_gap);
-
-            // 1. Homebrew, unless it's there already.
+            y += lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(scanner_gap);
             var has_homebrew = false;
             for (homebrew_paths) |path| {
                 if (std.Io.Dir.cwd().access(ctx.io, path, .{})) |_| has_homebrew = true else |_| {}
             }
-            y = setupStep(list, x, y, width, "1", "Homebrew", if (has_homebrew) "Installed" else "brew.sh");
+            y = setupStep(list, x, y, width, "1", "Homebrew", if (has_homebrew) "Installed" else null);
             if (!has_homebrew) {
                 c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(step_indent), y));
                 if (gui.buttonOf(.normal, "Get Homebrew", gui.vec2(0, pill_height))) _ = c.SDL_OpenURL(homebrew_url);
-                if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Opens brew.sh · its install command goes in Terminal");
+                if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("brew.sh");
                 y += gui.px(pill_height) + gui.px(scanner_gap);
             }
-
-            // 2. SANE, from a command to paste into Terminal.
             y = setupStep(list, x, y, width, "2", "SANE", sane_install);
             c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(step_indent), y));
-            if (gui.buttonOf(.normal, "Copy command", gui.vec2(0, pill_height))) {
+            if (gui.buttonOf(.normal, "Copy", gui.vec2(0, pill_height))) {
                 _ = c.SDL_SetClipboardText(sane_install);
-                ctx.notice.set("Command copied · paste it in Terminal", .{});
+                ctx.notice.set("Copied", .{});
             }
+            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("For Terminal");
             y += gui.px(pill_height) + gui.px(scanner_gap);
-
-            // 3. Refresh, which the caller draws.
-            y = setupStep(list, x, y, width, "3", "Refresh", "after the install finishes");
-            return y;
+            y = setupStep(list, x, y, width, "3", "Refresh", null);
         },
         else => {
             y += lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(group_gap);
-            y += paragraphAt(list, x, y, width, theme.text_tertiary, "Install your distribution's SANE package (libsane, sane-backends) · then Refresh") + gui.px(scanner_gap);
-            return y;
+            y += paragraphAt(list, x, y, width, theme.text_tertiary, "sane-backends package") + gui.px(scanner_gap);
         },
     }
+    return y;
 }
 
 /// How far a setup step's details sit in from its number.
 const step_indent = 22;
 
-/// Draws a numbered setup step: its number, its name, and a detail under the name. Returns the y
+/// Draws a numbered setup step: its number, its name, and any detail under the name. Returns the y
 /// below it.
-fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]const u8, name: []const u8, detail: []const u8) f32 {
+fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]const u8, name: []const u8, detail: ?[]const u8) f32 {
     const radius = gui.px(9);
     const middle = top + lineHeight() / 2;
     c.ImDrawList_AddCircleFilled(list, gui.vec2(x + radius, middle), radius, theme.imU32(theme.control), 16);
@@ -822,9 +811,11 @@ fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]cons
     fonts.pop();
     var y = top;
     y += lineAt(list, x + gui.px(step_indent), y, theme.text_secondary, name);
-    fonts.pushSized(.mono, 12);
-    y += paragraphAt(list, x + gui.px(step_indent), y, width - gui.px(step_indent), theme.text_tertiary, detail);
-    fonts.pop();
+    if (detail) |text| {
+        fonts.pushSized(.mono, 12);
+        y += paragraphAt(list, x + gui.px(step_indent), y, width - gui.px(step_indent), theme.text_tertiary, text);
+        fonts.pop();
+    }
     return y + gui.px(group_gap);
 }
 
