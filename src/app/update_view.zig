@@ -104,7 +104,7 @@ fn drawNotes(notes: []const update.Note) void {
 /// The command that lets an unsigned build through macOS's quarantine, with a button to copy it.
 fn drawUnquarantine(ctx: context.Context, folder: []const u8) void {
     const command = gui.print("xattr -dr com.apple.quarantine \"{s}\"", .{folder});
-    gui.textColored(theme.text_secondary, "You may need to turn off macOS Gatekeeper to launch minilab after updating");
+    gui.textColored(theme.text_secondary, "You may need to turn off macOS Gatekeeper for minilab after updating");
     fonts.pushSized(.mono, fonts.small_size);
     gui.paragraph(theme.text_tertiary, command);
     fonts.pop();
