@@ -604,7 +604,7 @@ pub const State = struct {
         }
         c.ImGui_Separator();
         if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("3D or 1D LUT · sRGB or Rec. 709 input · copied to the library's Looks folder");
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("3D or 1D · sRGB or Rec. 709");
     }
 
     /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
@@ -656,7 +656,7 @@ pub const State = struct {
         var included = false;
         for (measured) |m| included = included or std.mem.eql(u8, m.roll, rl.info.name);
         const status = if (measured.len == 0)
-            gui.print("{s} not calibrated · needs a roll of {d}+ frames of a stock with a preset", .{ scanner, minilab.calibration.min_frames })
+            gui.print("{s} not calibrated", .{scanner})
         else
             gui.print("{s} calibrated from {d} {s}{s}", .{ scanner, measured.len, if (measured.len == 1) "roll" else "rolls", if (included) " · this one included" else "" });
         gui.paragraph(theme.text_tertiary, status);
@@ -665,7 +665,6 @@ pub const State = struct {
         const label: [:0]const u8 = if (measured.len == 0) "Calibrate from this roll" else if (included) "Measure this roll again" else "Add this roll";
         if (gui.button(label)) state.calibrate(gpa, io, library, r, scanner);
         c.ImGui_EndDisabled();
-        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Median neutral balance of the frames against the datasheet · one preset stock calibrates all");
         if (state.calibration_note.len > 0) {
             gui.rowLabel("");
             gui.paragraph(theme.text_tertiary, state.calibration_note.text());
@@ -930,14 +929,14 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
     c.ImGui_Dummy(gui.vec2(0, gui.px(10) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
     if (roll_index == null) {
-        if (total == 0) gui.paragraph(theme.text_tertiary, "No scans · drop one on the window");
+        if (total == 0) gui.paragraph(theme.text_tertiary, "No scans");
         for (state.loose.items, 0..) |path, i| {
             c.ImGui_PushIDInt(@intCast(i));
             if (c.ImGui_SelectableEx(gui.print("{s}", .{std.fs.path.basename(path)}), state.selected == i, 0, gui.vec2(0, 0))) clicked = i;
             c.ImGui_PopID();
         }
     } else if (total == 0) {
-        gui.paragraph(theme.text_tertiary, "No frames · drop scans on the window");
+        gui.paragraph(theme.text_tertiary, "No frames");
     } else {
         const r = roll_index.?;
         const list = c.ImGui_GetWindowDrawList();
@@ -1033,7 +1032,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     shortcuts.tooltip("Clipped highlights red, shadows blue", .clipping);
     c.ImGui_SameLineEx(0, gui.px(12));
     _ = gui.checkbox("Loupe", &state.loupe);
-    shortcuts.tooltip("Full resolution under the cursor", .loupe);
+    shortcuts.tooltip("Full resolution", .loupe);
     c.ImGui_SameLineEx(0, gui.px(12));
     c.ImGui_BeginDisabled(state.frame == null);
     const crop_corner = c.ImGui_GetCursorScreenPos();
@@ -1042,7 +1041,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     c.ImGui_PopStyleVar();
     drawCropIcon(list, gui.vec2(crop_corner.x + gui.px(10), crop_corner.y + (c.ImGui_GetFrameHeight() - gui.px(14)) / 2));
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Crop and turn · keeps the roll's format", .crop);
+    shortcuts.tooltip("Crop and turn", .crop);
     if (crop_clicked) {
         if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err}) else state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
     }
@@ -1070,13 +1069,13 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Detect the frame");
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.button("Turn left")) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("Rotate left, after crop", .turn_left);
+        shortcuts.tooltip("Rotate left", .turn_left);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.button("Turn right")) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("Rotate right, after crop", .turn_right);
+        shortcuts.tooltip("Rotate right", .turn_right);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.buttonOf(if (state.cropping.?.mirrored) .selected else .normal, "Mirror", gui.vec2(0, 0))) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
-        shortcuts.tooltip("Flip left to right · for scans from the wrong side", .mirror);
+        shortcuts.tooltip("Flip", .mirror);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.buttonOf(.primary, "Done", gui.vec2(0, 0))) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
         shortcuts.tooltip("Keeps the crop", .confirm);
@@ -1272,7 +1271,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         tag(list, gui.vec2(max.x - gui.px(10), min.y + gui.px(10)), "Positive", .right);
     }
     if (state.picking != .none) {
-        const what = if (state.picking == .base) "Click the film base · rebate or gap · Esc to cancel" else "Click something neutral gray · Esc to cancel";
+        const what = if (state.picking == .base) "Click the film base · Esc to cancel" else "Click something neutral gray · Esc to cancel";
         const size = c.ImGui_CalcTextSize(what);
         tag(list, gui.vec2((min.x + max.x) / 2 + size.x / 2 + gui.px(8), max.y - gui.px(10) - size.y - gui.px(4)), what, .right);
     }
@@ -1623,7 +1622,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var mired = 1e6 / kelvin.*;
     var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Light it was shot in · 5500 K daylight · lower cools, higher warms");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Shooting light");
     const shown = gui.print("{d:.0} K", .{kelvin.*});
     gui.valueText(shown);
     c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
@@ -1671,7 +1670,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Datasheet curve per layer · stock balance once calibrated · off: metadata only");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Per-layer datasheet curves");
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.
@@ -1703,7 +1702,7 @@ fn drawBase(state: *State) void {
     if (gui.buttonOf(if (state.picking == .base) .selected else .normal, pick_label, gui.vec2(0, 0))) {
         state.picking = if (state.picking == .base) .none else .base;
     }
-    shortcuts.tooltip("Pick the film base · rebate or gap", .base);
+    shortcuts.tooltip("Pick the film base", .base);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x, corner.y + row_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
     gui.endSection(true);
@@ -1723,7 +1722,6 @@ fn drawMatrix(state: *State) void {
     if (!c.ImGui_BeginPopup("matrix", 0)) return;
     defer c.ImGui_EndPopup();
     gui.heading("DENSITY MATRIX");
-    gui.paragraph(theme.text_tertiary, "Output density from the scan's three channels · for dye crosstalk");
     for (&s.matrix, [_][]const u8{ "R", "G", "B" }) |*row, name| {
         c.ImGui_AlignTextToFramePadding();
         gui.textColored(theme.text_secondary, name);
@@ -1747,10 +1745,10 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     if (gui.buttonOf(.primary, "Sync to roll…", gui.vec2(sync_width / gui.scale, bottom_bar_height)) or state.ask_sync) _ = c.ImGui_OpenPopup("sync", 0);
     state.ask_sync = false;
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Copy settings to the roll's other frames", .sync);
+    shortcuts.tooltip("Sync to roll", .sync);
     c.ImGui_SameLineEx(0, gui.px(8));
     if (gui.buttonOf(.outline, "Reset", gui.vec2(reset_width / gui.scale, bottom_bar_height))) state.reset(io, library);
-    shortcuts.tooltip("Automatic settings · frame back to undeveloped", .reset);
+    shortcuts.tooltip("Reset", .reset);
 
     const r = roll_index orelse return;
     if (!c.ImGui_BeginPopup("sync", 0)) return;
@@ -1767,7 +1765,6 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
         .{ &state.sync.geometry, "Crop, turns and mirror" },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
-    gui.textColored(theme.text_tertiary, "Unchecked settings stay per frame · automatic white balance per frame");
     if (gui.buttonOf(.primary, "Sync", gui.vec2(0, 0))) {
         var failed: usize = 0;
         for (0..rl.frames.items.len) |i| {

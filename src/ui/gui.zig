@@ -246,7 +246,7 @@ pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, w
         if (c.ImGui_SelectableEx(print("{s}", .{item}).ptr, i == chosen, 0, vec2(0, 0))) picked = i;
         c.ImGui_PopID();
     }
-    if (first == null) textColored(theme.text_tertiary, "Nothing matches.");
+    if (first == null) textColored(theme.text_tertiary, "No matches");
     if (entered and picked == null) {
         if (first) |i| {
             picked = i;
