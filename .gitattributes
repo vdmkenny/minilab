@@ -1,0 +1,3 @@
+# The program embeds the built-in LUT as it is, so it keeps the same bytes on every system. Git on
+# Windows would otherwise check it out with CRLF line endings, and the build's check on it fails.
+*.cube text eol=lf
