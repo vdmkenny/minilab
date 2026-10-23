@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>minilab: scan, develop and export film</title>
+  <meta name="description" content="minilab scans, develops and exports film, a roll at a time. Colour and black and white negatives and slides, on macOS, Linux and Windows. Free and open source.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="hero">
+    <img class="icon" src="icon.svg" width="112" height="112" alt="minilab's icon: an amber film strip on a dark tile">
+    <h1>minilab</h1>
+    <p class="lead">Scan, develop and export film, a roll at a time.</p>
+    <p class="facts">Colour and B&amp;W negatives and slides · macOS, Linux and Windows · Free and open source</p>
+    <nav class="actions">
+      <a class="button primary" href="#download">Download</a>
+      <a class="button" href="https://github.com/vdmkenny/minilab">Source on GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <figure class="shot wide">
+      <img src="images/rolls.webp" width="2880" height="1800" alt="The Rolls workspace, with each roll as a contact sheet">
+    </figure>
+
+    <p class="intro">Scan on a flatbed, photograph your negatives with a camera, or bring in finished
+      scans from a lab. minilab finds the frames, inverts the negatives, corrects the colour and
+      exports the results.</p>
+
+    <section class="feature">
+      <figure class="shot"><img src="images/develop.webp" width="2880" height="1800" loading="lazy" alt="Develop, with a raw negative scan and its positive side by side"></figure>
+      <div class="text">
+        <h2>Raw</h2>
+        <p>minilab switches the scanner's own processing off and scans raw: linear, 16 bits per
+          channel, with the orange mask kept. The Epson V200 has a measured profile. For other SANE
+          scanners, minilab works the raw settings out from the driver's options.</p>
+        <p>Camera RAW files work the same way. Develop measures the film base in the gaps between
+          frames and inverts in density.</p>
+      </div>
+    </section>
+
+    <section class="feature">
+      <figure class="shot"><img src="images/scan.webp" width="2880" height="1800" loading="lazy" alt="Scan, with the frames found on a strip's preview"></figure>
+      <div class="text">
+        <h2>Frame detection</h2>
+        <p>minilab finds the frames on the scanner's preview, on a strip scan or on a camera shot,
+          for 35mm, half frame, 120 and the other formats.</p>
+        <p>Fix any box by hand, then scan the frames into the roll. A strip scan you import becomes
+          one frame for each frame on it.</p>
+      </div>
+    </section>
+
+    <section class="feature">
+      <figure class="shot"><img src="images/export.webp" width="2880" height="1800" loading="lazy" alt="Export, with a roll's frames and its metadata"></figure>
+      <div class="text">
+        <h2>A roll at a time</h2>
+        <p>A roll holds its scans, its film, camera and notes. Scan it, develop it, export it.</p>
+        <p>Settings sync across the roll. Exports are TIFF or JPEG in sRGB, Display P3, Adobe RGB or
+          ProPhoto RGB, with the roll's camera, lens, film stock, date and your own fields as EXIF
+          and XMP.</p>
+      </div>
+    </section>
+
+    <section class="feature">
+      <figure class="shot"><img src="images/looks.webp" width="2880" height="1800" loading="lazy" alt="Looks, with one frame in each of GlassMeter's film looks"></figure>
+      <div class="text">
+        <h2>Colour and looks</h2>
+        <p>For stocks with a published datasheet, minilab uses the maker's curves to open up the
+          shadows, and it can balance the colour from the stock's data.</p>
+        <p>On top goes a look: Frontier emulation, 85 film looks from three free collections, any
+          .cube LUT, or a fitted look that matches your lab, made from a few frames scanned by
+          both.</p>
+      </div>
+    </section>
+
+    <section class="more">
+      <h2>Also</h2>
+      <ul>
+        <li><strong>Formats</strong> 35mm, half frame, 120, 127, 110, 126, APS, Minox, sheet film and glass plates</li>
+        <li><strong>Lab scans</strong> kept as they are, next to your other rolls</li>
+        <li><strong>Flat field</strong> evens out the light behind camera scans</li>
+        <li><strong>Ratings</strong> stars and rejects, with Lightroom's keys</li>
+        <li><strong>Loupe</strong> the scan at full resolution, to check focus and grain</li>
+        <li><strong>Command line</strong> import, scan and develop from the terminal</li>
+      </ul>
+    </section>
+
+    <section id="download" class="download">
+      <h2>Download</h2>
+      <p id="release" class="release">The latest release is on <a href="https://github.com/vdmkenny/minilab/releases/latest">GitHub</a>.</p>
+      <ul id="files" class="files"></ul>
+      <p id="extras" class="extras"><a href="https://github.com/vdmkenny/minilab/releases">All releases</a></p>
+
+      <div class="setup">
+        <h3>macOS</h3>
+        <p>The builds aren't signed, so run this once in the unpacked folder to let minilab and its
+          scanner drivers through:</p>
+        <pre><code>xattr -dr com.apple.quarantine .</code></pre>
+        <h3>Linux and Windows</h3>
+        <p>To scan on Linux, install your distribution's SANE package. On Windows, install your
+          scanner maker's TWAIN driver.</p>
+        <p>To build minilab yourself, see the <a href="https://github.com/vdmkenny/minilab#building-it-yourself">README</a>.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>minilab · Mozilla Public License 2.0</span>
+    <a href="https://github.com/vdmkenny/minilab">GitHub</a>
+    <a href="https://github.com/vdmkenny/minilab/blob/main/docs/design.md">How it works</a>
+  </footer>
+
+  <script src="downloads.js"></script>
+</body>
+</html>
