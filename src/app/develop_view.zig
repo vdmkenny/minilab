@@ -1239,19 +1239,22 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
 
     c.ImDrawList_PushClipRect(list, area_min, area_max, true);
     defer c.ImDrawList_PopClipRect(list);
+    // Where the split is now: a drag above may have just moved it, and the halves have to be cut
+    // at the same place on screen as in the pictures, or they stretch.
+    const split_now = min.x + shown.x * state.split;
     switch (state.compare) {
         .positive => c.ImDrawList_AddImage(list, positive.ref(), min, max),
         .negative => c.ImDrawList_AddImage(list, negative.ref(), min, max),
         .split => {
-            c.ImDrawList_AddImageEx(list, negative.ref(), min, gui.vec2(split_x, max.y), gui.vec2(0, 0), gui.vec2(state.split, 1), 0xFFFFFFFF);
-            c.ImDrawList_AddImageEx(list, positive.ref(), gui.vec2(split_x, min.y), max, gui.vec2(state.split, 0), gui.vec2(1, 1), 0xFFFFFFFF);
+            c.ImDrawList_AddImageEx(list, negative.ref(), min, gui.vec2(split_now, max.y), gui.vec2(0, 0), gui.vec2(state.split, 1), 0xFFFFFFFF);
+            c.ImDrawList_AddImageEx(list, positive.ref(), gui.vec2(split_now, min.y), max, gui.vec2(state.split, 0), gui.vec2(1, 1), 0xFFFFFFFF);
         },
     }
     gui.outline(gui.vec2(min.x - 1, min.y - 1), gui.vec2(max.x + 1, max.y + 1), theme.border, 0, 1);
     if (state.compare == .split) {
         const amber = theme.imU32(theme.accent);
-        c.ImDrawList_AddRectFilled(list, gui.vec2(split_x - gui.px(1), min.y), gui.vec2(split_x + gui.px(1), max.y), amber);
-        c.ImDrawList_AddCircleFilled(list, gui.vec2(split_x, (min.y + max.y) / 2), gui.px(11), amber, 24);
+        c.ImDrawList_AddRectFilled(list, gui.vec2(split_now - gui.px(1), min.y), gui.vec2(split_now + gui.px(1), max.y), amber);
+        c.ImDrawList_AddCircleFilled(list, gui.vec2(split_now, (min.y + max.y) / 2), gui.px(11), amber, 24);
         tag(list, gui.vec2(min.x + gui.px(10), min.y + gui.px(10)), "Negative", .left);
         tag(list, gui.vec2(max.x - gui.px(10), min.y + gui.px(10)), "Positive", .right);
     }
