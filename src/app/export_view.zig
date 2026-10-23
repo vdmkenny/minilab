@@ -375,7 +375,7 @@ fn drawNoRoll() ?context.Workspace {
     c.ImGui_SetCursorScreenPos(at);
     const width = c.ImGui_CalcTextSize("Go to Rolls").x / gui.scale + 24 + 2;
     const go = gui.buttonOf(.normal, "Go to Rolls", gui.vec2(width, control_height));
-    shortcuts.tooltip("The library's rolls", .rolls);
+    shortcuts.tooltip("Rolls", .rolls);
     return if (go) .rolls else null;
 }
 
@@ -432,10 +432,10 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Rejected left out");
     c.ImGui_SetCursorScreenPos(gui.vec2(all_x, top));
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
-    shortcuts.tooltip("Selects every frame of the roll", .select_all);
+    shortcuts.tooltip("Select all", .select_all);
     c.ImGui_SetCursorScreenPos(gui.vec2(right - none_width, top));
     if (outlineButton("Select none", gui.vec2(none_width, height))) state.selectAll(false);
-    shortcuts.tooltip("Clears the selection", .select_none);
+    shortcuts.tooltip("Select none", .select_none);
 }
 
 /// A button with a border and no fill, and its label in the secondary colour: the design's
@@ -461,7 +461,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
     const list = c.ImGui_GetWindowDrawList();
     const origin = c.ImGui_GetCursorScreenPos();
     if (total == 0) {
-        c.ImDrawList_AddText(list, origin, theme.imU32(theme.text_tertiary), "No frames yet · scan or drop scans in Rolls");
+        c.ImDrawList_AddText(list, origin, theme.imU32(theme.text_tertiary), "No frames yet");
         return;
     }
     const width = c.ImGui_GetContentRegionAvail().x;
@@ -565,7 +565,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
             gui.print("Exporting {d} of {d} · {s}.{s} · {s}", .{ current + 1, batch.jobs.len, job.stem, batch.options.format.extension(), batch.stage.load(.acquire).label() });
         if (!cancelling) {
             if (link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
-            shortcuts.tooltip("Stops after the current frame", .cancel);
+            shortcuts.tooltip("Cancel", .cancel);
         }
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
         // The progress bar, on the second line.
@@ -657,7 +657,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     y += gui.px(small_line + block_gap);
     y = drawMetadata(state, ctx, roll_index, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · XMP sidecar beside each file");
+    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
 
     // Export, at the bottom.
     const button_y = @max(y + gui.px(block_gap), origin.y + height - gui.px(panel_padding + export_height));
@@ -725,7 +725,7 @@ fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
         c.ImGui_SetCursorScreenPos(at);
         if (choice == .heic) {
             drawUnavailable(label, gui.vec2(pill_width, height));
-            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("HDR with gain map · no HEIC encoder yet");
+            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Not available yet");
         } else {
             if (gui.buttonOf(if (state.file == choice) .selected else .unselected, label, gui.vec2(pill_width / gui.scale, pill_height))) state.file = choice;
         }
@@ -754,7 +754,7 @@ fn formatNote(state: *const State) []const u8 {
         .jpeg => gui.print("8-bit · quality {d} · ICC profile", .{options.quality}),
         .heic => "HDR with gain map · not available yet",
     };
-    const banding = if (options.space == .prophoto and options.bits() == .eight) " · risk of banding in 8-bit ProPhoto RGB" else "";
+    const banding = if (options.space == .prophoto and options.bits() == .eight) " · banding risk in 8-bit" else "";
     return gui.print("{s}{s}", .{ base, banding });
 }
 
@@ -804,7 +804,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
         fonts.pop();
         if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
         const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
-        const unit = if (state.customEdge() == null) "px · full resolution until set" else "px";
+        const unit = if (state.customEdge() == null) "px" else "px";
         c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(90 + 8), unit_y), theme.imU32(theme.text_tertiary), unit);
         y += row + gui.px(grid_gap);
     }
@@ -817,14 +817,14 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PopStyleVar();
     fonts.pop();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip("{roll} roll name, lower case, no spaces · {name} roll name as is\n{frame} frame number · {frame:02} two digits\n{stock} film stock · {date} date shot (or made)");
+        c.ImGui_SetTooltip("{roll}  roll name, lowercase\n{name}  roll name\n{frame}  frame number\n{frame:02}  two digits\n{stock}  film stock\n{date}  date shot");
     }
     y += row;
     if (exporting.checkPattern(std.mem.sliceTo(&state.pattern, 0))) |_| {} else |err| {
         y += gui.px(4);
         const problem = switch (err) {
-            error.NoFrameNumber => "{frame} missing · every frame would get the same name",
-            error.UnknownField => "Unknown field · hover for the list",
+            error.NoFrameNumber => "{frame} missing",
+            error.UnknownField => "Unknown field",
             error.UnclosedBrace => "Unclosed brace",
         };
         y += wrapped(list, gui.vec2(control_x, y), control_width, theme.accent, problem);
@@ -838,7 +838,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField("folder", &state.folder, "Roll/exports", (control_width - choose_width - gui.px(6)) / gui.scale);
     c.ImGui_PopStyleVar();
-    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Relative to the library folder, or a full path");
+    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Relative to the library");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x + control_width - choose_width, y));
     c.ImGui_BeginDisabled(state.dialog.isShowing());
     if (gui.buttonOf(.normal, "Choose", gui.vec2(choose_width / gui.scale, control_height))) chooseFolder(state, ctx);

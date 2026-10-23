@@ -154,7 +154,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
         switch (workspace) {
             .rolls => switch (rolls_view.draw(&rolls, &library, gpa, io, drop)) {
-                .none => if (drop != null) notice.set("Drop scans on a roll's row", .{}),
+                .none => if (drop != null) notice.set("Drop on a roll's row", .{}),
                 .open => |at| {
                     try develop.openRoll(gpa, io, &library, library.rolls.items[at.roll].path);
                     if (at.frame < library.rolls.items[at.roll].frames.items.len) develop.select(gpa, io, &library, at.frame);

@@ -367,12 +367,12 @@ pub const State = struct {
         const index = switch (state.selected) {
             .own => |i| i,
             else => {
-                ctx.notice.set("Pairs need a look of your own · New look from references", .{});
+                ctx.notice.set("Not a look of your own", .{});
                 return;
             },
         };
         if (state.job != null) {
-            ctx.notice.set("Work under way · add the pairs after", .{});
+            ctx.notice.set("Busy", .{});
             return;
         }
         var ours: std.ArrayList([]const u8) = .empty;
@@ -394,7 +394,7 @@ pub const State = struct {
         const own = &state.own.items[index];
         if (ours.items.len > 0) {
             if (ours.items.len != theirs.items.len) {
-                ctx.notice.set("{d} scans, {d} references · need as many of each, or references alone", .{ ours.items.len, theirs.items.len });
+                ctx.notice.set("{d} scans, {d} references · counts differ", .{ ours.items.len, theirs.items.len });
                 return;
             }
             // Pair them up in name order.
@@ -489,7 +489,7 @@ pub const State = struct {
             return;
         };
         ctx.library.lookChanged(ctx.gpa, id);
-        ctx.notice.set("Removed {s} · its frames use Neutral", .{id.label()});
+        ctx.notice.set("Removed {s}", .{id.label()});
         state.listImported(ctx);
         state.selected = .neutral;
     }
@@ -578,7 +578,7 @@ pub const State = struct {
                 } else if (added == task.references.len) {
                     ctx.notice.set("Found frames for all {d} references", .{added});
                 } else {
-                    ctx.notice.set("Found frames for {d} of {d} references · no good match for the rest", .{ added, task.references.len });
+                    ctx.notice.set("Found frames for {d} of {d} references", .{ added, task.references.len });
                 }
             },
             .fit => |*task| {
@@ -610,7 +610,7 @@ pub const State = struct {
             if (open == null or open == i) count += r.frames.items.len;
         }
         if (count == 0) {
-            ctx.notice.set("No frames to match · add our scans too, or scan the roll first", .{});
+            ctx.notice.set("No frames to match", .{});
             return;
         }
         var task = work.Match.init(ctx.gpa, references, count) catch |err| {
@@ -687,14 +687,14 @@ pub const State = struct {
         own.save(ctx);
         state.selected = .{ .own = state.own.items.len - 1 };
         state.pair = 0;
-        ctx.notice.set("Made {s} · add pairs next", .{name});
+        ctx.notice.set("Made {s}", .{name});
     }
 
     fn renameLook(state: *State, ctx: context.Context, index: usize, name: []const u8) void {
         const own = &state.own.items[index];
         if (name.len == 0 or std.mem.eql(u8, name, own.name)) return;
         if (std.mem.indexOfAny(u8, name, "/\\:") != null) {
-            ctx.notice.set("No / \\ or : in a look's name", .{});
+            ctx.notice.set("Invalid name", .{});
             return;
         }
         const parent = std.fs.path.dirname(own.path) orelse return;
@@ -1098,7 +1098,7 @@ fn drawList(state: *State, ctx: context.Context) void {
     c.ImDrawList_AddLineEx(list, gui.vec2(plus.x - gui.px(4.5), plus.y), gui.vec2(plus.x + gui.px(4.5), plus.y), ink, gui.px(1.6));
     c.ImDrawList_AddLineEx(list, gui.vec2(plus.x, plus.y - gui.px(4.5)), gui.vec2(plus.x, plus.y + gui.px(4.5)), ink, gui.px(1.6));
     textIn(list, gui.vec2(origin.x + gui.px(10 + 12 + 6), y), height, if (hovered) theme.text else theme.text_secondary, "New look from references");
-    if (hovered) c.ImGui_SetTooltip("Fitted from pairs · our raw scans and references of the same negatives");
+    if (hovered) c.ImGui_SetTooltip("Fitted from pairs");
 
     // Import .cube, the same way.
     y += height + gui.px(6);
@@ -1112,7 +1112,7 @@ fn drawList(state: *State, ctx: context.Context) void {
     c.ImDrawList_AddLineEx(list, gui.vec2(import_plus.x - gui.px(4.5), import_plus.y), gui.vec2(import_plus.x + gui.px(4.5), import_plus.y), import_ink, gui.px(1.6));
     c.ImDrawList_AddLineEx(list, gui.vec2(import_plus.x, import_plus.y - gui.px(4.5)), gui.vec2(import_plus.x, import_plus.y + gui.px(4.5)), import_ink, gui.px(1.6));
     textIn(list, gui.vec2(origin.x + gui.px(10 + 12 + 6), y), height, if (import_hovered) theme.text else theme.text_secondary, "Import .cube LUT");
-    if (import_hovered) c.ImGui_SetTooltip("3D or 1D LUT for sRGB or Rec. 709 input · laid over Neutral · copied into the library's Looks folder");
+    if (import_hovered) c.ImGui_SetTooltip("3D or 1D · sRGB or Rec. 709");
 }
 
 /// Draws a group's heading in the list at `y`, with space above it unless it's at the top of the
@@ -1166,12 +1166,12 @@ fn drawMain(state: *State, ctx: context.Context) void {
 
     const title: []const u8, const badge: []const u8, const description: []const u8 = switch (state.selected) {
         .neutral => .{ "Neutral", "Built in", "minilab's inversion · film base, density matrix, inversion curve · no added color" },
-        .frontier => .{ "Frontier emulation", "Built in", "Fujifilm Frontier color · LUT over Neutral · Neutral's tone, neutrals and lightness · greens toward teal, richer skin, skies and yellows" },
+        .frontier => .{ "Frontier emulation", "Built in", "Fujifilm Frontier color, over Neutral" },
         .pack => |p| .{ p.info().name, "Film looks", p.info().about },
-        .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "LUT over Neutral's sRGB output · tone and balance from Develop · for sRGB or Rec. 709 input" },
+        .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "LUT over Neutral's sRGB output" },
         .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), switch (state.own.items[i].references) {
-            .frontier_software => "Fitted to Frontier software output · curves, matrix and optional LUT",
-            .lab_scans => "Fitted to lab scans · curves, matrix and optional LUT",
+            .frontier_software => "Fitted to Frontier software output",
+            .lab_scans => "Fitted to lab scans",
         } },
     };
 
@@ -1216,7 +1216,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
             y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
             if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Deletes the library's copy · the original file stays");
+            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Removes the library's copy");
             return;
         },
         .neutral, .frontier => {
@@ -1289,7 +1289,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     const pack = state.selected == .pack;
 
     const where = if (ctx.develop.rollIndex(ctx.library)) |r| gui.print("{s} of {s}", .{ frame.name, ctx.library.rolls.items[r].info.name }) else frame.name;
-    const intro = if (pack) gui.print("On {s} · Develop's settings · click a look to use it", .{where}) else gui.print("On {s} · Develop's settings", .{where});
+    const intro = if (pack) gui.print("On {s} · Develop's settings", .{where}) else gui.print("On {s} · Develop's settings", .{where});
     y += paragraph(list, gui.vec2(at.x, y), width, theme.text_secondary, intro);
     y += gui.px(10);
 
@@ -1439,7 +1439,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip("References (JPEG, TIFF) · with our raw scans (PPM) to pair by name, or alone to find their frames · or drop them on the window");
+        c.ImGui_SetTooltip("References (JPEG, TIFF) · with our scans (PPM)");
     }
     x = c.ImGui_GetItemRectMax().x + gui.px(10);
 
@@ -1580,7 +1580,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         }
     }
     if (n == 0) {
-        textIn(list, gui.vec2(at.x + 1 + gui.px(12), at.y + 1 + header_height + gui.px(8)), line(13), theme.text_tertiary, "No pairs · our raw scans and references of the same negatives");
+        textIn(list, gui.vec2(at.x + 1 + gui.px(12), at.y + 1 + header_height + gui.px(8)), line(13), theme.text_tertiary, "No pairs");
     }
     c.ImDrawList_AddRectEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.divider), gui.px(6), 1, 0);
     c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + box_height));
@@ -1662,9 +1662,9 @@ fn drawModel(state: *State, ctx: context.Context) void {
         .own => |i| i,
         .neutral => {
             y = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Film base", "Density above the base, measured on each frame or picked" },
-                .{ "Density matrix", "3 × 3, for crosstalk between channels · identity unless set in Develop" },
-                .{ "Inversion curve", "Contrast, black and highlight roll-off, with each channel balanced" },
+                .{ "Film base", "Measured on each frame, or picked" },
+                .{ "Density matrix", "3 × 3, for crosstalk between channels" },
+                .{ "Inversion curve", "Contrast, black and highlight roll-off" },
             });
             y += gui.px(12);
             y = drawChart(list, gui.vec2(origin.x, y), width, .neutral);
@@ -1672,14 +1672,14 @@ fn drawModel(state: *State, ctx: context.Context) void {
         },
         .frontier => {
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
-                .{ "Frontier color LUT", "33³ on Neutral's sRGB output · Frontier cube color at standard saturation · Neutral's lightness" },
+                .{ "Neutral", "As set in Develop" },
+                .{ "Frontier color LUT", "33³, on Neutral's sRGB output" },
             });
             return;
         },
         .pack => |p| {
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
+                .{ "Neutral", "As set in Develop" },
                 .{ gui.print("{s} LUT", .{p.info().name}), gui.print("{d}³, on Neutral's sRGB output", .{bundled.size}) },
             });
             return;
@@ -1689,7 +1689,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
             var buffer: [64]u8 = undefined;
             const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "can't be read";
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "Film base, density, balance and the inversion curve, as set in Develop" },
+                .{ "Neutral", "As set in Develop" },
                 .{ "LUT", gui.print("{s}, on Neutral's sRGB output", .{size}) },
             });
             return;
@@ -1734,14 +1734,14 @@ fn drawModel(state: *State, ctx: context.Context) void {
     if (gui.buttonOf(.primary, if (busy and state.doing == .fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, 40))) state.startFit(ctx, look);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip(if (fitted == 0) "Needs a pair lined up and not held out" else "Curves, then matrix, then LUT if asked · checked on held-out pairs");
+        c.ImGui_SetTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, save_top));
     if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, 34))) {
-        if (result == null) ctx.notice.set("Nothing to save · fit the look first", .{}) else saveLook(ctx, own);
+        if (result == null) ctx.notice.set("Nothing to save", .{}) else saveLook(ctx, own);
     }
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip(gui.print("look.json (curves, matrix), look.cube (whole look) and any LUT · to Looks/{s} in the library", .{own.name}));
+        c.ImGui_SetTooltip(gui.print("To Looks/{s}", .{own.name}));
     }
 }
 
@@ -1960,7 +1960,7 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
     }
     if (own.result) |r| {
         if (own.stale) {
-            _ = paragraph(list, gui.vec2(at.x, at.y + height + gui.px(6)), width, theme.text_tertiary, "Out of date · pairs or model changed");
+            _ = paragraph(list, gui.vec2(at.x, at.y + height + gui.px(6)), width, theme.text_tertiary, "Out of date");
         } else {
             const note = gui.print("{d} {s} fitted · {d} held out · fitted median {d:.2}", .{ r.report.fitted_pairs, if (r.report.fitted_pairs == 1) "pair" else "pairs", r.report.held_out_pairs, r.report.fitted_median });
             _ = paragraph(list, gui.vec2(at.x, at.y + height + gui.px(6)), width, theme.text_tertiary, note);

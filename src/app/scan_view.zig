@@ -71,7 +71,6 @@ const setting_label_width = 150;
 const setting_value_width = 260;
 /// The most values one scanner setting offers.
 const max_setting_values = 64;
-const preview_note_width = 120;
 const frame_view_height = 200;
 const frame_view_padding = 20;
 const handle_size = 10;
@@ -742,7 +741,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
         y += gui.px(group_gap);
     }
     const film_note = if (state.capabilities) |caps| blk: {
-        if (!caps.film_setting) break :blk gui.print("No film mode on this scanner", .{});
+        if (!caps.film_setting) break :blk gui.print("No film mode", .{});
         break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, ctx, caps), state.film.why() });
     } else gui.print("Scanner mode: Positive Film · {s}", .{state.film.why()});
     y += paragraphAt(list, x, y, width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
@@ -773,7 +772,6 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     _ = lineAt(list, x, label_y, theme.text_secondary, "Margin around frames");
     drawMarginField(state, gui.vec2(x + width - gui.px(margin_field_width), y));
     y += field_height + gui.px(scanner_gap);
-    y += paragraphAt(list, x, y, width, theme.text_tertiary, "Covers the gaps, for the film base");
 
     // The actions, at the bottom.
     const bottom = origin.y + size.y - gui.px(panel_padding);
@@ -1184,11 +1182,9 @@ fn drawNoRoll() bool {
     y += c.ImGui_GetFontSize() * line_spacing;
     fonts.pop();
     y += gui.px(section_gap);
-    y += paragraphAt(list, x, y, gui.px(420), theme.text_secondary, "Scans go into a roll · open or make one in Rolls");
-    y += gui.px(section_gap);
     c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
     const go = gui.buttonOf(.primary, "Go to Rolls", gui.vec2(0, button_height));
-    shortcuts.tooltip("The library of rolls", .rolls);
+    shortcuts.tooltip("Rolls", .rolls);
     return go;
 }
 
@@ -1251,9 +1247,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     c.ImDrawList_AddText(list, gui.vec2(x, y + (mono_line - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), mm);
     fonts.pop();
     y += mono_line + gui.px(8);
-    const note_width = @max(shown.x, gui.px(preview_note_width));
-    if (state.preview != null and !as_film) _ = paragraphAt(list, x, y, gui.px(preview_note_width), theme.text_tertiary, "Film edges under the holder");
-    return @max(@max(shown.x, mm_width), note_width);
+    return @max(shown.x, mm_width);
 }
 
 /// Where a frame on the preview goes when the strip is drawn as film. Along the strip maps to
@@ -1451,7 +1445,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     const format = info.format.format();
     const preview = if (state.preview) |*p| p else {
         y += titleAt(list, x, y, "No preview yet", null) + gui.px(section_gap);
-        _ = paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, "Strip in the holder, then Preview");
+        _ = paragraphAt(list, x, y, @min(width, gui.px(520)), theme.text_secondary, "No preview");
         return;
     };
     const index = state.selected orelse {
@@ -1538,8 +1532,6 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     if (quietButton("Detect again", gui.vec2(0, button_height))) detect(state, ctx, roll_index);
     c.ImGui_PopStyleVar();
     c.ImGui_EndDisabled();
-    y += gui.px(button_height) + gui.px(section_gap);
-    _ = paragraphAt(list, x, y, width, theme.text_tertiary, "Hand edits kept on Detect again");
 }
 
 /// Draws the selected frame and the film around it, turned so its long side runs across, with the
@@ -1811,7 +1803,7 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const format = ctx.library.rolls.items[r].info.format.format();
     var detection = frames.detect.detect(ctx.gpa, preview.scan, preview.dpi[0], format, state.film.detectKind(), .{ .holder = state.holder() }) catch |err| {
         state.detect_note = switch (err) {
-            error.NoOpening => "No film on the preview · check the strip and holder",
+            error.NoOpening => "No film on the preview",
             error.BadResolution => "Preview resolution unknown · preview again",
             error.OutOfMemory => "Detection out of memory",
         };
@@ -1840,7 +1832,7 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
         }
     }
     if (detection.frames.len > 0) preview.opening_middle = middle_sum / @as(f32, @floatFromInt(detection.frames.len));
-    state.detect_note = if (detection.frames.len == 0) "No frames found · add them by hand" else null;
+    state.detect_note = if (detection.frames.len == 0) "No frames found" else null;
     state.selected = if (state.boxes.items.len > 0) 0 else null;
     state.boxes_dirty = true;
     std.log.debug("detected {d} frames, {d} kept from hand edits; strip along {t}, opening {d:.1} mm", .{ detection.frames.len, state.boxes.items.len - added, detection.axis, detection.opening_mm });
@@ -1977,17 +1969,6 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
         if (worker) |w| w.cancelQueue();
     }
     c.ImGui_EndDisabled();
-    y += gui.px(cancel_height) + gui.px(queue_gap);
-    _ = paragraphAt(list, x, y, width, theme.text_tertiary, "Finishes the current frame first");
-
-    // Notes at the bottom, over a divider.
-    const notes = [_][]const u8{ "Edges and base rechecked per scan", "Raw scans in scans/, never changed" };
-    var notes_height: f32 = gui.px(10);
-    for (notes, 0..) |n, i| notes_height += paragraphHeight(n, width) + if (i > 0) gui.px(4) else 0;
-    const notes_top = origin.y + size.y - gui.px(panel_padding) - notes_height;
-    c.ImDrawList_AddLine(list, gui.vec2(x, notes_top), gui.vec2(x + width, notes_top), theme.imU32(theme.divider));
-    var ny = notes_top + gui.px(10);
-    for (notes) |n| ny += paragraphAt(list, x, ny, width, theme.text_tertiary, n) + gui.px(4);
     return next;
 }
 
@@ -2023,7 +2004,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
         .done => "Scanned, base measured",
         .check_crop => "Scanned · crop to check",
         .failed => gui.print("Failed: {s}", .{errorText(item.err)}),
-        .cancelled => "Cancelled",
+        .cancelled => "Canceled",
     };
     const text_x = x + pad_x + gui.px(number_column + 10);
     c.ImDrawList_AddText(list, gui.vec2(text_x, text_y), theme.imU32(ink), gui.elideEnd(label, x + width - pad_x - text_x - gui.px(48)));
@@ -2043,7 +2024,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             const hovered = c.ImGui_IsItemHovered(0);
             if (hovered) {
                 c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_Hand);
-                c.ImGui_SetTooltip("Edges not found · opens in Develop to crop");
+                c.ImGui_SetTooltip("Edges not found");
             }
             c.ImDrawList_AddText(list, link_at, theme.imU32(if (hovered) theme.text else theme.accent), link);
         },

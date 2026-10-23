@@ -158,12 +158,10 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
     if (library.rolls.items.len == 0) {
-        gui.paragraph(theme.text_tertiary, "No rolls yet · New roll to start");
+        gui.paragraph(theme.text_tertiary, "No rolls yet");
     } else if (shown == 0) {
         gui.paragraph(theme.text_tertiary, "No matching rolls");
     }
-    c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
-    gui.paragraph(theme.text_tertiary, "Undeveloped frames: raw scan");
     if (drawDeleteConfirmation(state, library, gpa)) |index| action = .{ .trash = index };
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
@@ -261,7 +259,7 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
     defer c.ImGui_EndPopup();
     gui.title(gui.print("Delete {s}?", .{r.info.name}), 15);
     const frames = r.frames.items.len;
-    gui.textColored(theme.text_tertiary, gui.print("{d} {s} · scans, settings, exports · to the Trash", .{ frames, if (frames == 1) "frame" else "frames" }));
+    gui.textColored(theme.text_tertiary, gui.print("{d} {s}", .{ frames, if (frames == 1) "frame" else "frames" }));
     c.ImGui_Dummy(gui.vec2(0, gui.px(8)));
     var confirmed: ?usize = null;
     if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, 32))) confirmed = index;
@@ -394,7 +392,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.text_secondary), more);
     }
     if (total == 0) {
-        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet · scan or drop scans here");
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet");
     }
 
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
@@ -509,8 +507,6 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     for (choices, 0..) |id, i| names[i] = labels.format(id);
     gui.rowLabel("Format");
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
-    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-    gui.paragraph(theme.text_tertiary, "One format per roll · nominal sizes, measured from the scan");
     gui.rowLabel("Camera");
     _ = gui.textField("camera", &form.camera, "[Camera]", 0);
     gui.rowLabel("Lens");
@@ -539,7 +535,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
         c.ImGui_PopID();
         c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-        gui.paragraph(theme.text_tertiary, "Optional · the light with no film, same exposure · evens out the light");
+        gui.paragraph(theme.text_tertiary, "Optional");
     }
 
     // The button sits at the bottom of the panel.
@@ -566,7 +562,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         std.log.err("can't make the roll: {t}", .{err});
         form.problem = switch (err) {
             error.RollExists => "Name already used",
-            error.BadRollName => "Invalid name · no / \\ or :, not . or ..",
+            error.BadRollName => "Invalid name",
             else => "Roll not created",
         };
         return null;
