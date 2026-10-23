@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.0](https://github.com/vdmkenny/minilab/compare/v0.0.1...v0.1.0) (2026-10-23)
+
+
+### Features
+
+* Edit a roll's metadata in Export, and add fields of your own ([#9](https://github.com/vdmkenny/minilab/issues/9)) ([b4c4bf4](https://github.com/vdmkenny/minilab/commit/b4c4bf47e480ca10890bf4d40015372b73cd4057))
+* Rolls as film strips, and labels instead of sentences ([#5](https://github.com/vdmkenny/minilab/issues/5)) ([f3cbceb](https://github.com/vdmkenny/minilab/commit/f3cbceb8bea6f14c238ba035083b2168bd39e5e3))
+* Stars and reject in Develop, star filter and custom size in Export ([#7](https://github.com/vdmkenny/minilab/issues/7)) ([539b696](https://github.com/vdmkenny/minilab/commit/539b69692f6b73fec1c00eaaa6fdd03fcf9ae301))
+
+
+### Fixes
+
+* Build for Windows on Arm ([#4](https://github.com/vdmkenny/minilab/issues/4)) ([3a1531b](https://github.com/vdmkenny/minilab/commit/3a1531b4f40364fe83fc74ff4f4bdf650d54dca1))
+
 ## 0.0.1 (2026-10-23)
 
 
