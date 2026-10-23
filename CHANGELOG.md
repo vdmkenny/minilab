@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/vdmkenny/minilab/compare/v0.3.1...v0.4.0) (2026-10-23)
+
+
+### Features
+
+* A website on GitHub Pages ([#45](https://github.com/vdmkenny/minilab/issues/45)) ([a6a6ee0](https://github.com/vdmkenny/minilab/commit/a6a6ee0e84ed3811608bee7a84e4f556ebf8c6a3))
+* Update notices, and updates that install themselves ([#49](https://github.com/vdmkenny/minilab/issues/49)) ([3f16a03](https://github.com/vdmkenny/minilab/commit/3f16a03d031c9cba4dd48f99a29a26491760d542))
+
 ## [0.3.1](https://github.com/vdmkenny/minilab/compare/v0.3.0...v0.3.1) (2026-10-23)
 
 
