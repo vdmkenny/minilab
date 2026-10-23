@@ -1550,106 +1550,24 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     // With no pairs, there's a row for the hint.
     const box_height = if (n == 0) height + row_height else height;
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.panel), gui.px(table_rounding), 0);
-
-    // Column widths work like a browser's automatic table layout: each column gets its widest
-    // content, then the room that's left is shared out in proportion.
-    const columns = std.enums.values(Column);
-    var widths: std.EnumArray(Column, f32) = .initUndefined();
-    fonts.pushSized(.semibold, fonts.small_size);
-    for (columns) |column| widths.set(column, textWidth(column.header(own)));
-    fonts.pop();
-    for (0..n) |i| for (columns) |column| {
-        if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
-        defer if (column.mono()) fonts.pop();
-        widths.set(column, @max(widths.get(column), textWidth(column.text(own, i))));
-    };
-    var total: f32 = 0;
-    for (&widths.values) |*w| {
-        w.* += gui.px(2 * cell_padding_x);
-        total += w.*;
-    }
-    const room = width - 2 * border - total;
-    for (&widths.values) |*w| w.* += room * w.* / total;
+    const widths = columnWidths(own, width);
 
     // The header, in the design's medium weight.
     fonts.pushSized(.semibold, fonts.small_size);
     var x = at.x + border;
-    for (columns) |column| {
+    for (std.enums.values(Column)) |column| {
         gui.textIn(list, x + gui.px(cell_padding_x), at.y + border + gui.px(cell_padding_y), gui.lineFor(fonts.small_size), theme.text_secondary, column.header(own));
         x += widths.get(column);
     }
     fonts.pop();
     c.ImDrawList_AddLine(list, gui.vec2(at.x + border, at.y + border + header_height - 0.5), gui.vec2(far.x - border, at.y + border + header_height - 0.5), theme.imU32(theme.divider));
 
-    // The rows.
     var remove: ?usize = null;
-    for (own.pairs.items, 0..) |*p, i| {
+    for (0..n) |i| {
         const top = at.y + border + header_height + row_height * @as(f32, @floatFromInt(i));
-        const row_min = gui.vec2(at.x + border, top);
-        const row_max = gui.vec2(far.x - border, top + row_height);
         c.ImGui_PushIDInt(@intCast(i));
         defer c.ImGui_PopID();
-
-        // The Use cell toggles, and the rest of the row selects the pair.
-        const use_x = far.x - border - widths.get(.use);
-        c.ImGui_SetCursorScreenPos(row_min);
-        if (c.ImGui_InvisibleButton("row", gui.vec2(use_x - row_min.x, row_height), 0)) state.pair = i;
-        const row_hovered = c.ImGui_IsItemHovered(0);
-        if (c.ImGui_BeginPopupContextItem()) {
-            // Not while a fit is running, or the fit would end up shown against a split it wasn't
-            // made from.
-            if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.running == null)) own.toggleHeldOut(ctx, i);
-            if (c.ImGui_MenuItemEx("Remove pair", null, false, state.running == null)) remove = i;
-            c.ImGui_EndPopup();
-        }
-        c.ImGui_SetCursorScreenPos(gui.vec2(use_x, top));
-        if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.running == null) own.toggleHeldOut(ctx, i);
-        const use_hovered = c.ImGui_IsItemHovered(0);
-        if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
-
-        if (state.pair == i) {
-            c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.raised));
-        } else if (row_hovered or use_hovered) {
-            c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.withAlpha(theme.raised, 0.5)));
-        }
-        if (i + 1 < n) c.ImDrawList_AddLine(list, gui.vec2(row_min.x, row_max.y - 0.5), gui.vec2(row_max.x, row_max.y - 0.5), theme.imU32(theme.raised));
-
-        const text_top = top + gui.px(cell_padding_y);
-        x = at.x + border;
-        for (columns) |column| {
-            const w = widths.get(column);
-            const room_in_cell = w - gui.px(2 * cell_padding_x);
-            const value = column.text(own, i);
-            // File names lose their start, which says the least, and the rest lose their end.
-            const shown = switch (column) {
-                .ours, .stock => gui.elideEnd(value, room_in_cell),
-                .theirs => gui.elideStart(value, room_in_cell),
-                .registration, .use => value,
-            };
-            const ink = switch (column) {
-                .ours => theme.text,
-                .use => if (use_hovered) theme.text else theme.text_secondary,
-                .theirs, .stock, .registration => theme.text_secondary,
-            };
-            if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
-            gui.textIn(list, x + gui.px(cell_padding_x), text_top, gui.lineFor(fonts.ui_size), ink, shown);
-            if (column.mono()) fonts.pop();
-            x += w;
-        }
-        if (row_hovered and p.alignment != null) {
-            const a = p.alignment.?;
-            const turned = a.orientation.label();
-            c.ImGui_SetTooltip(gui.print("{s}\nCorrelation {d:.2} of 1 · good above {d:.1}\nReference {s}{s}covers {d:.0}% of our scan's width", .{
-                p.theirs,
-                a.quality,
-                aligned_quality,
-                turned,
-                if (turned.len > 0) ", " else "",
-                a.scale * 100,
-            }));
-        } else if (row_hovered) {
-            c.ImGui_SetTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
-        }
+        if (drawPairRow(state, ctx, own, list, i, gui.vec2(at.x + border, top), gui.vec2(far.x - border, top + row_height), widths)) remove = i;
     }
     if (n == 0) {
         gui.textIn(list, at.x + border + gui.px(cell_padding_x), at.y + border + header_height + gui.px(cell_padding_y), gui.lineFor(fonts.ui_size), theme.text_tertiary, "No pairs");
@@ -1663,6 +1581,101 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         state.figures.release(ctx.gpu);
     }
     return at.y + box_height;
+}
+
+/// The table's column widths, `width` in all. They work like a browser's automatic table layout:
+/// each column gets its widest content, then the room that's left is shared out in proportion.
+fn columnWidths(own: *const Own, width: f32) std.EnumArray(Column, f32) {
+    const columns = std.enums.values(Column);
+    var widths: std.EnumArray(Column, f32) = .initUndefined();
+    fonts.pushSized(.semibold, fonts.small_size);
+    for (columns) |column| widths.set(column, textWidth(column.header(own)));
+    fonts.pop();
+    for (0..own.pairs.items.len) |i| for (columns) |column| {
+        if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
+        defer if (column.mono()) fonts.pop();
+        widths.set(column, @max(widths.get(column), textWidth(column.text(own, i))));
+    };
+    var total: f32 = 0;
+    for (&widths.values) |*w| {
+        w.* += gui.px(2 * cell_padding_x);
+        total += w.*;
+    }
+    const room = width - 2 * border - total;
+    for (&widths.values) |*w| w.* += room * w.* / total;
+    return widths;
+}
+
+/// How light a hovered row is drawn, against the selected one.
+const hover_shade = 0.5;
+
+/// Draws pair `i`'s row from `row_min` to `row_max`. Clicking the Use cell holds the pair out or
+/// uses it again, and clicking the rest selects it. Returns true when its menu asks to remove it.
+fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawList, i: usize, row_min: gui.Vec2, row_max: gui.Vec2, widths: std.EnumArray(Column, f32)) bool {
+    const p = &own.pairs.items[i];
+    const row_height = row_max.y - row_min.y;
+    var remove = false;
+    const use_x = row_max.x - widths.get(.use);
+    c.ImGui_SetCursorScreenPos(row_min);
+    if (c.ImGui_InvisibleButton("row", gui.vec2(use_x - row_min.x, row_height), 0)) state.pair = i;
+    const row_hovered = c.ImGui_IsItemHovered(0);
+    if (c.ImGui_BeginPopupContextItem()) {
+        // Not while a fit is running, or the fit would end up shown against a split it wasn't
+        // made from.
+        if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.running == null)) own.toggleHeldOut(ctx, i);
+        if (c.ImGui_MenuItemEx("Remove pair", null, false, state.running == null)) remove = true;
+        c.ImGui_EndPopup();
+    }
+    c.ImGui_SetCursorScreenPos(gui.vec2(use_x, row_min.y));
+    if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.running == null) own.toggleHeldOut(ctx, i);
+    const use_hovered = c.ImGui_IsItemHovered(0);
+    if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
+
+    if (state.pair == i) {
+        c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.raised));
+    } else if (row_hovered or use_hovered) {
+        c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.withAlpha(theme.raised, hover_shade)));
+    }
+    if (i + 1 < own.pairs.items.len) c.ImDrawList_AddLine(list, gui.vec2(row_min.x, row_max.y - 0.5), gui.vec2(row_max.x, row_max.y - 0.5), theme.imU32(theme.raised));
+
+    const text_top = row_min.y + gui.px(cell_padding_y);
+    var x = row_min.x;
+    for (std.enums.values(Column)) |column| {
+        const w = widths.get(column);
+        const room_in_cell = w - gui.px(2 * cell_padding_x);
+        const value = column.text(own, i);
+        // File names lose their start, which says the least, and the rest lose their end.
+        const shown = switch (column) {
+            .ours, .stock => gui.elideEnd(value, room_in_cell),
+            .theirs => gui.elideStart(value, room_in_cell),
+            .registration, .use => value,
+        };
+        const ink = switch (column) {
+            .ours => theme.text,
+            .use => if (use_hovered) theme.text else theme.text_secondary,
+            .theirs, .stock, .registration => theme.text_secondary,
+        };
+        if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
+        gui.textIn(list, x + gui.px(cell_padding_x), text_top, gui.lineFor(fonts.ui_size), ink, shown);
+        if (column.mono()) fonts.pop();
+        x += w;
+    }
+    if (row_hovered) pairTooltip(p.*);
+    return remove;
+}
+
+/// The tooltip over a pair: its files, and how well they line up.
+fn pairTooltip(p: draft.Pair) void {
+    const a = p.alignment orelse return c.ImGui_SetTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
+    const turned = a.orientation.label();
+    c.ImGui_SetTooltip(gui.print("{s}\nCorrelation {d:.2} of 1 · good above {d:.1}\nReference {s}{s}covers {d:.0}% of our scan's width", .{
+        p.theirs,
+        a.quality,
+        aligned_quality,
+        turned,
+        if (turned.len > 0) ", " else "",
+        a.scale * 100,
+    }));
 }
 
 /// The stock as the table shows it, without the maker.
@@ -1732,6 +1745,32 @@ fn drawModel(state: *State, ctx: context.Context) void {
 
     const look = switch (state.selected) {
         .own => |i| i,
+        .neutral, .frontier, .pack, .imported => {
+            drawStagesOf(state, ctx, list, origin, y, width);
+            return;
+        },
+    };
+    const own = &state.own.items[look];
+    const busy = state.running != null;
+    y = drawOptions(ctx, own, list, gui.vec2(origin.x, y), width, busy);
+    y += gui.px(block_gap);
+
+    const result: ?*const fit.Result = if (own.result) |*r| r else null;
+    y = drawChart(list, gui.vec2(origin.x, y), width, if (result) |r| .{ .fitted = &r.model.curves } else .identity);
+    y += gui.px(block_gap);
+    y = drawMatrix(list, gui.vec2(origin.x, y), width, if (result) |r| r.model.matrix else model.identity_matrix);
+    y += gui.px(block_gap);
+    _ = drawMeasures(list, gui.vec2(origin.x, y), width, own);
+
+    drawModelButtons(state, ctx, own, look, origin.x, width, busy);
+}
+
+/// Draws what the built-in, collection and imported looks are made of, at `y`. A fitted look
+/// shows its choices instead.
+fn drawStagesOf(state: *State, ctx: context.Context, list: *c.ImDrawList, origin: gui.Vec2, top: f32, width: f32) void {
+    var y = top;
+    switch (state.selected) {
+        .own => {},
         .neutral => {
             y = drawStages(list, gui.vec2(origin.x, y), width, &.{
                 .{ "Film base", "Measured on each frame, or picked" },
@@ -1766,10 +1805,12 @@ fn drawModel(state: *State, ctx: context.Context) void {
             });
             return;
         },
-    };
-    const own = &state.own.items[look];
-    const busy = state.running != null;
+    }
+}
 
+/// Draws the choices of what a fit may change, at `at`. Returns the y below them.
+fn drawOptions(ctx: context.Context, own: *Own, list: *c.ImDrawList, at: gui.Vec2, width: f32, busy: bool) f32 {
+    var y = at.y;
     const options = [_]struct { *bool, []const u8, []const u8 }{
         .{ &own.options.balance, "Per-frame balance", gui.print("3 offsets per frame, for {s} own correction · not part of the look", .{own.references.corrector()}) },
         .{ &own.options.curves, "Channel curves", "R, G and B, monotone, " ++ curve_points ++ " each" },
@@ -1779,27 +1820,23 @@ fn drawModel(state: *State, ctx: context.Context) void {
     for (options, 0..) |option, i| {
         if (i > 0) y += gui.px(option_gap);
         c.ImGui_PushIDInt(@intCast(i));
-        if (modelOption(list, gui.vec2(origin.x, y), width, option[0], option[1], option[2], busy)) |h| {
+        if (modelOption(list, gui.vec2(at.x, y), width, option[0], option[1], option[2], busy)) |h| {
             own.changed();
             own.save(ctx);
             y += h;
         } else y += optionHeight(width, option[2]);
         c.ImGui_PopID();
     }
-    y += gui.px(block_gap);
+    return y;
+}
 
+/// Draws Fit look and Save at the bottom of the model panel, at `x` and `width` wide.
+fn drawModelButtons(state: *State, ctx: context.Context, own: *Own, look: usize, x: f32, width: f32, busy: bool) void {
     const result: ?*const fit.Result = if (own.result) |*r| r else null;
-    y = drawChart(list, gui.vec2(origin.x, y), width, if (result) |r| .{ .fitted = &r.model.curves } else .identity);
-    y += gui.px(block_gap);
-    y = drawMatrix(list, gui.vec2(origin.x, y), width, if (result) |r| r.model.matrix else model.identity_matrix);
-    y += gui.px(block_gap);
-    _ = drawMeasures(list, gui.vec2(origin.x, y), width, own);
-
-    // The buttons at the bottom.
     const bottom = c.ImGui_GetWindowPos().y + c.ImGui_GetWindowHeight() - gui.px(model_padding);
     const save_top = bottom - gui.px(save_height);
     const fit_top = save_top - gui.px(button_gap + fit_height);
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, fit_top));
+    c.ImGui_SetCursorScreenPos(gui.vec2(x, fit_top));
     var fitted: usize = 0;
     for (own.pairs.items, own.readings.items) |p, reading| fitted += @intFromBool(!p.held_out and linedUp(p) and reading == .read);
     c.ImGui_BeginDisabled(busy or fitted == 0);
@@ -1809,7 +1846,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
         c.ImGui_SetTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
     }
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, save_top));
+    c.ImGui_SetCursorScreenPos(gui.vec2(x, save_top));
     if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, save_height))) {
         if (result == null) ctx.notice.set("Nothing to save", .{}) else saveLook(ctx, own);
     }
@@ -2034,4 +2071,32 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
 
 test {
     _ = looks;
+}
+
+test "a look's pairs, readings and balances stay in step" {
+    const gpa = std.testing.allocator;
+    var own: Own = .{ .name = try gpa.dupe(u8, "Look 1"), .path = try gpa.dupe(u8, "/Looks/Look 1"), .saved = false, .arena = .init(gpa) };
+    defer own.deinit(gpa);
+    try own.append(gpa, .{ .ours = "/Rolls/a.ppm", .label = "a", .theirs = "/refs/a.jpg" });
+    try own.append(gpa, .{ .ours = "/Rolls/b.ppm", .label = "b", .theirs = "/refs/b.jpg", .held_out = true });
+    try std.testing.expectEqual(@as(usize, 2), own.unread());
+    try std.testing.expectEqual(@as(usize, 1), own.heldOut());
+    own.remove(gpa, 0);
+    try std.testing.expectEqual(@as(usize, 1), own.pairs.items.len);
+    try std.testing.expectEqual(@as(usize, 1), own.readings.items.len);
+    try std.testing.expectEqual(@as(usize, 1), own.balance.items.len);
+    try std.testing.expectEqualStrings("b", own.pairs.items[0].label);
+}
+
+test "the difference map runs from near black through amber to red" {
+    try std.testing.expectEqual(theme.rgba8(theme.histogram_ground), ramp(0));
+    try std.testing.expectEqual(theme.rgba8(theme.accent), ramp(6));
+    try std.testing.expectEqual(theme.rgba8(theme.red), ramp(30));
+}
+
+test "the stock column leaves out the maker" {
+    try std.testing.expectEqualStrings("Portra 400", stockName("Kodak Portra 400"));
+    try std.testing.expectEqualStrings("Superia X-TRA 400", stockName("Fujifilm Superia X-TRA 400"));
+    try std.testing.expectEqualStrings("Rollei RPX 400", stockName("Rollei RPX 400"));
+    try std.testing.expectEqualStrings("None", stockName(null));
 }

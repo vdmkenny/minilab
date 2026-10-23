@@ -399,3 +399,17 @@ pub fn drawHelp() bool {
     c.ImGui_End();
     return open;
 }
+
+test "keys are written the platform's way" {
+    const mac = builtin.os.tag == .macos;
+    try std.testing.expectEqualStrings("Esc", label(.cancel));
+    try std.testing.expectEqualStrings(if (mac) "⌘/" else "Ctrl+/", label(.help));
+    try std.testing.expectEqualStrings(if (mac) "⇧⇥" else "Shift+Tab", label(.hide_all));
+    try std.testing.expectEqualStrings(if (mac) "⇧⌘[" else "Ctrl+Shift+[", chordLabel(command_key | shift | c.ImGuiKey_LeftBracket));
+}
+
+test "a rating's command gives that many stars, up to five" {
+    try std.testing.expectEqual(Command.no_stars, Command.stars(0));
+    try std.testing.expectEqual(Command.three_stars, Command.stars(3));
+    try std.testing.expectEqual(Command.five_stars, Command.stars(9));
+}

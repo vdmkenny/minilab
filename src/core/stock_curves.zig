@@ -84,14 +84,31 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
     const range = running;
     if (!(range > 0)) return null;
 
-    // The straight line, density = gamma × (log H − foot), fitted to the straight part. We fit it
-    // rather than use the datasheet's gamma, so that it straightens the curve it came from. The
-    // colour negatives' gammas agree with their curves to within a few percent, but a B&W curve has
-    // no straight part to quote a gamma from.
+    const line = straightLine(points, above[0..points.len], range) orelse return null;
+    const top = range * scale;
+    const step = top / (samples - 1);
+    for (values, 0..) |*v, i| {
+        const d = @as(f32, @floatFromInt(i)) * step / scale;
+        v.* = scale * line.gamma * (logExposure(points, above[0..points.len], d) - line.foot);
+    }
+    keepSteady(values, step);
+    // Measure from the base. Where the toe starts, the straight line is already below the base
+    // density, which would put the shadows under the base, and the automatic black point with them.
+    const at_base = values[0];
+    for (values) |*v| v.* -= at_base;
+    return top;
+}
+
+/// The straight line, density = gamma × (log H − foot), fitted to the straight part of a curve
+/// whose density above its lowest point is `above`, `range` at most. We fit it rather than use the
+/// datasheet's gamma, so that it straightens the curve it came from. The colour negatives' gammas
+/// agree with their curves to within a few percent, but a B&W curve has no straight part to quote
+/// a gamma from. Null when the straight part is too short or flat to fit.
+fn straightLine(points: []const stocks.Point, above: []const f32, range: f32) ?struct { gamma: f32, foot: f32 } {
     var sum_h: f32 = 0;
     var sum_d: f32 = 0;
     var straight: f32 = 0;
-    for (points, above[0..points.len]) |p, a| {
+    for (points, above) |p, a| {
         if (!onStraightPart(a, range)) continue;
         sum_h += p.log_exposure;
         sum_d += a;
@@ -102,24 +119,19 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
     const mean_d = sum_d / straight;
     var covariance: f32 = 0;
     var variance: f32 = 0;
-    for (points, above[0..points.len]) |p, a| {
+    for (points, above) |p, a| {
         if (!onStraightPart(a, range)) continue;
         covariance += (p.log_exposure - mean_h) * (a - mean_d);
         variance += (p.log_exposure - mean_h) * (p.log_exposure - mean_h);
     }
     if (!(variance > 0) or !(covariance > 0)) return null;
     const gamma = covariance / variance;
-    const foot = mean_h - mean_d / gamma;
+    return .{ .gamma = gamma, .foot = mean_h - mean_d / gamma };
+}
 
-    const top = range * scale;
-    const step = top / (samples - 1);
-    for (values, 0..) |*v, i| {
-        const d = @as(f32, @floatFromInt(i)) * step / scale;
-        v.* = scale * gamma * (logExposure(points, above[0..points.len], d) - foot);
-    }
-
-    // Work outwards from the middle of the straight part, so the table never falls and never
-    // stretches by more than `max_gain`.
+/// Works outwards from the middle of the straight part, so the table, `step` apart, never falls
+/// and never stretches by more than `max_gain`.
+fn keepSteady(values: *[samples]f32, step: f32) void {
     const middle = samples / 2;
     var i: usize = middle;
     while (i > 0) {
@@ -127,11 +139,6 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
         values[i] = std.math.clamp(values[i], values[i + 1] - max_gain * step, values[i + 1]);
     }
     for (middle + 1..samples) |j| values[j] = std.math.clamp(values[j], values[j - 1], values[j - 1] + max_gain * step);
-    // Measure from the base. Where the toe starts, the straight line is already below the base
-    // density, which would put the shadows under the base, and the automatic black point with them.
-    const at_base = values[0];
-    for (values) |*v| v.* -= at_base;
-    return top;
 }
 
 /// Returns the log exposure at which the curve reaches density `d` above its lowest point. Below

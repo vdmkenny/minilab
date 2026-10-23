@@ -324,14 +324,30 @@ const delete_size = 22;
 
 /// Draws one roll: its card, then its filmstrip.
 fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
-    var action: ?Action = null;
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
-    const line = gui.lineHeight();
-    const card_height = gui.px(card_padding_y * 2 + card_title_line + card_date_line + 4 * card_row_gap + card_bar_gap + card_bar) + line * 3;
-    const format = r.info.format.format();
+    const card_height = gui.px(card_padding_y * 2 + card_title_line + card_date_line + 4 * card_row_gap + card_bar_gap + card_bar) + gui.lineHeight() * 3;
+    const right = c.ImGui_GetWindowPos().x + c.ImGui_GetWindowWidth() - gui.px(page_padding_x);
+    var action = drawCard(state, gpa, r, index, list, origin, card_height);
+    if (drawStrip(library, gpa, r, index, list, origin, card_height, right)) |clicked| action = clicked;
 
-    // The card. Its Delete button sits on top of it.
+    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
+    c.ImGui_Dummy(gui.vec2(0, 0));
+    if (action == null) {
+        if (drop) |p| {
+            if (p.y >= origin.y and p.y < origin.y + card_height and p.x >= origin.x and p.x < right) action = .{ .dropped_on = index };
+        }
+    }
+    return action;
+}
+
+/// Draws roll `index`'s card at `origin`, `card_height` high: its name, date, stock, format and
+/// how much of it is developed, with Delete over it while the mouse is on it. Returns Open when
+/// it's clicked.
+fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, list: *c.ImDrawList, origin: gui.Vec2, card_height: f32) ?Action {
+    var action: ?Action = null;
+    const line = gui.lineHeight();
+    // Its Delete button sits on top of it.
     c.ImGui_SetNextItemAllowOverlap();
     if (c.ImGui_InvisibleButton("card", gui.vec2(gui.px(card_width), card_height), 0)) action = .{ .open = .{ .roll = index } };
     const hovered = c.ImGui_IsItemHovered(0);
@@ -373,8 +389,16 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
         }
         drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(bin_half), if (on_button) theme.red else theme.text_tertiary);
     }
+    return action;
+}
 
-    // The filmstrip: the film drawn to its own proportions, centred in the row's height, with the
+/// Draws roll `index`'s filmstrip beside its card, up to `right`, with "+N more" when the frames
+/// don't all fit. Returns Open when a frame is clicked.
+fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, list: *c.ImDrawList, origin: gui.Vec2, card_height: f32, right: f32) ?Action {
+    var action: ?Action = null;
+    const format = r.info.format.format();
+    const total = r.frames.items.len;
+    // The film drawn to its own proportions, centred in the row's height, with the
     // frame numbers under it.
     const height = gui.px(thumb_height);
     const per_mm = height / format.height_mm;
@@ -387,7 +411,6 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const strip_top = @round(origin.y + (card_height - band - gui.px(number_gap + number_height)) / 2);
     const thumbs_top = strip_top + @round((band - height) / 2);
     const width = @round(height * format.ratio());
-    const right = c.ImGui_GetWindowPos().x + c.ImGui_GetWindowWidth() - gui.px(page_padding_x);
     const more_width = gui.px(2 * more_padding) + c.ImGui_CalcTextSize("+00 more").x;
     // Each frame takes its width and the gap after it; sheets each have their own border.
     const step = width + if (sheets) 2 * leader + gap else gap;
@@ -443,14 +466,6 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     if (total == 0) {
         c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet");
     }
-
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
-    c.ImGui_Dummy(gui.vec2(0, 0));
-    if (action == null) {
-        if (drop) |p| {
-            if (p.y >= origin.y and p.y < origin.y + card_height and p.x >= origin.x and p.x < right) action = .{ .dropped_on = index };
-        }
-    }
     return action;
 }
 
@@ -495,15 +510,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         form.named = true;
     }
 
-    const close_size = c.ImGui_GetFrameHeight();
-    c.ImGui_AlignTextToFramePadding();
-    gui.title("New roll", fonts.title_size);
-    c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - close_size - c.ImGui_GetStyle().*.ItemSpacing.x, 0);
-    const corner = c.ImGui_GetCursorScreenPos();
-    if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
-    const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
-    const list = c.ImGui_GetWindowDrawList();
-    gui.cross(list, centre, gui.px(close_arm), gui.px(close_thickness), theme.text_secondary);
+    drawFormTitle(state);
 
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(form_spacing), gui.px(form_spacing)));
     defer c.ImGui_PopStyleVar();
@@ -546,24 +553,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * notes_lines + gui.px(notes_padding)), 0, null, null);
     gui.rowLabel("Input");
     if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, roll.Input.label, 0)) |picked| form.input = picked;
-    const chosen = state.flat_dialog.take(gpa, io);
-    defer Dialog.free(gpa, chosen);
-    if (chosen.len > 0) {
-        const path = chosen[chosen.len - 1];
-        gui.setText(&form.flat, path) catch std.log.err("the flat field's path is too long: {s}", .{path});
-    }
-    const camera = form.input == .camera_raw;
-    if (camera) {
-        gui.rowLabel("Flat field");
-        const flat = std.mem.sliceTo(&form.flat, 0);
-        const width = c.ImGui_GetContentRegionAvail().x;
-        const label = if (flat.len == 0) "Choose a shot…" else gui.elideStart(std.fs.path.basename(flat), width - c.ImGui_GetStyle().*.FramePadding.x * 2);
-        c.ImGui_PushID("flat field");
-        if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
-        c.ImGui_PopID();
-        c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-        gui.paragraph(theme.text_tertiary, "Optional");
-    }
+    if (form.input == .camera_raw) drawFlatField(state, gpa, io);
 
     // The button sits at the bottom of the panel.
     const bottom = c.ImGui_GetWindowHeight() - gui.px(form_padding + create_height);
@@ -575,7 +565,46 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         .scanner => "Create roll and scan",
         .camera_raw, .tiff_files, .finished => "Create roll",
     }, gui.vec2(c.ImGui_GetContentRegionAvail().x / gui.scale, create_height))) return null;
+    return createRoll(state, library, gpa, io, stock_names, choices);
+}
 
+/// Draws the panel's title and its close button.
+fn drawFormTitle(state: *State) void {
+    const close_size = c.ImGui_GetFrameHeight();
+    c.ImGui_AlignTextToFramePadding();
+    gui.title("New roll", fonts.title_size);
+    c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - close_size - c.ImGui_GetStyle().*.ItemSpacing.x, 0);
+    const corner = c.ImGui_GetCursorScreenPos();
+    if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
+    const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
+    gui.cross(c.ImGui_GetWindowDrawList(), centre, gui.px(close_arm), gui.px(close_thickness), theme.text_secondary);
+}
+
+/// Draws the flat field row, for a camera roll: a button that picks the shot, which is optional.
+fn drawFlatField(state: *State, gpa: std.mem.Allocator, io: std.Io) void {
+    const form = &state.form;
+    const chosen = state.flat_dialog.take(gpa, io);
+    defer Dialog.free(gpa, chosen);
+    if (chosen.len > 0) {
+        const path = chosen[chosen.len - 1];
+        gui.setText(&form.flat, path) catch std.log.err("the flat field's path is too long: {s}", .{path});
+    }
+    gui.rowLabel("Flat field");
+    const flat = std.mem.sliceTo(&form.flat, 0);
+    const width = c.ImGui_GetContentRegionAvail().x;
+    const label = if (flat.len == 0) "Choose a shot…" else gui.elideStart(std.fs.path.basename(flat), width - c.ImGui_GetStyle().*.FramePadding.x * 2);
+    c.ImGui_PushID("flat field");
+    if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
+    c.ImGui_PopID();
+    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
+    gui.paragraph(theme.text_tertiary, "Optional");
+}
+
+/// Makes the roll the form describes, with `stock_names` and `choices` as the form listed them.
+/// Returns it once it's in the library, or null if it can't be made; the form then says why.
+fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, stock_names: []const []const u8, choices: []const formats.Standard) ?Created {
+    const form = &state.form;
+    const name = std.mem.sliceTo(&form.name, 0);
     const stock_count = stock_names.len - 1;
     var made = roll.Roll.create(gpa, io, library.path, .{
         .name = name,
@@ -598,7 +627,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     };
     const flat = std.mem.sliceTo(&form.flat, 0);
     var flat_failed = false;
-    if (camera and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
+    if (form.input == .camera_raw and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
         std.log.err("can't use {s} as the flat field: {t}", .{ flat, err });
         flat_failed = true;
     };

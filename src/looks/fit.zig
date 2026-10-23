@@ -210,7 +210,6 @@ fn channelLoss(model: *const Model, samples: []const Sample, balance: []const [3
 /// Takes one damped Gauss-Newton step on one channel's matrix row and balance offsets.
 fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balance: [][3]f32, held_out: []const bool, counts: []const usize, options: Options, channel: usize) !void {
     // The unknowns: the row's two crosstalk terms, then one offset per fitted pair with samples.
-    const others = [3][2]usize{ .{ 1, 2 }, .{ 0, 2 }, .{ 0, 1 } };
     const crosstalk: usize = if (options.matrix) 2 else 0;
     const slot = try gpa.alloc(?usize, held_out.len);
     defer gpa.free(slot);
@@ -228,85 +227,122 @@ fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balan
     defer gpa.free(g);
     @memset(a, 0);
     @memset(g, 0);
+    const system: System = .{ .a = a, .g = g, .n = n, .crosstalk = crosstalk, .slot = slot, .channel = channel };
 
-    var total: f64 = 0;
-    const c = &model.curves[channel];
-    for (samples) |s| {
-        if (held_out[s.pair]) continue;
-        const m = model.mixed(s.density, balance[s.pair])[channel];
-        const r: f64 = curve.eval(c, m) - s.target[channel];
-        const d: f64 = curve.slope(c, m);
-        const w: f64 = s.weight;
-        total += w;
-        var jacobian: [3]f64 = undefined;
-        var index: [3]usize = undefined;
-        var k: usize = 0;
-        if (options.matrix) {
-            for (others[channel]) |j| {
-                jacobian[k] = d * (s.density[j] - s.density[channel]);
-                index[k] = k;
+    const total = system.addSamples(model, samples, balance, held_out);
+    if (total == 0) return;
+    system.steady(model, balance, held_out, total);
+    linear.solve(n, a, g) catch return;
+    try system.step(gpa, model, samples, balance, held_out, total);
+}
+
+/// The other two channels of each channel, whose crosstalk into it the matrix row holds.
+const other_channels = [3][2]usize{ .{ 1, 2 }, .{ 0, 2 }, .{ 0, 1 } };
+
+/// The least-squares system of one Gauss-Newton step on one channel: `a` · x = `g`, n × n. The
+/// unknowns are the row's `crosstalk` terms, then a balance offset for each pair `slot` gives one
+/// to.
+const System = struct {
+    a: []f64,
+    g: []f64,
+    n: usize,
+    crosstalk: usize,
+    slot: []const ?usize,
+    channel: usize,
+
+    /// Adds the fitted pairs' samples to the system. Returns their total weight.
+    fn addSamples(system: System, model: *const Model, samples: []const Sample, balance: []const [3]f32, held_out: []const bool) f64 {
+        const channel = system.channel;
+        const n = system.n;
+        var total: f64 = 0;
+        const c = &model.curves[channel];
+        for (samples) |s| {
+            if (held_out[s.pair]) continue;
+            const m = model.mixed(s.density, balance[s.pair])[channel];
+            const r: f64 = curve.eval(c, m) - s.target[channel];
+            const d: f64 = curve.slope(c, m);
+            const w: f64 = s.weight;
+            total += w;
+            var jacobian: [3]f64 = undefined;
+            var index: [3]usize = undefined;
+            var k: usize = 0;
+            if (system.crosstalk > 0) {
+                for (other_channels[channel]) |j| {
+                    jacobian[k] = d * (s.density[j] - s.density[channel]);
+                    index[k] = k;
+                    k += 1;
+                }
+            }
+            if (system.slot[s.pair]) |at| {
+                jacobian[k] = d;
+                index[k] = at;
                 k += 1;
             }
+            for (jacobian[0..k], index[0..k]) |ja, ia| {
+                system.g[ia] -= w * ja * r;
+                for (jacobian[0..k], index[0..k]) |jb, ib| system.a[ia * n + ib] += w * ja * jb;
+            }
         }
-        if (slot[s.pair]) |at| {
-            jacobian[k] = d;
-            index[k] = at;
-            k += 1;
-        }
-        for (jacobian[0..k], index[0..k]) |ja, ia| {
-            g[ia] -= w * ja * r;
-            for (jacobian[0..k], index[0..k]) |jb, ib| a[ia * n + ib] += w * ja * jb;
-        }
+        return total;
     }
-    if (total == 0) return;
 
-    // Hold the balance's mean at 0, and keep the crosstalk from wandering where the samples
-    // don't pin it down.
-    const gauge = total;
-    var mean: f64 = 0;
-    for (balance, held_out) |b, out| {
-        if (!out) mean += b[channel];
-    }
-    for (slot) |sa| {
-        const ia = sa orelse continue;
-        g[ia] -= gauge * mean;
-        for (slot) |sb| {
-            const ib = sb orelse continue;
-            a[ia * n + ib] += gauge;
+    /// Holds the balance's mean at 0, damps the step, and keeps the crosstalk from wandering where
+    /// the samples don't pin it down. `total` is the samples' weight.
+    fn steady(system: System, model: *const Model, balance: []const [3]f32, held_out: []const bool, total: f64) void {
+        const channel = system.channel;
+        const n = system.n;
+        const a = system.a;
+        const g = system.g;
+        const gauge = total;
+        var mean: f64 = 0;
+        for (balance, held_out) |b, out| {
+            if (!out) mean += b[channel];
+        }
+        for (system.slot) |sa| {
+            const ia = sa orelse continue;
+            g[ia] -= gauge * mean;
+            for (system.slot) |sb| {
+                const ib = sb orelse continue;
+                a[ia * n + ib] += gauge;
+            }
+        }
+        var trace: f64 = 0;
+        for (0..n) |i| trace += a[i * n + i];
+        const damping = damping_share * trace / @as(f64, @floatFromInt(n)) + damping_floor * total;
+        for (0..n) |i| a[i * n + i] += damping;
+        for (0..system.crosstalk) |i| {
+            a[i * n + i] += crosstalk_cost * total;
+            g[i] -= crosstalk_cost * total * model.matrix[channel][other_channels[channel][i]];
         }
     }
-    var trace: f64 = 0;
-    for (0..n) |i| trace += a[i * n + i];
-    const damping = damping_share * trace / @as(f64, @floatFromInt(n)) + damping_floor * total;
-    for (0..n) |i| a[i * n + i] += damping;
-    for (0..crosstalk) |i| {
-        a[i * n + i] += crosstalk_cost * total;
-        g[i] -= crosstalk_cost * total * model.matrix[channel][others[channel][i]];
-    }
-    linear.solve(n, a, g) catch return;
 
-    // Take the step, or part of it, if that lowers the error.
-    const before = channelLoss(model, samples, balance, held_out, channel, gauge);
-    const row = model.matrix[channel];
-    const saved = try gpa.dupe([3]f32, balance);
-    defer gpa.free(saved);
-    var share: f64 = 1;
-    for (0..step_halvings) |_| {
-        if (options.matrix) {
-            var next = row;
-            for (others[channel], 0..) |j, i| next[j] = row[j] + @as(f32, @floatCast(share * g[i]));
-            next[channel] = 1 - next[others[channel][0]] - next[others[channel][1]];
-            model.matrix[channel] = next;
+    /// Takes the solved step, or part of it, if that lowers the error. Otherwise leaves the model
+    /// and the balance as they were.
+    fn step(system: System, gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balance: [][3]f32, held_out: []const bool, total: f64) !void {
+        const channel = system.channel;
+        const gauge = total;
+        const before = channelLoss(model, samples, balance, held_out, channel, gauge);
+        const row = model.matrix[channel];
+        const saved = try gpa.dupe([3]f32, balance);
+        defer gpa.free(saved);
+        var share: f64 = 1;
+        for (0..step_halvings) |_| {
+            if (system.crosstalk > 0) {
+                var next = row;
+                for (other_channels[channel], 0..) |j, i| next[j] = row[j] + @as(f32, @floatCast(share * system.g[i]));
+                next[channel] = 1 - next[other_channels[channel][0]] - next[other_channels[channel][1]];
+                model.matrix[channel] = next;
+            }
+            for (balance, saved, system.slot) |*b, old, s| {
+                if (s) |at| b[channel] = old[channel] + @as(f32, @floatCast(share * system.g[at]));
+            }
+            if (channelLoss(model, samples, balance, held_out, channel, gauge) < before) return;
+            share /= 2;
         }
-        for (balance, saved, slot) |*b, old, s| {
-            if (s) |at| b[channel] = old[channel] + @as(f32, @floatCast(share * g[at]));
-        }
-        if (channelLoss(model, samples, balance, held_out, channel, gauge) < before) return;
-        share /= 2;
+        model.matrix[channel] = row;
+        @memcpy(balance, saved);
     }
-    model.matrix[channel] = row;
-    @memcpy(balance, saved);
-}
+};
 
 /// Fits each held-out pair's balance offsets with the look fixed, using a few Newton steps per
 /// channel.

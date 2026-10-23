@@ -29,31 +29,14 @@ pub fn build(b: *std.Build) void {
         std.mem.trimEnd(u8, b.run(&.{ "xcrun", "--sdk", "macosx", "--show-sdk-path" }), "\n")
     else
         null;
-    const sdl_dependency = if (macos_sdk) |sdk| b.dependency("sdl", .{
-        .target = target,
-        .optimize = optimize,
-        .system_include_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/include" })),
-        .system_framework_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "System/Library/Frameworks" })),
-        .library_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/lib" })),
-    }) else b.dependency("sdl", .{ .target = target, .optimize = optimize });
-    const sdl_library = sdl_dependency.artifact("SDL3");
+    const sdl_library = sdlLibrary(b, target, optimize, macos_sdk);
 
     // Dear ImGui's docking branch draws the interface. It's C++, so Dear Bindings' C API wraps it,
     // and ImGui's own backends drive it with SDL3 and SDL_GPU.
     const interface = interfaceLibrary(b, target, sdl_library);
     if (macos_sdk) |sdk| addMacosSdk(b, interface.root_module, sdk);
 
-    // One translated header holds both SDL and Dear ImGui, so the types they share come out as the
-    // same types.
-    const translator: Translator = .init(b.dependency("translate_c", .{}), .{
-        .c_source_file = b.path("src/platform/c.h"),
-        .target = target,
-        .optimize = optimize,
-        .default_init = true,
-    });
-    translator.linkLibrary(interface);
-    translator.linkLibrary(sdl_library);
-    for (interfaceIncludes(b)) |include| translator.addIncludePath(include);
+    const c = cModule(b, target, optimize, interface, sdl_library);
 
     // The version Release Please keeps in build.zig.zon, and how far the checkout is past the last
     // release, for `--version` (see `src/version.zig`).
@@ -68,7 +51,7 @@ pub fn build(b: *std.Build) void {
         .strip = strip,
         .imports = &.{
             .{ .name = "minilab", .module = core },
-            .{ .name = "c", .module = translator.mod },
+            .{ .name = "c", .module = c },
         },
     });
     app.addOptions("build_options", build_options);
@@ -82,23 +65,53 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
 
+    addSteps(b, exe, &.{ core, app, looks.tool });
+}
+
+/// SDL3, built for `target`. Building for a Mac other than the host needs the SDK at `macos_sdk`.
+fn sdlLibrary(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, macos_sdk: ?[]const u8) *std.Build.Step.Compile {
+    const dependency = if (macos_sdk) |sdk| b.dependency("sdl", .{
+        .target = target,
+        .optimize = optimize,
+        .system_include_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/include" })),
+        .system_framework_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "System/Library/Frameworks" })),
+        .library_path = b.graph.cwdRelativePath(b.pathJoin(&.{ sdk, "usr/lib" })),
+    }) else b.dependency("sdl", .{ .target = target, .optimize = optimize });
+    return dependency.artifact("SDL3");
+}
+
+/// The `c` module: one translated header that holds both SDL and Dear ImGui, so the types they
+/// share come out as the same types.
+fn cModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode, interface: *std.Build.Step.Compile, sdl: *std.Build.Step.Compile) *std.Build.Module {
+    const translator: Translator = .init(b.dependency("translate_c", .{}), .{
+        .c_source_file = b.path("src/platform/c.h"),
+        .target = target,
+        .optimize = optimize,
+        .default_init = true,
+    });
+    translator.linkLibrary(interface);
+    translator.linkLibrary(sdl);
+    for (interfaceIncludes(b)) |include| translator.addIncludePath(include);
+    return translator.mod;
+}
+
+/// Adds `zig build run`, which runs `exe`, and `zig build test` and `zig build check` for the
+/// modules with tests.
+fn addSteps(b: *std.Build, exe: *std.Build.Step.Compile, tested: []const *std.Build.Module) void {
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
     run.addPassthruArgs();
     b.step("run", "Run minilab").dependOn(&run.step);
 
     const tests = b.step("test", "Run tests");
-    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = core })).step);
-    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = app })).step);
-    tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = looks.tool })).step);
-
     // `zig build check` compiles the program and the tests without linking them, so
     // `zig build check -fincremental --watch` reports errors moments after you save.
     const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
-    check.dependOn(&b.addTest(.{ .root_module = core }).step);
-    check.dependOn(&b.addTest(.{ .root_module = app }).step);
-    check.dependOn(&b.addTest(.{ .root_module = looks.tool }).step);
-    check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = app }).step);
+    for (tested) |module| {
+        tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);
+        check.dependOn(&b.addTest(.{ .root_module = module }).step);
+    }
+    check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = exe.root_module }).step);
 }
 
 /// Runs `git describe` on the checkout against the release tags, giving something like

@@ -268,3 +268,16 @@ fn displayScale() f32 {
     const scale = c.SDL_GetDisplayContentScale(c.SDL_GetPrimaryDisplay());
     return if (scale > 0) scale else 1;
 }
+
+test "dropped files are copied, and cleared for the next drop" {
+    var dropped: Dropped = .{};
+    var path = "/scans/01.tif".*;
+    dropped.add(&path, .{ 10, 20 });
+    path[7] = '9';
+    dropped.add("/scans/02.tif", .{ 30, 40 });
+    try std.testing.expectEqual(@as(usize, 2), dropped.files().len);
+    try std.testing.expectEqualStrings("/scans/01.tif", dropped.files()[0]);
+    try std.testing.expectEqual([2]f32{ 30, 40 }, dropped.position);
+    dropped.clear();
+    try std.testing.expectEqual(@as(usize, 0), dropped.files().len);
+}

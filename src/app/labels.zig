@@ -177,3 +177,37 @@ pub fn importError(err: anyerror) []const u8 {
         else => @errorName(err),
     };
 }
+
+test "formats, sizes and ratios read the way people say them" {
+    try std.testing.expectEqualStrings("Full frame, 36 × 24", format(.@"135_full_frame"));
+    try std.testing.expectEqualStrings("135 · full frame, 36 × 24", filmAndFormat(.@"135_full_frame"));
+    try std.testing.expectEqualStrings("36 × 24 mm · 3:2", sizeAndRatio(.@"135_full_frame"));
+    try std.testing.expectEqualStrings("35mm full frame · 3:2 · whole roll", rollFormatNote(.@"135_full_frame"));
+    try std.testing.expectEqualStrings("Sheet film · 4×5 in", filmAndFormat(.sheet_4x5in));
+    try std.testing.expectEqualStrings("4:5", ratio(0.8));
+    try std.testing.expectEqualStrings("1.85:1", ratio(1.85));
+    try std.testing.expectEqualStrings("135 (35mm)", filmSizeChoice(.@"135"));
+    try std.testing.expectEqualStrings("120/220", filmSizeChoice(.@"120"));
+}
+
+test "frames are numbered from 01" {
+    try std.testing.expectEqualStrings("01", frameNumber(0));
+    try std.testing.expectEqualStrings("12", frameNumber(11));
+    try std.testing.expectEqualStrings("Roll 002 / 03", rollFrame("Roll 002", 2));
+}
+
+test "stocks are listed by film type, with the last choice after them" {
+    var buffer: [stock_choices.len + 1][]const u8 = undefined;
+    const names = stockNames(.colour_negative, "Other", &buffer);
+    try std.testing.expectEqualStrings("Other", names[names.len - 1]);
+    for (names[0 .. names.len - 1]) |name| try std.testing.expectEqual(develop.FilmKind.colour_negative, findStock(name).?.kind);
+    try std.testing.expect(findStock("Kodak Portra 400").?.preset != null);
+    try std.testing.expectEqual(@as(?StockChoice, null), findStock("Not a stock"));
+    try std.testing.expectEqual(@as(?[3]f32, null), stockGamma(null));
+}
+
+test "import errors say what's wrong" {
+    try std.testing.expectEqualStrings("size outside 2 to 129 points a side", importError(error.BadSize));
+    try std.testing.expectEqualStrings("over 64 MB", importError(error.FileTooBig));
+    try std.testing.expectEqualStrings("AccessDenied", importError(error.AccessDenied));
+}

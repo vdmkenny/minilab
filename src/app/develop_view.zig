@@ -120,6 +120,9 @@ const crop_line = 1.5;
 const crop_corner_arm = 14;
 const crop_corner_stroke = 3;
 const crop_note_inset = 8;
+/// How dark the picture is outside the crop, and how light the lines in thirds are.
+const crop_shade = 0.7;
+const thirds_alpha = 0.35;
 /// The settings column: the gaps between its rows, between slider rows, and above Inversion.
 const row_gap_x = 10;
 const row_gap = 8;
@@ -188,6 +191,55 @@ const CropEdit = struct {
     aspect: f32 = 1,
 
     const Grip = enum { box, top_left, top_right, bottom_right, bottom_left };
+    /// The corners, clockwise from the top left, in the order `corners` gives them.
+    const corner_grips = [_]Grip{ .top_left, .top_right, .bottom_right, .bottom_left };
+
+    fn corners(edit: CropEdit) [4][2]f32 {
+        return .{ .{ edit.min[0], edit.min[1] }, .{ edit.max[0], edit.min[1] }, .{ edit.max[0], edit.max[1] }, .{ edit.min[0], edit.max[1] } };
+    }
+
+    /// What a drag starting at `p` would move: a corner within `reach` of it, or else the box if
+    /// `p` is inside it.
+    fn gripAt(edit: CropEdit, p: [2]f32, reach: f32) ?Grip {
+        var under: ?Grip = null;
+        for (corner_grips, edit.corners()) |grip, corner| {
+            if (@abs(p[0] - corner[0]) < reach and @abs(p[1] - corner[1]) < reach) under = grip;
+        }
+        if (under == null and p[0] > edit.min[0] and p[0] < edit.max[0] and p[1] > edit.min[1] and p[1] < edit.max[1]) under = .box;
+        return under;
+    }
+
+    /// Moves the box by `delta`, but not off an image `size` big.
+    fn move(edit: *CropEdit, delta: [2]f32, size: [2]f32) void {
+        for (0..2) |axis| {
+            const moved = std.math.clamp(delta[axis], -edit.min[axis], size[axis] - edit.max[axis]);
+            edit.min[axis] += moved;
+            edit.max[axis] += moved;
+        }
+    }
+
+    /// Moves corner `grip` towards `p`, keeping the opposite corner where it is and the format's
+    /// shape (`ratio`) the way up the box already is. The box stays on an image `size` big, and
+    /// no smaller than `min_crop`.
+    fn dragCorner(edit: *CropEdit, grip: Grip, p: [2]f32, size: [2]f32, ratio: f32) void {
+        const index = std.mem.indexOfScalar(Grip, &corner_grips, grip) orelse return;
+        const fixed = edit.corners()[(index + 2) % 4];
+        const to = [2]f32{ std.math.clamp(p[0], 0, size[0]), std.math.clamp(p[1], 0, size[1]) };
+        const aspect = if (edit.aspect >= 1) @max(ratio, 1 / ratio) else @min(ratio, 1 / ratio);
+        var w = @max(@abs(to[0] - fixed[0]), min_crop);
+        var h = @max(@abs(to[1] - fixed[1]), min_crop);
+        if (w / h > aspect) w = h * aspect else h = w / aspect;
+        // Grow towards the mouse, unless the fixed corner is against that edge of the image.
+        // Then the box grows the other way instead, so it never shrinks to nothing.
+        const right = if (to[0] >= fixed[0]) size[0] - fixed[0] >= min_crop else fixed[0] < min_crop;
+        const down = if (to[1] >= fixed[1]) size[1] - fixed[1] >= min_crop else fixed[1] < min_crop;
+        // Keep the box on the image.
+        w = @max(@min(w, if (right) size[0] - fixed[0] else fixed[0]), @min(min_crop, size[0]));
+        h = @max(@min(h, if (down) size[1] - fixed[1] else fixed[1]), @min(min_crop, size[1]));
+        if (w / h > aspect) w = h * aspect else h = w / aspect;
+        edit.min = .{ if (right) fixed[0] else fixed[0] - w, if (down) fixed[1] else fixed[1] - h };
+        edit.max = .{ edit.min[0] + w, edit.min[1] + h };
+    }
 };
 
 /// How many changes undo can go back through.
@@ -489,7 +541,7 @@ pub const State = struct {
     /// frame if there's no crop yet.
     fn startCrop(state: *State, gpa: std.mem.Allocator, library: *const Library) !void {
         const frame = if (state.frame) |*f| f else return;
-        const area = frame.crop orelse frame.detect(gpa, state.format(library), state.dpi(library)) catch fallbackCrop(frame, state.format(library));
+        const area = frame.crop orelse frame.detect(gpa, state.format(library), state.dpi(library)) catch fallbackCrop(frame.scan_width, frame.scan_height, state.format(library));
         const turns = frame.quarter_turns;
         const mirrored = frame.mirrored;
         const before = frame.crop;
@@ -933,9 +985,7 @@ fn oppositeTurns(quarter_turns: u2) u2 {
 
 /// The crop to use when detection finds no frame: the format's shape at the scan's full extent
 /// across the film (the film runs along the scan's longer side), centred.
-fn fallbackCrop(frame: *const Frame, format: minilab.formats.Format) minilab.image.Area {
-    const w = frame.scan_width;
-    const h = frame.scan_height;
+fn fallbackCrop(w: usize, h: usize, format: minilab.formats.Format) minilab.image.Area {
     const ratio = format.ratio();
     if (w >= h) {
         const width = @min(w, @as(usize, @intFromFloat(@as(f32, @floatFromInt(h)) * ratio)));
@@ -1041,38 +1091,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             const corner = c.ImGui_GetCursorScreenPos();
             if (c.ImGui_InvisibleButton("frame", gui.vec2(cell_width, height), 0)) clicked = i;
             const far = gui.vec2(corner.x + cell_width, corner.y + height);
-            if (library.thumbnail(gpa, .{ .roll = r, .frame = i })) |t| {
-                gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(gui.box_rounding));
-            } else {
-                c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(gui.box_rounding), 0);
-            }
-            const rating = library.rolls.items[r].frames.items[i].rating;
-            // A rejected frame is dimmed, by drawing the page colour over it.
-            if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, rejected_dim)), gui.px(gui.box_rounding), 0);
-            const selected = state.selected == i;
-            gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(gui.box_rounding), if (selected) gui.px(selected_outline) else 1);
-            fonts.pushSized(.mono, fonts.tiny_size);
-            const number = labels.frameNumber(i);
-            const size = c.ImGui_CalcTextSize(number);
-            const chip_bottom = far.y - gui.px(chip.inset_y);
-            const label_min = gui.vec2(corner.x + gui.px(chip.inset_x), chip_bottom - size.y);
-            const shade = theme.imU32(theme.withAlpha(theme.header, chip.shade));
-            c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(2 * chip.padding), chip_bottom), shade, gui.px(gui.track_rounding), 0);
-            c.ImDrawList_AddText(list, gui.vec2(label_min.x + gui.px(chip.padding), label_min.y), theme.imU32(theme.text), number);
-            fonts.pop();
-            // Its stars, small, beside the number.
-            if (rating.stars > 0 and !rating.rejected) {
-                const radius = gui.px(chip.star_radius);
-                const pitch = 2 * radius + gui.px(chip.star_gap);
-                const label_right = label_min.x + size.x + gui.px(2 * chip.padding);
-                const stars_left = label_right + gui.px(chip.stars_gap);
-                const badge_far = gui.vec2(stars_left + gui.px(2 * chip.padding) + @as(f32, @floatFromInt(rating.stars)) * pitch - gui.px(chip.star_gap), chip_bottom);
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(stars_left, label_min.y), badge_far, shade, gui.px(gui.track_rounding), 0);
-                for (0..rating.stars) |k| {
-                    const centre = gui.vec2(stars_left + gui.px(chip.padding) + radius + @as(f32, @floatFromInt(k)) * pitch, (label_min.y + chip_bottom) / 2);
-                    gui.star(list, centre, radius, true, theme.accent);
-                }
-            }
+            drawThumbnail(state, gpa, library, r, i, list, corner, far);
         }
     }
 
@@ -1096,6 +1115,43 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
     return clicked;
 }
 
+/// Draws frame `i`'s thumbnail from `corner` to `far`: dimmed if it's rejected, outlined in amber
+/// if it's selected, with its number and stars along the bottom.
+fn drawThumbnail(state: *const State, gpa: std.mem.Allocator, library: *Library, r: usize, i: usize, list: *c.ImDrawList, corner: gui.Vec2, far: gui.Vec2) void {
+    if (library.thumbnail(gpa, .{ .roll = r, .frame = i })) |t| {
+        gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(gui.box_rounding));
+    } else {
+        c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(gui.box_rounding), 0);
+    }
+    const rating = library.rolls.items[r].frames.items[i].rating;
+    // A rejected frame is dimmed, by drawing the page colour over it.
+    if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, rejected_dim)), gui.px(gui.box_rounding), 0);
+    const selected = state.selected == i;
+    gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(gui.box_rounding), if (selected) gui.px(selected_outline) else 1);
+    fonts.pushSized(.mono, fonts.tiny_size);
+    const number = labels.frameNumber(i);
+    const size = c.ImGui_CalcTextSize(number);
+    const chip_bottom = far.y - gui.px(chip.inset_y);
+    const label_min = gui.vec2(corner.x + gui.px(chip.inset_x), chip_bottom - size.y);
+    const shade = theme.imU32(theme.withAlpha(theme.header, chip.shade));
+    c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(2 * chip.padding), chip_bottom), shade, gui.px(gui.track_rounding), 0);
+    c.ImDrawList_AddText(list, gui.vec2(label_min.x + gui.px(chip.padding), label_min.y), theme.imU32(theme.text), number);
+    fonts.pop();
+    // Its stars, small, beside the number.
+    if (rating.stars > 0 and !rating.rejected) {
+        const radius = gui.px(chip.star_radius);
+        const pitch = 2 * radius + gui.px(chip.star_gap);
+        const label_right = label_min.x + size.x + gui.px(2 * chip.padding);
+        const stars_left = label_right + gui.px(chip.stars_gap);
+        const badge_far = gui.vec2(stars_left + gui.px(2 * chip.padding) + @as(f32, @floatFromInt(rating.stars)) * pitch - gui.px(chip.star_gap), chip_bottom);
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(stars_left, label_min.y), badge_far, shade, gui.px(gui.track_rounding), 0);
+        for (0..rating.stars) |k| {
+            const centre = gui.vec2(stars_left + gui.px(chip.padding) + radius + @as(f32, @floatFromInt(k)) * pitch, (label_min.y + chip_bottom) / 2);
+            gui.star(list, centre, radius, true, theme.accent);
+        }
+    }
+}
+
 fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, roll_index: ?usize) void {
     const origin = c.ImGui_GetCursorScreenPos();
     const size = c.ImGui_GetContentRegionAvail();
@@ -1104,9 +1160,22 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const toolbar_height = gui.px(gui.segmented_box_height + 2 * toolbar.padding_y) + 1;
     const info_height = gui.lineFor(fonts.small_size) + gui.px(2 * info_padding_y) + 1;
 
-    // The toolbar.
-    c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + size.x, origin.y + toolbar_height - 1), theme.imU32(theme.divider));
+    drawToolbar(state, gpa, io, library, list, origin, size.x, toolbar_height);
+    const info_top = origin.y + size.y - info_height;
+    drawInfoLine(state, io, library, roll_index, list, gui.vec2(origin.x, info_top), size.x, info_height);
+
+    // The frame.
+    const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
+    const area_max = gui.vec2(origin.x + size.x, info_top);
+    drawPicture(state, library, area_min, area_max);
+    drawLoupe(state, gpa, io, library, gpu, area_min, area_max);
+}
+
+/// Draws the viewer's toolbar, `height` high, across the top at `origin`: the comparison, the zoom,
+/// the overlays, the crop and turn tools, and the pipeline.
+fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, list: *c.ImDrawList, origin: gui.Vec2, width: f32, toolbar_height: f32) void {
+    c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + toolbar_height), theme.imU32(theme.page));
+    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + width, origin.y + toolbar_height - 1), theme.imU32(theme.divider));
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(toolbar.padding_x), origin.y + gui.px(toolbar.padding_y)));
     if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
@@ -1179,17 +1248,20 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const controls_end = c.ImGui_GetItemRectMax().x;
     fonts.pushSized(.mono, fonts.small_size);
     const pipeline_size = c.ImGui_CalcTextSize(pipeline);
-    const pipeline_x = origin.x + size.x - gui.px(toolbar.padding_x) - pipeline_size.x;
+    const pipeline_x = origin.x + width - gui.px(toolbar.padding_x) - pipeline_size.x;
     if (pipeline_x > controls_end + gui.px(toolbar.pipeline_room)) c.ImDrawList_AddText(list, gui.vec2(pipeline_x, origin.y + (toolbar_height - pipeline_size.y) / 2), theme.imU32(theme.text_tertiary), pipeline);
     fonts.pop();
+}
 
-    // The info line along the bottom.
-    const info_top = origin.y + size.y - info_height;
-    c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, origin.y + size.y), theme.imU32(theme.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, info_top), theme.imU32(theme.divider));
+/// Draws the info line, `info_height` high, across the bottom at `origin`: the frame's details on
+/// the left and its rating on the right.
+fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize, list: *c.ImDrawList, origin: gui.Vec2, width: f32, info_height: f32) void {
+    const info_top = origin.y;
+    c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top + info_height), theme.imU32(theme.page));
+    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top), theme.imU32(theme.divider));
     if (state.frame) |frame| {
         // The rating on the right, and the frame's details from the left up to it.
-        const limit = drawRating(state, io, library, list, origin.x + size.x - gui.px(toolbar.padding_x), info_top + info_height / 2);
+        const limit = drawRating(state, io, library, list, origin.x + width - gui.px(toolbar.padding_x), info_top + info_height / 2);
         fonts.pushSized(.mono, fonts.small_size);
         var x = origin.x + gui.px(toolbar.padding_x);
         const y = info_top + (info_height - c.ImGui_GetTextLineHeight()) / 2;
@@ -1209,19 +1281,13 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
             n += 1;
         }
         for (items[0..n]) |item| {
-            const width = c.ImGui_CalcTextSize(item).x;
-            if (x + width > limit) break;
+            const item_width = c.ImGui_CalcTextSize(item).x;
+            if (x + item_width > limit) break;
             c.ImDrawList_AddText(list, gui.vec2(x, y), theme.imU32(theme.text_tertiary), item);
-            x += width + gui.px(info_item_gap);
+            x += item_width + gui.px(info_item_gap);
         }
         fonts.pop();
     }
-
-    // The frame.
-    const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
-    const area_max = gui.vec2(origin.x + size.x, info_top);
-    drawPicture(state, library, area_min, area_max);
-    drawLoupe(state, gpa, io, library, gpu, area_min, area_max);
 }
 
 /// Draws the open frame's stars and its reject button, ending at `right` and centred on `middle`.
@@ -1279,40 +1345,71 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     const positive = state.positive orelse return;
     const negative = state.negative orelse return;
     const list = c.ImGui_GetWindowDrawList();
-    const width: f32 = @floatFromInt(positive.width);
-    const height: f32 = @floatFromInt(positive.height);
-    const room = gui.vec2(area_max.x - area_min.x - gui.px(2 * picture_margin_x), area_max.y - area_min.y - gui.px(2 * picture_margin_y));
-    if (room.x <= 0 or room.y <= 0) return;
-    const scale = switch (state.zoom) {
-        .fit => @min(room.x / width, room.y / height),
-        .actual => 1,
-    };
-    const shown = gui.vec2(width * scale, height * scale);
-    const centre = gui.vec2((area_min.x + area_max.x) / 2 + state.pan.x, (area_min.y + area_max.y) / 2 + state.pan.y);
-    const min = gui.vec2(centre.x - shown.x / 2, centre.y - shown.y / 2);
-    const max = gui.vec2(min.x + shown.x, min.y + shown.y);
+    const picture = PictureOnScreen.place(state, positive, area_min, area_max) orelse return;
 
     // Hit area: the whole viewer between the bars, for panning, picking and moving the split.
     c.ImGui_SetCursorScreenPos(area_min);
     _ = c.ImGui_InvisibleButton("picture", gui.vec2(area_max.x - area_min.x, area_max.y - area_min.y), 0);
     const hovered = c.ImGui_IsItemHovered(0);
     const active = c.ImGui_IsItemActive();
-    const mouse = c.ImGui_GetMousePos();
-    const inside = mouse.x >= min.x and mouse.x < max.x and mouse.y >= min.y and mouse.y < max.y;
-    const split_x = min.x + shown.x * state.split;
-    const near_split = state.compare == .split and @abs(mouse.x - split_x) < gui.px(split_reach) and inside;
+    c.ImDrawList_PushClipRect(list, area_min, area_max, true);
+    defer c.ImDrawList_PopClipRect(list);
     if (state.cropping) |*edit| {
-        c.ImDrawList_PushClipRect(list, area_min, area_max, true);
-        defer c.ImDrawList_PopClipRect(list);
-        c.ImDrawList_AddImage(list, positive.ref(), min, max);
-        cropTool(edit, list, min, scale, .{ width, height }, hovered, active, state.format(library).ratio());
+        c.ImDrawList_AddImage(list, positive.ref(), picture.min, picture.max);
+        cropTool(edit, list, picture.min, picture.scale, picture.size, hovered, active, state.format(library).ratio());
         return;
     }
+    handlePointer(state, frame, picture, hovered, active);
+    drawComparison(state, list, picture, positive, negative);
+}
+
+/// Where the frame is drawn in the viewer.
+const PictureOnScreen = struct {
+    min: gui.Vec2,
+    max: gui.Vec2,
+    /// Screen pixels per pixel of the picture, and the picture's size in its own pixels.
+    scale: f32,
+    size: [2]f32,
+
+    /// Fits the picture into the viewer from `area_min` to `area_max` at the zoom, moved by the
+    /// pan. Null when there's no room for it.
+    fn place(state: *const State, picture: Texture, area_min: gui.Vec2, area_max: gui.Vec2) ?PictureOnScreen {
+        const width: f32 = @floatFromInt(picture.width);
+        const height: f32 = @floatFromInt(picture.height);
+        const room = gui.vec2(area_max.x - area_min.x - gui.px(2 * picture_margin_x), area_max.y - area_min.y - gui.px(2 * picture_margin_y));
+        if (room.x <= 0 or room.y <= 0) return null;
+        const scale = switch (state.zoom) {
+            .fit => @min(room.x / width, room.y / height),
+            .actual => 1,
+        };
+        const shown = gui.vec2(width * scale, height * scale);
+        const centre = gui.vec2((area_min.x + area_max.x) / 2 + state.pan.x, (area_min.y + area_max.y) / 2 + state.pan.y);
+        const min = gui.vec2(centre.x - shown.x / 2, centre.y - shown.y / 2);
+        return .{ .min = min, .max = gui.vec2(min.x + shown.x, min.y + shown.y), .scale = scale, .size = .{ width, height } };
+    }
+
+    fn contains(picture: PictureOnScreen, p: gui.Vec2) bool {
+        return p.x >= picture.min.x and p.x < picture.max.x and p.y >= picture.min.y and p.y < picture.max.y;
+    }
+
+    /// Where the split between the negative and the positive is on screen.
+    fn splitX(picture: PictureOnScreen, split: f32) f32 {
+        return picture.min.x + (picture.max.x - picture.min.x) * split;
+    }
+};
+
+/// What the mouse does over the picture: picks the film base or a neutral, moves the split, pans,
+/// and places the loupe.
+fn handlePointer(state: *State, frame: *Frame, picture: PictureOnScreen, hovered: bool, active: bool) void {
+    const mouse = c.ImGui_GetMousePos();
+    const inside = picture.contains(mouse);
+    const split_x = picture.splitX(state.split);
+    const near_split = state.compare == .split and @abs(mouse.x - split_x) < gui.px(split_reach) and inside;
     if (state.picking != null and hovered and inside) {
         c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_Hand);
         if (c.ImGui_IsMouseClicked(0)) {
-            const x: usize = @intFromFloat(std.math.clamp((mouse.x - min.x) / scale, 0, width - 1));
-            const y: usize = @intFromFloat(std.math.clamp((mouse.y - min.y) / scale, 0, height - 1));
+            const x: usize = @intFromFloat(std.math.clamp((mouse.x - picture.min.x) / picture.scale, 0, picture.size[0] - 1));
+            const y: usize = @intFromFloat(std.math.clamp((mouse.y - picture.min.y) / picture.scale, 0, picture.size[1] - 1));
             switch (state.picking.?) {
                 .base => frame.pickBase(x, y),
                 .neutral => frame.pickNeutral(x, y),
@@ -1323,7 +1420,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     } else if (active and c.ImGui_IsMouseDragging(0, 0)) {
         const delta = c.ImGui_GetIO().*.MouseDelta;
         if (state.compare == .split and (near_split or state.zoom == .fit)) {
-            state.split = std.math.clamp((mouse.x - min.x) / shown.x, 0, 1);
+            state.split = std.math.clamp((mouse.x - picture.min.x) / (picture.max.x - picture.min.x), 0, 1);
         } else if (state.zoom == .actual) {
             state.pan.x += delta.x;
             state.pan.y += delta.y;
@@ -1334,15 +1431,19 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     state.loupe_target = null;
     if (state.loupe and hovered and inside and !near_split) {
         const on_negative = state.compare == .negative or (state.compare == .split and mouse.x < split_x);
-        state.loupe_target = .{ .at = .{ (mouse.x - min.x) / scale, (mouse.y - min.y) / scale }, .screen = mouse, .negative = on_negative };
+        state.loupe_target = .{ .at = .{ (mouse.x - picture.min.x) / picture.scale, (mouse.y - picture.min.y) / picture.scale }, .screen = mouse, .negative = on_negative };
         c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_None);
     }
+}
 
-    c.ImDrawList_PushClipRect(list, area_min, area_max, true);
-    defer c.ImDrawList_PopClipRect(list);
-    // Where the split is now: a drag above may have just moved it, and the halves have to be cut
-    // at the same place on screen as in the pictures, or they stretch.
-    const split_now = min.x + shown.x * state.split;
+/// Draws the positive, the negative, or the two split, with the split's line and labels and the
+/// picking hint.
+fn drawComparison(state: *const State, list: *c.ImDrawList, picture: PictureOnScreen, positive: Texture, negative: Texture) void {
+    const min = picture.min;
+    const max = picture.max;
+    // Where the split is now: a drag may have just moved it, and the halves have to be cut at the
+    // same place on screen as in the pictures, or they stretch.
+    const split_now = picture.splitX(state.split);
     switch (state.compare) {
         .positive => c.ImDrawList_AddImage(list, positive.ref(), min, max),
         .negative => c.ImDrawList_AddImage(list, negative.ref(), min, max),
@@ -1440,14 +1541,7 @@ const min_crop = 16;
 fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, size: [2]f32, hovered: bool, active: bool, ratio: f32) void {
     const mouse = c.ImGui_GetMousePos();
     const p = [2]f32{ (mouse.x - origin.x) / scale, (mouse.y - origin.y) / scale };
-    const reach = gui.px(crop_reach) / scale;
-    const grips = [_]CropEdit.Grip{ .top_left, .top_right, .bottom_right, .bottom_left };
-    const corners = [_][2]f32{ .{ edit.min[0], edit.min[1] }, .{ edit.max[0], edit.min[1] }, .{ edit.max[0], edit.max[1] }, .{ edit.min[0], edit.max[1] } };
-    var under: ?CropEdit.Grip = null;
-    for (grips, corners) |grip, corner| {
-        if (@abs(p[0] - corner[0]) < reach and @abs(p[1] - corner[1]) < reach) under = grip;
-    }
-    if (under == null and p[0] > edit.min[0] and p[0] < edit.max[0] and p[1] > edit.min[1] and p[1] < edit.max[1]) under = .box;
+    const under = edit.gripAt(p, gui.px(crop_reach) / scale);
     if (hovered and c.ImGui_IsMouseClicked(0)) {
         edit.grip = under;
         edit.aspect = (edit.max[0] - edit.min[0]) / @max(1, edit.max[1] - edit.min[1]);
@@ -1463,45 +1557,20 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     if (edit.grip) |grip| if (c.ImGui_IsMouseDragging(0, 0)) switch (grip) {
         .box => {
             const delta = c.ImGui_GetIO().*.MouseDelta;
-            for (0..2) |axis| {
-                const d = (if (axis == 0) delta.x else delta.y) / scale;
-                const moved = std.math.clamp(d, -edit.min[axis], size[axis] - edit.max[axis]);
-                edit.min[axis] += moved;
-                edit.max[axis] += moved;
-            }
+            edit.move(.{ delta.x / scale, delta.y / scale }, size);
         },
-        else => {
-            // The opposite corner stays put, and the dragged one follows the mouse, keeping the
-            // shape.
-            const index = std.mem.indexOfScalar(CropEdit.Grip, &grips, grip).?;
-            const fixed = corners[(index + 2) % 4];
-            const to = [2]f32{ std.math.clamp(p[0], 0, size[0]), std.math.clamp(p[1], 0, size[1]) };
-            const aspect = if (edit.aspect >= 1) @max(ratio, 1 / ratio) else @min(ratio, 1 / ratio);
-            var w = @max(@abs(to[0] - fixed[0]), min_crop);
-            var h = @max(@abs(to[1] - fixed[1]), min_crop);
-            if (w / h > aspect) w = h * aspect else h = w / aspect;
-            // Grow towards the mouse, unless the fixed corner is against that edge of the image.
-            // Then the box grows the other way instead, so it never shrinks to nothing.
-            const right = if (to[0] >= fixed[0]) size[0] - fixed[0] >= min_crop else fixed[0] < min_crop;
-            const down = if (to[1] >= fixed[1]) size[1] - fixed[1] >= min_crop else fixed[1] < min_crop;
-            // Keep the box on the image.
-            w = @max(@min(w, if (right) size[0] - fixed[0] else fixed[0]), @min(min_crop, size[0]));
-            h = @max(@min(h, if (down) size[1] - fixed[1] else fixed[1]), @min(min_crop, size[1]));
-            if (w / h > aspect) w = h * aspect else h = w / aspect;
-            edit.min = .{ if (right) fixed[0] else fixed[0] - w, if (down) fixed[1] else fixed[1] - h };
-            edit.max = .{ edit.min[0] + w, edit.min[1] + h };
-        },
+        .top_left, .top_right, .bottom_right, .bottom_left => edit.dragCorner(grip, p, size, ratio),
     };
 
     const box_min = gui.vec2(origin.x + edit.min[0] * scale, origin.y + edit.min[1] * scale);
     const box_max = gui.vec2(origin.x + edit.max[0] * scale, origin.y + edit.max[1] * scale);
     const image_max = gui.vec2(origin.x + size[0] * scale, origin.y + size[1] * scale);
-    const shade = theme.imU32(theme.withAlpha(theme.header, 0.7));
+    const shade = theme.imU32(theme.withAlpha(theme.header, crop_shade));
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(image_max.x, box_min.y), shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, box_max.y), image_max, shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, box_min.y), gui.vec2(box_min.x, box_max.y), shade);
     c.ImDrawList_AddRectFilled(list, gui.vec2(box_max.x, box_min.y), gui.vec2(image_max.x, box_max.y), shade);
-    const thirds = theme.imU32(theme.withAlpha(theme.text, 0.35));
+    const thirds = theme.imU32(theme.withAlpha(theme.text, thirds_alpha));
     for ([_]f32{ 1.0 / 3.0, 2.0 / 3.0 }) |t| {
         const x = box_min.x + (box_max.x - box_min.x) * t;
         const y = box_min.y + (box_max.y - box_min.y) * t;
@@ -1606,46 +1675,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     // A fitted look makes its own tones from the density, so the tone and inversion don't apply.
     const fitted = frame.look.kind() == .fitted;
 
-    gui.beginSection("preset");
-    gui.heading("PRESET");
-    {
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
-        defer c.ImGui_PopStyleVar();
-        gui.rowLabel("Film type");
-        if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
-            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
-            frame.measure(picked);
-            state.changed();
-        }
-        gui.rowLabel("Stock");
-        drawStock(state, gpa, io, library, roll_index);
-        gui.rowLabel("Look");
-        state.drawLook(gpa, io, library);
-        gui.rowLabel("Tone");
-        c.ImGui_BeginDisabled(fitted);
-        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
-            s.tone = picked;
-            state.changed();
-        }
-        c.ImGui_EndDisabled();
-        gui.rowLabel("White balance");
-        const modes = comptime std.enums.values(develop.WhiteBalance);
-        var mode_names: [modes.len][]const u8 = undefined;
-        const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
-        for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
-        if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
-            switch (modes[picked]) {
-                .picked => state.picking = .neutral,
-                .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),
-                else => |mode| frame.rebalance(mode, null),
-            }
-            state.changed();
-        }
-        if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
-    }
-    if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
-    gui.endSection(true);
-
+    drawPreset(state, gpa, io, library, roll_index, fitted);
     drawBase(state);
 
     gui.beginSection("density");
@@ -1697,6 +1727,59 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
     }
     gui.endSection(false);
+}
+
+/// Draws the Preset section: the film type, stock, look, tone and white balance.
+fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize, fitted: bool) void {
+    const frame = &state.frame.?;
+    const s = &frame.settings;
+    gui.beginSection("preset");
+    gui.heading("PRESET");
+    {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
+        defer c.ImGui_PopStyleVar();
+        gui.rowLabel("Film type");
+        if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
+            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
+            frame.measure(picked);
+            state.changed();
+        }
+        gui.rowLabel("Stock");
+        drawStock(state, gpa, io, library, roll_index);
+        gui.rowLabel("Look");
+        state.drawLook(gpa, io, library);
+        gui.rowLabel("Tone");
+        c.ImGui_BeginDisabled(fitted);
+        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
+            s.tone = picked;
+            state.changed();
+        }
+        c.ImGui_EndDisabled();
+        drawWhiteBalance(state, library, roll_index);
+        if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
+    }
+    if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
+    gui.endSection(true);
+}
+
+/// Draws the white balance menu. Stock balance names the maker whose preset it uses, or why it
+/// can't be used yet.
+fn drawWhiteBalance(state: *State, library: *Library, roll_index: ?usize) void {
+    const frame = &state.frame.?;
+    const s = &frame.settings;
+    gui.rowLabel("White balance");
+    const modes = comptime std.enums.values(develop.WhiteBalance);
+    var mode_names: [modes.len][]const u8 = undefined;
+    const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
+    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
+    if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
+        switch (modes[picked]) {
+            .picked => state.picking = .neutral,
+            .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),
+            else => |mode| frame.rebalance(mode, null),
+        }
+        state.changed();
+    }
 }
 
 /// The temperature slider for the light, in K. It moves in even steps of mired (a million over
@@ -1821,7 +1904,6 @@ fn drawMatrix(state: *State) void {
 }
 
 fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
-    const frame = &state.frame.?;
     const reset_width = c.ImGui_CalcTextSize("Reset").x + gui.px(2 * reset_padding);
     const sync_width = c.ImGui_GetContentRegionAvail().x - reset_width - gui.px(bar_gap);
     c.ImGui_BeginDisabled(roll_index == null);
@@ -1834,6 +1916,30 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     shortcuts.tooltip("Reset", .reset);
 
     const r = roll_index orelse return;
+    drawSyncMenu(state, gpa, io, library, r);
+}
+
+/// Gives the open frame's settings, in the groups chosen, to the other frames of roll `r`.
+fn syncRoll(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
+    const frame = &state.frame.?;
+    const rl = &library.rolls.items[r];
+    var failed: usize = 0;
+    for (0..rl.frames.items.len) |i| {
+        if (i == state.selected) continue;
+        rl.frames.items[i] = synced(gpa, io, rl, i, frame, rl.frames.items[state.selected.?].scan, state.sync) catch |err| {
+            std.log.err("can't sync frame {d}: {t}", .{ i + 1, err });
+            failed += 1;
+            continue;
+        };
+        rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
+        library.invalidate(.{ .roll = r, .frame = i });
+    }
+    state.write(io, library, .all);
+    if (failed > 0) std.log.warn("{d} frames weren't synced", .{failed});
+}
+
+/// Draws the Sync menu, which gives the open frame's settings to the roll's other frames.
+fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
     if (!c.ImGui_BeginPopup("sync", 0)) return;
     defer c.ImGui_EndPopup();
     const rl = &library.rolls.items[r];
@@ -1849,19 +1955,7 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
     if (gui.buttonOf(.primary, "Sync", gui.vec2(0, 0))) {
-        var failed: usize = 0;
-        for (0..rl.frames.items.len) |i| {
-            if (i == state.selected) continue;
-            rl.frames.items[i] = synced(gpa, io, rl, i, frame, rl.frames.items[state.selected.?].scan, state.sync) catch |err| {
-                std.log.err("can't sync frame {d}: {t}", .{ i + 1, err });
-                failed += 1;
-                continue;
-            };
-            rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
-            library.invalidate(.{ .roll = r, .frame = i });
-        }
-        state.write(io, library, .all);
-        if (failed > 0) std.log.warn("{d} frames weren't synced", .{failed});
+        syncRoll(state, gpa, io, library, r);
         c.ImGui_CloseCurrentPopup();
     }
     c.ImGui_SameLine();
@@ -2031,4 +2125,49 @@ fn prepareStock(library: *const Library, rl: *const roll.Roll, frame: *Frame, ki
     frame.settings.stock_curves = library.stockCurves(rl, kind);
     frame.stock_slopes = library.stockSlopes(rl);
     if (frame.stock_slopes != null and frame.settings.white_balance == .auto_neutral) frame.settings.white_balance = .stock;
+}
+
+test "undo keeps the last changes, and drops the oldest when it's full" {
+    var history: History = .{};
+    try std.testing.expectEqual(@as(?Snapshot, null), history.pop());
+    for (0..history_depth + 2) |i| {
+        var snapshot: Snapshot = .{ .look = .neutral, .settings = .{} };
+        snapshot.settings.exposure = @floatFromInt(i);
+        history.push(snapshot);
+    }
+    try std.testing.expectEqual(@as(usize, history_depth), history.len);
+    try std.testing.expectEqual(@as(f32, history_depth + 1), history.pop().?.settings.exposure);
+    try std.testing.expectEqual(@as(f32, 2), history.items[0].settings.exposure);
+}
+
+test "with no frame found, the crop is the format's shape across the film" {
+    const format = minilab.formats.Standard.@"135_full_frame".format();
+    try std.testing.expectEqual(minilab.image.Area{ .x = 50, .y = 0, .width = 600, .height = 400 }, fallbackCrop(700, 400, format));
+    try std.testing.expectEqual(minilab.image.Area{ .x = 0, .y = 50, .width = 400, .height = 600 }, fallbackCrop(400, 700, format));
+    try std.testing.expectEqual(minilab.image.Area{ .x = 0, .y = 0, .width = 500, .height = 400 }, fallbackCrop(500, 400, format));
+}
+
+test "the crop box is grabbed by its corners or inside, and stays on the picture" {
+    const size = [2]f32{ 1000, 600 };
+    var edit: CropEdit = .{ .min = .{ 100, 100 }, .max = .{ 400, 300 }, .before = null, .turns = 0, .mirrored = false };
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .top_left), edit.gripAt(.{ 104, 97 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .bottom_right), edit.gripAt(.{ 395, 305 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, .box), edit.gripAt(.{ 250, 200 }, 10));
+    try std.testing.expectEqual(@as(?CropEdit.Grip, null), edit.gripAt(.{ 600, 200 }, 10));
+
+    edit.move(.{ -500, 50 }, size);
+    try std.testing.expectEqual([2]f32{ 0, 150 }, edit.min);
+    try std.testing.expectEqual([2]f32{ 300, 350 }, edit.max);
+}
+
+test "dragging a crop corner keeps the opposite one and the format's shape" {
+    const size = [2]f32{ 1000, 600 };
+    var edit: CropEdit = .{ .min = .{ 100, 100 }, .max = .{ 400, 300 }, .before = null, .turns = 0, .mirrored = false, .aspect = 1.5 };
+    edit.dragCorner(.bottom_right, .{ 700, 700 }, size, 1.5);
+    try std.testing.expectEqual([2]f32{ 100, 100 }, edit.min);
+    try std.testing.expectApproxEqAbs(@as(f32, 1.5), (edit.max[0] - edit.min[0]) / (edit.max[1] - edit.min[1]), 1e-4);
+    try std.testing.expect(edit.max[1] <= size[1]);
+    // A drag onto the fixed corner leaves the smallest box, its long side `min_crop`.
+    edit.dragCorner(.bottom_right, edit.min, size, 1.5);
+    try std.testing.expectApproxEqAbs(@as(f32, min_crop), edit.max[0] - edit.min[0], 1e-4);
 }

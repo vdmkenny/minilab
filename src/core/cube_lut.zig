@@ -31,62 +31,20 @@ pub const Lut = struct {
     };
 
     pub fn parse(gpa: std.mem.Allocator, bytes: []const u8) ParseError!Lut {
-        var title: []const u8 = "";
-        var one_size: ?usize = null;
-        var three_size: ?usize = null;
-        var one_range: [2][3]f32 = .{ @splat(0), @splat(1) };
-        var three_range: [2][3]f32 = .{ @splat(0), @splat(1) };
-        var data_lines: usize = 0;
+        const header = try Header.read(bytes);
+        const one_count = header.one_size orelse 0;
+        const three_count = if (header.three_size) |size| size * size * size else 0;
+        if (header.data_lines < one_count + three_count) return error.Truncated;
+        if (header.data_lines > one_count + three_count) return error.TooMuchData;
 
-        // The keywords come first, then the data.
-        var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
-        while (lines.next()) |raw| {
-            const line = std.mem.trim(u8, raw, " \t");
-            if (line.len == 0 or line[0] == '#') continue;
-            if (isDataLine(line)) {
-                data_lines += 1;
-                continue;
-            }
-            var fields = std.mem.tokenizeAny(u8, line, " \t");
-            const keyword = fields.next().?;
-            if (std.mem.eql(u8, keyword, "TITLE")) {
-                title = std.mem.trim(u8, line["TITLE".len..], " \t\"");
-            } else if (std.mem.eql(u8, keyword, "LUT_3D_SIZE")) {
-                three_size = try sizeOf(fields.next(), min_size, max_size_3d);
-            } else if (std.mem.eql(u8, keyword, "LUT_1D_SIZE")) {
-                one_size = try sizeOf(fields.next(), min_size, max_size_1d);
-            } else if (std.mem.eql(u8, keyword, "DOMAIN_MIN")) {
-                const v = try numbers(3, &fields);
-                one_range[0] = v;
-                three_range[0] = v;
-            } else if (std.mem.eql(u8, keyword, "DOMAIN_MAX")) {
-                const v = try numbers(3, &fields);
-                one_range[1] = v;
-                three_range[1] = v;
-            } else if (std.mem.eql(u8, keyword, "LUT_1D_INPUT_RANGE")) {
-                const range = try numbers(2, &fields);
-                one_range = .{ @splat(range[0]), @splat(range[1]) };
-            } else if (std.mem.eql(u8, keyword, "LUT_3D_INPUT_RANGE")) {
-                const range = try numbers(2, &fields);
-                three_range = .{ @splat(range[0]), @splat(range[1]) };
-            }
-            // Other keywords, like LUT_IN_VIDEO_RANGE, don't change anything here.
-        }
-        if (one_size == null and three_size == null) return error.NotACube;
-        const one_count = one_size orelse 0;
-        const three_count = if (three_size) |s| s * s * s else 0;
-        if (data_lines < one_count + three_count) return error.Truncated;
-        if (data_lines > one_count + three_count) return error.TooMuchData;
-        for (one_range[0], one_range[1]) |lo, hi| if (!(hi > lo)) return error.NotACube;
-        for (three_range[0], three_range[1]) |lo, hi| if (!(hi > lo)) return error.NotACube;
-
-        var lut: Lut = .{ .title = try gpa.dupe(u8, title) };
+        var lut: Lut = .{ .title = try gpa.dupe(u8, header.title) };
         errdefer lut.deinit(gpa);
-        if (one_size) |size| lut.one = .{ .size = size, .min = one_range[0], .max = one_range[1], .values = try gpa.alloc([3]f32, size) };
-        if (three_size) |size| lut.three = .{ .size = size, .min = three_range[0], .max = three_range[1], .values = try gpa.alloc([3]f32, three_count) };
+        if (header.one_size) |size| lut.one = .{ .size = size, .min = header.one_range[0], .max = header.one_range[1], .values = try gpa.alloc([3]f32, size) };
+        if (header.three_size) |size| lut.three = .{ .size = size, .min = header.three_range[0], .max = header.three_range[1], .values = try gpa.alloc([3]f32, three_count) };
 
+        // The 1D table's values come first, then the 3D table's.
         var filled: usize = 0;
-        lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
+        var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
         while (lines.next()) |raw| {
             const line = std.mem.trim(u8, raw, " \t");
             if (line.len == 0 or line[0] == '#' or !isDataLine(line)) continue;
@@ -143,6 +101,57 @@ fn sizeOf(field: ?[]const u8, min: usize, max: usize) ParseError!usize {
     if (size < min or size > max) return error.BadSize;
     return size;
 }
+
+/// What a .cube file's keywords say, and how many lines of data follow them.
+const Header = struct {
+    title: []const u8 = "",
+    one_size: ?usize = null,
+    three_size: ?usize = null,
+    one_range: [2][3]f32 = .{ @splat(0), @splat(1) },
+    three_range: [2][3]f32 = .{ @splat(0), @splat(1) },
+    data_lines: usize = 0,
+
+    /// The keywords we act on. Others, like LUT_IN_VIDEO_RANGE, don't change anything here.
+    const Keyword = enum { TITLE, LUT_3D_SIZE, LUT_1D_SIZE, DOMAIN_MIN, DOMAIN_MAX, LUT_1D_INPUT_RANGE, LUT_3D_INPUT_RANGE };
+
+    fn read(bytes: []const u8) ParseError!Header {
+        var header: Header = .{};
+        var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
+        while (lines.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t");
+            if (line.len == 0 or line[0] == '#') continue;
+            if (isDataLine(line)) {
+                header.data_lines += 1;
+                continue;
+            }
+            var fields = std.mem.tokenizeAny(u8, line, " \t");
+            const keyword = std.meta.stringToEnum(Keyword, fields.next().?) orelse continue;
+            switch (keyword) {
+                .TITLE => header.title = std.mem.trim(u8, line[@tagName(Keyword.TITLE).len..], " \t\""),
+                .LUT_3D_SIZE => header.three_size = try sizeOf(fields.next(), min_size, max_size_3d),
+                .LUT_1D_SIZE => header.one_size = try sizeOf(fields.next(), min_size, max_size_1d),
+                .DOMAIN_MIN, .DOMAIN_MAX => {
+                    const end: usize = if (keyword == .DOMAIN_MIN) 0 else 1;
+                    const v = try numbers(3, &fields);
+                    header.one_range[end] = v;
+                    header.three_range[end] = v;
+                },
+                .LUT_1D_INPUT_RANGE => {
+                    const range = try numbers(2, &fields);
+                    header.one_range = .{ @splat(range[0]), @splat(range[1]) };
+                },
+                .LUT_3D_INPUT_RANGE => {
+                    const range = try numbers(2, &fields);
+                    header.three_range = .{ @splat(range[0]), @splat(range[1]) };
+                },
+            }
+        }
+        if (header.one_size == null and header.three_size == null) return error.NotACube;
+        for (header.one_range[0], header.one_range[1]) |lo, hi| if (!(hi > lo)) return error.NotACube;
+        for (header.three_range[0], header.three_range[1]) |lo, hi| if (!(hi > lo)) return error.NotACube;
+        return header;
+    }
+};
 
 /// The next `n` numbers of a line.
 fn numbers(comptime n: usize, fields: *std.mem.TokenIterator(u8, .any)) ParseError![n]f32 {

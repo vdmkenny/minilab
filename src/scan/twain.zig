@@ -807,6 +807,21 @@ pub const Scanner = struct {
     }
 
     /// Reads the image in buffered memory transfers, strip by strip.
+    /// The size of the transfer buffer: what the source prefers, but at least what it needs and a
+    /// row of `row_bytes`.
+    fn bufferSize(scanner: *Scanner, row_bytes: usize) Error!u32 {
+        var setup: SetupMemXfer = undefined;
+        try scanner.check(scanner.call(.control, .setup_mem_xfer, .get, @ptrCast(&setup)));
+        // A source may say "don't care" (all ones) for its preferred size, and that isn't a real
+        // size.
+        const preferred = if (setup.preferred == std.math.maxInt(u32)) 0 else setup.preferred;
+        // A source reporting a row too big for a transfer buffer can't be scanned from.
+        const row_size = std.math.cast(u32, row_bytes) orelse return error.Failed;
+        const size: u32 = @max(preferred, setup.min_buffer, row_size);
+        if (size > max_transfer_bytes) return error.Failed;
+        return size;
+    }
+
     fn transfer(scanner: *Scanner, gpa: std.mem.Allocator, info: ImageInfo, area: interface.Area, progress: *interface.Progress) Error!interface.Image {
         if (info.planar != 0 or info.compression != 0) return error.Unsupported;
         if (info.width <= 0) return error.Failed;
@@ -819,16 +834,8 @@ pub const Scanner = struct {
         const sample_bytes = depth.bytes();
         if (info.length > 0) progress.total.store(@intCast(info.length), .release);
 
-        var setup: SetupMemXfer = undefined;
-        try scanner.check(scanner.call(.control, .setup_mem_xfer, .get, @ptrCast(&setup)));
         const row_bytes = width * channels * sample_bytes;
-        // A source may say "don't care" (all ones) for its preferred size, and that isn't a real
-        // size.
-        const preferred = if (setup.preferred == std.math.maxInt(u32)) 0 else setup.preferred;
-        // A source reporting a row too big for a transfer buffer can't be scanned from.
-        const row_size = std.math.cast(u32, row_bytes) orelse return error.Failed;
-        const size: u32 = @max(preferred, setup.min_buffer, row_size);
-        if (size > max_transfer_bytes) return error.Failed;
+        const size = try scanner.bufferSize(row_bytes);
         const buffer = try gpa.alloc(u8, size);
         defer gpa.free(buffer);
 
@@ -856,15 +863,7 @@ pub const Scanner = struct {
             if (strip.x_offset != 0 or strip.columns != width) return error.Unsupported;
             // The strip has to fit in the buffer it was written to, row by row.
             if (strip.bytes_per_row < row_bytes or @as(u64, strip.rows) * strip.bytes_per_row > size) return error.Failed;
-            for (0..strip.rows) |r| {
-                const y = strip.y_offset + r;
-                const line = buffer[r * strip.bytes_per_row ..][0 .. width * channels * sample_bytes];
-                if (pixels.items.len < (y + 1) * width) try pixels.appendNTimes(gpa, .{ 0, 0, 0 }, (y + 1) * width - pixels.items.len);
-                for (pixels.items[y * width ..][0..width], 0..) |*p, x| {
-                    for (p, 0..) |*out, c| out.* = image.sampleAt(line, x * channels + if (channels == 3) c else 0, depth, .little);
-                }
-                rows = @max(rows, y + 1);
-            }
+            if (strip.rows > 0) rows = @max(rows, try copyStrip(gpa, &pixels, buffer, strip, width, channels, depth));
             _ = progress.lines.fetchAdd(strip.rows, .acq_rel);
             if (rc == .xfer_done) break;
         }
@@ -878,6 +877,21 @@ pub const Scanner = struct {
         };
     }
 };
+
+/// Copies `strip`'s rows from `buffer` into `pixels`, `width` wide, growing it as far as they
+/// reach. A grey source fills all three channels. Returns the row below the strip.
+fn copyStrip(gpa: std.mem.Allocator, pixels: *std.ArrayList([3]u16), buffer: []const u8, strip: ImageMemXfer, width: usize, channels: usize, depth: image.Depth) error{OutOfMemory}!usize {
+    const line_bytes = width * channels * depth.bytes();
+    for (0..strip.rows) |r| {
+        const y = strip.y_offset + r;
+        const line = buffer[r * strip.bytes_per_row ..][0..line_bytes];
+        if (pixels.items.len < (y + 1) * width) try pixels.appendNTimes(gpa, .{ 0, 0, 0 }, (y + 1) * width - pixels.items.len);
+        for (pixels.items[y * width ..][0..width], 0..) |*p, x| {
+            for (p, 0..) |*out, c| out.* = image.sampleAt(line, x * channels + if (channels == 3) c else 0, depth, .little);
+        }
+    }
+    return strip.y_offset + strip.rows;
+}
 
 test "TWAIN's fixed-point numbers" {
     try std.testing.expectEqual(@as(f64, 2400), Fix32.of(2400).value());
@@ -901,4 +915,18 @@ test "container items read as numbers" {
 test "every function compiles, on every platform" {
     std.testing.refAllDecls(Library);
     std.testing.refAllDecls(Scanner);
+}
+
+test "a grey strip fills all three channels, at its place in the picture" {
+    const gpa = std.testing.allocator;
+    var pixels: std.ArrayList([3]u16) = .empty;
+    defer pixels.deinit(gpa);
+    // Two rows of two pixels, each row padded to three bytes, starting at row 1.
+    const buffer = [_]u8{ 1, 2, 0, 3, 4, 0 };
+    const strip: ImageMemXfer = .{ .compression = 0, .bytes_per_row = 3, .columns = 2, .rows = 2, .x_offset = 0, .y_offset = 1, .bytes_written = 0, .memory = .{ .flags = 0, .length = 0, .data = null } };
+    try std.testing.expectEqual(@as(usize, 3), try copyStrip(gpa, &pixels, &buffer, strip, 2, 1, .eight));
+    try std.testing.expectEqual(@as(usize, 6), pixels.items.len);
+    try std.testing.expectEqual([3]u16{ 0, 0, 0 }, pixels.items[0]);
+    try std.testing.expectEqual([3]u16{ 2 * 257, 2 * 257, 2 * 257 }, pixels.items[3]);
+    try std.testing.expectEqual([3]u16{ 3 * 257, 3 * 257, 3 * 257 }, pixels.items[4]);
 }
