@@ -1091,38 +1091,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             const corner = c.ImGui_GetCursorScreenPos();
             if (c.ImGui_InvisibleButton("frame", gui.vec2(cell_width, height), 0)) clicked = i;
             const far = gui.vec2(corner.x + cell_width, corner.y + height);
-            if (library.thumbnail(gpa, .{ .roll = r, .frame = i })) |t| {
-                gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(gui.box_rounding));
-            } else {
-                c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(gui.box_rounding), 0);
-            }
-            const rating = library.rolls.items[r].frames.items[i].rating;
-            // A rejected frame is dimmed, by drawing the page colour over it.
-            if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, rejected_dim)), gui.px(gui.box_rounding), 0);
-            const selected = state.selected == i;
-            gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(gui.box_rounding), if (selected) gui.px(selected_outline) else 1);
-            fonts.pushSized(.mono, fonts.tiny_size);
-            const number = labels.frameNumber(i);
-            const size = c.ImGui_CalcTextSize(number);
-            const chip_bottom = far.y - gui.px(chip.inset_y);
-            const label_min = gui.vec2(corner.x + gui.px(chip.inset_x), chip_bottom - size.y);
-            const shade = theme.imU32(theme.withAlpha(theme.header, chip.shade));
-            c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(2 * chip.padding), chip_bottom), shade, gui.px(gui.track_rounding), 0);
-            c.ImDrawList_AddText(list, gui.vec2(label_min.x + gui.px(chip.padding), label_min.y), theme.imU32(theme.text), number);
-            fonts.pop();
-            // Its stars, small, beside the number.
-            if (rating.stars > 0 and !rating.rejected) {
-                const radius = gui.px(chip.star_radius);
-                const pitch = 2 * radius + gui.px(chip.star_gap);
-                const label_right = label_min.x + size.x + gui.px(2 * chip.padding);
-                const stars_left = label_right + gui.px(chip.stars_gap);
-                const badge_far = gui.vec2(stars_left + gui.px(2 * chip.padding) + @as(f32, @floatFromInt(rating.stars)) * pitch - gui.px(chip.star_gap), chip_bottom);
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(stars_left, label_min.y), badge_far, shade, gui.px(gui.track_rounding), 0);
-                for (0..rating.stars) |k| {
-                    const centre = gui.vec2(stars_left + gui.px(chip.padding) + radius + @as(f32, @floatFromInt(k)) * pitch, (label_min.y + chip_bottom) / 2);
-                    gui.star(list, centre, radius, true, theme.accent);
-                }
-            }
+            drawThumbnail(state, gpa, library, r, i, list, corner, far);
         }
     }
 
@@ -1144,6 +1113,43 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
         gui.paragraph(theme.text_tertiary, "Loose scans · not saved");
     }
     return clicked;
+}
+
+/// Draws frame `i`'s thumbnail from `corner` to `far`: dimmed if it's rejected, outlined in amber
+/// if it's selected, with its number and stars along the bottom.
+fn drawThumbnail(state: *const State, gpa: std.mem.Allocator, library: *Library, r: usize, i: usize, list: *c.ImDrawList, corner: gui.Vec2, far: gui.Vec2) void {
+    if (library.thumbnail(gpa, .{ .roll = r, .frame = i })) |t| {
+        gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(gui.box_rounding));
+    } else {
+        c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(gui.box_rounding), 0);
+    }
+    const rating = library.rolls.items[r].frames.items[i].rating;
+    // A rejected frame is dimmed, by drawing the page colour over it.
+    if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, rejected_dim)), gui.px(gui.box_rounding), 0);
+    const selected = state.selected == i;
+    gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(gui.box_rounding), if (selected) gui.px(selected_outline) else 1);
+    fonts.pushSized(.mono, fonts.tiny_size);
+    const number = labels.frameNumber(i);
+    const size = c.ImGui_CalcTextSize(number);
+    const chip_bottom = far.y - gui.px(chip.inset_y);
+    const label_min = gui.vec2(corner.x + gui.px(chip.inset_x), chip_bottom - size.y);
+    const shade = theme.imU32(theme.withAlpha(theme.header, chip.shade));
+    c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(2 * chip.padding), chip_bottom), shade, gui.px(gui.track_rounding), 0);
+    c.ImDrawList_AddText(list, gui.vec2(label_min.x + gui.px(chip.padding), label_min.y), theme.imU32(theme.text), number);
+    fonts.pop();
+    // Its stars, small, beside the number.
+    if (rating.stars > 0 and !rating.rejected) {
+        const radius = gui.px(chip.star_radius);
+        const pitch = 2 * radius + gui.px(chip.star_gap);
+        const label_right = label_min.x + size.x + gui.px(2 * chip.padding);
+        const stars_left = label_right + gui.px(chip.stars_gap);
+        const badge_far = gui.vec2(stars_left + gui.px(2 * chip.padding) + @as(f32, @floatFromInt(rating.stars)) * pitch - gui.px(chip.star_gap), chip_bottom);
+        c.ImDrawList_AddRectFilledEx(list, gui.vec2(stars_left, label_min.y), badge_far, shade, gui.px(gui.track_rounding), 0);
+        for (0..rating.stars) |k| {
+            const centre = gui.vec2(stars_left + gui.px(chip.padding) + radius + @as(f32, @floatFromInt(k)) * pitch, (label_min.y + chip_bottom) / 2);
+            gui.star(list, centre, radius, true, theme.accent);
+        }
+    }
 }
 
 fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, roll_index: ?usize) void {

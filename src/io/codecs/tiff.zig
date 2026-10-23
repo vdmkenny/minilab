@@ -94,7 +94,29 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
     var source: Source = .{ .bytes = bytes };
     const tif = open(&source, read_mode, Source) orelse return error.InvalidTiff;
     defer c.TIFFClose(tif);
+    const header = try readHeader(tif);
 
+    var scan: image.Scan = try .init(gpa, header.width, header.height);
+    errdefer scan.deinit(gpa);
+    switch (header.depth) {
+        inline else => |known| try readPixels(switch (known) {
+            .eight => u8,
+            .sixteen => u16,
+        }, gpa, tif, header.layout, &scan),
+    }
+    return .{ .scan = scan, .depth = header.depth, .icc_profile = try iccProfile(gpa, tif) };
+}
+
+/// What `readHeader` finds out about an image before reading its pixels.
+const Header = struct {
+    width: u32,
+    height: u32,
+    depth: image.Depth,
+    layout: Layout,
+};
+
+/// Reads the image's size, depth and layout, and checks that we can read it.
+fn readHeader(tif: *c.TIFF) ReadError!Header {
     var width: u32 = 0;
     var height: u32 = 0;
     var bits: u16 = 0;
@@ -145,31 +167,23 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
             c.TIFFGetField(tif, c.TIFFTAG_TILELENGTH, &block_height) == 0) return error.InvalidTiff;
     } else if (c.TIFFGetFieldDefaulted(tif, c.TIFFTAG_ROWSPERSTRIP, &block_height) == 0) return error.InvalidTiff;
     if (block_width == 0 or block_height == 0) return error.InvalidTiff;
-    const layout: Layout = .{
+    return .{ .width = width, .height = height, .depth = depth, .layout = .{
         .colour = colour,
         .planar = planar,
         .samples_per_pixel = if (planar) 1 else samples,
         .tiled = tiled,
         .block_width = block_width,
         .block_height = @min(block_height, height),
-    };
+    } };
+}
 
-    var scan: image.Scan = try .init(gpa, width, height);
-    errdefer scan.deinit(gpa);
-    switch (depth) {
-        inline else => |known| try readPixels(switch (known) {
-            .eight => u8,
-            .sixteen => u16,
-        }, gpa, tif, layout, &scan),
-    }
-
+/// The image's ICC profile, a copy the caller owns, or null when it has none.
+fn iccProfile(gpa: std.mem.Allocator, tif: *c.TIFF) error{OutOfMemory}!?[]u8 {
     var profile_size: u32 = 0;
     var profile_data: ?*anyopaque = null;
-    const icc_profile: ?[]u8 = if (c.TIFFGetField(tif, c.TIFFTAG_ICCPROFILE, &profile_size, &profile_data) != 0 and profile_size != 0) profile: {
-        const data: [*]const u8 = @ptrCast(profile_data orelse break :profile null);
-        break :profile try gpa.dupe(u8, data[0..profile_size]);
-    } else null;
-    return .{ .scan = scan, .depth = depth, .icc_profile = icc_profile };
+    if (c.TIFFGetField(tif, c.TIFFTAG_ICCPROFILE, &profile_size, &profile_data) == 0 or profile_size == 0) return null;
+    const data: [*]const u8 = @ptrCast(profile_data orelse return null);
+    return try gpa.dupe(u8, data[0..profile_size]);
 }
 
 /// The colour types we read.
