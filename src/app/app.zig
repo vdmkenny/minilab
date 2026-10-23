@@ -51,7 +51,28 @@ const screenshot_frames_max = 600;
 /// How many frames in a row the page has to have loaded before a screenshot. A window that has
 /// just opened, like a confirmation, is only measured on its first frame and drawn on the next.
 const screenshot_loaded_frames = 2;
-const header_height = 44;
+/// The header's layout, in the design's pixels.
+const header = struct {
+    const height = 44;
+    /// The space at each end, and between the things on the right.
+    const padding = 16;
+    const mark_size = 20;
+    const mark_gap = 8;
+    const version_gap = 6;
+    /// The version is moved down this much to sit on the name's baseline.
+    const version_drop = 1;
+    const tabs_gap = 20;
+    const tab_padding_x = 12;
+    const tab_padding_y = 8;
+    const tab_gap = 2;
+    const tab_rounding = 4;
+    /// The amber line under the current tab.
+    const tab_underline = 2;
+    /// The dot that shows whether the scanner is ready.
+    const dot_radius = 4;
+    const dot_gap = 6;
+    const dot_segments = 12;
+};
 /// How often the app looks for rolls and frames added on disk from outside it.
 const library_check_ms = 2000;
 
@@ -253,32 +274,33 @@ fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *de
 fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Library, develop: *const develop_view.State, scanner: @TypeOf(scan_view.status(undefined))) void {
     const origin = c.ImGui_GetCursorScreenPos();
     const width = c.ImGui_GetContentRegionAvail().x;
-    const height = gui.px(header_height);
+    const height = gui.px(header.height);
     const list = c.ImGui_GetWindowDrawList();
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + height), theme.imU32(theme.header));
     c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + height - 1), gui.vec2(origin.x + width, origin.y + height - 1), theme.imU32(theme.divider));
     const middle = origin.y + height / 2;
 
     // The mark: a frame of film with its perforations, then the name.
-    drawMark(list, gui.vec2(origin.x + gui.px(16), middle - gui.px(10)));
-    fonts.pushSized(.semibold, 14);
+    drawMark(list, gui.vec2(origin.x + gui.px(header.padding), middle - gui.px(header.mark_size) / 2));
+    fonts.pushSized(.semibold, fonts.wordmark_size);
     const name_size = c.ImGui_CalcTextSize("minilab");
-    c.ImDrawList_AddText(list, gui.vec2(origin.x + gui.px(16 + 20 + 8), middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
+    const name_x = origin.x + gui.px(header.padding + header.mark_size + header.mark_gap);
+    c.ImDrawList_AddText(list, gui.vec2(name_x, middle - name_size.y / 2), theme.imU32(theme.text), "minilab");
     fonts.pop();
     // The version, small, beside the name.
-    fonts.pushSized(.mono, 10);
+    fonts.pushSized(.mono, fonts.tiny_size);
     const version_text = gui.print("{s}", .{version.string});
     const version_size = c.ImGui_CalcTextSize(version_text);
-    const version_x = origin.x + gui.px(16 + 20 + 8 + 6) + name_size.x;
-    c.ImDrawList_AddText(list, gui.vec2(version_x, middle - version_size.y / 2 + gui.px(1)), theme.imU32(theme.text_tertiary), version_text);
+    const version_x = name_x + name_size.x + gui.px(header.version_gap);
+    c.ImDrawList_AddText(list, gui.vec2(version_x, middle - version_size.y / 2 + gui.px(header.version_drop)), theme.imU32(theme.text_tertiary), version_text);
     fonts.pop();
 
     // The workspaces, as tabs.
-    var x = version_x + version_size.x + gui.px(20);
-    const tab_height = gui.lineHeight() + gui.px(16);
+    var x = version_x + version_size.x + gui.px(header.tabs_gap);
+    const tab_height = gui.lineHeight() + gui.px(2 * header.tab_padding_y);
     for (std.enums.values(Workspace)) |w| {
         const label = w.label();
-        const tab_width = c.ImGui_CalcTextSize(label).x + gui.px(24);
+        const tab_width = c.ImGui_CalcTextSize(label).x + gui.px(2 * header.tab_padding_x);
         const corner = gui.vec2(x, middle - tab_height / 2);
         c.ImGui_SetCursorScreenPos(corner);
         if (c.ImGui_InvisibleButton(label, gui.vec2(tab_width, tab_height), 0)) workspace.* = w;
@@ -287,22 +309,22 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
         const current = workspace.* == w;
         const far = gui.vec2(corner.x + tab_width, corner.y + tab_height);
         if (current) {
-            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(4), 0);
-            c.ImDrawList_AddRectFilledEx(list, gui.vec2(corner.x, far.y - gui.px(2)), far, theme.imU32(theme.accent), gui.px(4), c.ImDrawFlags_RoundCornersBottom);
+            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(header.tab_rounding), 0);
+            c.ImDrawList_AddRectFilledEx(list, gui.vec2(corner.x, far.y - gui.px(header.tab_underline)), far, theme.imU32(theme.accent), gui.px(header.tab_rounding), c.ImDrawFlags_RoundCornersBottom);
         }
         const size = c.ImGui_CalcTextSize(label);
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (tab_width - size.x) / 2, middle - size.y / 2), theme.imU32(if (current or hovered) theme.text else theme.text_secondary), label);
-        x += tab_width + gui.px(2);
+        x += tab_width + gui.px(header.tab_gap);
     }
 
     // On the right: what just happened, the open roll, and the scanner.
-    var right = origin.x + width - gui.px(16);
+    var right = origin.x + width - gui.px(header.padding);
     const scanner_text = gui.print("{s}", .{scanner.text});
     const scanner_size = c.ImGui_CalcTextSize(scanner_text);
     right -= scanner_size.x;
     c.ImDrawList_AddText(list, gui.vec2(right, middle - scanner_size.y / 2), theme.imU32(theme.text_secondary), scanner_text);
-    c.ImDrawList_AddCircleFilled(list, gui.vec2(right - gui.px(6 + 4), middle), gui.px(4), theme.imU32(if (scanner.ready) theme.ready else theme.text_tertiary), 12);
-    right -= gui.px(6 + 8 + 16);
+    c.ImDrawList_AddCircleFilled(list, gui.vec2(right - gui.px(header.dot_gap + header.dot_radius), middle), gui.px(header.dot_radius), theme.imU32(if (scanner.ready) theme.ready else theme.text_tertiary), header.dot_segments);
+    right -= gui.px(header.dot_gap + 2 * header.dot_radius + header.padding);
     if (workspace.* != .rolls) {
         if (develop.rollIndex(library)) |r| {
             const info = library.rolls.items[r].info;
@@ -311,11 +333,11 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
             const size = c.ImGui_CalcTextSize(roll_text);
             right -= size.x;
             c.ImDrawList_AddText(list, gui.vec2(right, middle - size.y / 2), theme.imU32(theme.text_secondary), roll_text);
-            right -= gui.px(16);
+            right -= gui.px(header.padding);
         }
     }
     if (notice.text()) |message| {
-        const shown = gui.elideStart(message, @max(0, right - x - gui.px(16)));
+        const shown = gui.elideStart(message, @max(0, right - x - gui.px(header.padding)));
         const size = c.ImGui_CalcTextSize(shown);
         c.ImDrawList_AddText(list, gui.vec2(right - size.x, middle - size.y / 2), theme.imU32(theme.accent), shown);
     }

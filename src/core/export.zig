@@ -38,6 +38,9 @@ pub const Format = enum {
 
 pub const Depth = image.Depth;
 
+/// From this JPEG quality up, the colour is kept at full resolution (4:4:4) instead of halved.
+const full_colour_quality = 90;
+
 /// The colour spaces offered, in the order the interface lists them.
 pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
 
@@ -55,7 +58,10 @@ pub const Options = struct {
 
     /// The bits per sample of the file.
     pub fn bits(options: Options) Depth {
-        return if (options.format == .jpeg) .eight else options.depth;
+        return switch (options.format) {
+            .jpeg => .eight,
+            .tiff => options.depth,
+        };
     }
 };
 
@@ -238,7 +244,7 @@ pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, em
         .jpeg => switch (picture.pixels) {
             .eight => |p| try jpeg.write(gpa, p, .{
                 .quality = options.quality,
-                .subsampling = if (options.quality >= 90) .@"4:4:4" else .@"4:2:0",
+                .subsampling = if (options.quality >= full_colour_quality) .@"4:4:4" else .@"4:2:0",
                 .icc_profile = profile,
             }),
             .sixteen => return error.JpegIsEightBit,
@@ -298,22 +304,21 @@ pub fn readScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Sca
 
 /// The scan of the last exported frame, kept while the next frame comes from the same strip.
 const Kept = struct {
-    path: []const u8 = "",
-    scan: ?image.Scan = null,
+    last: ?struct { path: []const u8, scan: image.Scan } = null,
 
     /// Returns the scan at `path`, reading it unless it's the one we kept. `path` must outlive the
     /// next call.
     fn get(kept: *Kept, gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Scan {
-        if (kept.scan) |scan| if (std.mem.eql(u8, kept.path, path)) return scan;
+        if (kept.last) |last| if (std.mem.eql(u8, last.path, path)) return last.scan;
         kept.drop(gpa);
-        kept.scan = try readScan(gpa, io, path);
-        kept.path = path;
-        return kept.scan.?;
+        const scan = try readScan(gpa, io, path);
+        kept.last = .{ .path = path, .scan = scan };
+        return scan;
     }
 
     fn drop(kept: *Kept, gpa: std.mem.Allocator) void {
-        if (kept.scan) |*scan| scan.deinit(gpa);
-        kept.* = .{};
+        if (kept.last) |*last| last.scan.deinit(gpa);
+        kept.last = null;
     }
 };
 
@@ -482,7 +487,8 @@ pub const Batch = struct {
     pub const Job = struct {
         /// The frame's number in the roll, from 1.
         number: usize,
-        scan_path: []const u8,
+        /// Null for a frame whose own file can't be read.
+        scan_path: ?[]const u8,
         frame: roll.FrameSettings,
         /// The look `frame` names, as the batch's own copy.
         look: look.Resolved,
@@ -529,12 +535,12 @@ pub const Batch = struct {
         batch.jobs = try arena.alloc(Job, indices.len);
         for (batch.jobs, indices) |*job, index| {
             var frame = r.frames.items[index];
-            frame.scan = try arena.dupe(u8, frame.scan);
+            if (frame.scan) |scan| frame.scan = try arena.dupe(u8, scan);
             frame.film_base = r.baseFor(index);
             if (!frame.developed) frame.settings.stock_curves = request.stock_curves;
             job.* = .{
                 .number = index + 1,
-                .scan_path = try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, frame.scan }),
+                .scan_path = if (frame.scan) |scan| try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, scan }) else null,
                 .frame = frame,
                 .look = try (try catalog.resolve(gpa, io, frame.look)).copy(arena),
                 .stem = try fileStem(arena, request.pattern, .{
@@ -595,7 +601,7 @@ pub const Batch = struct {
     fn exportJob(batch: *Batch, gpa: std.mem.Allocator, io: std.Io, job: Job, kept: *Kept) !void {
         batch.stage.store(.reading, .release);
         var picture = picture: {
-            const scan = try kept.get(gpa, io, job.scan_path);
+            const scan = try kept.get(gpa, io, job.scan_path orelse return error.UnreadableFrame);
             try check(&batch.cancel);
             batch.stage.store(.developing, .release);
             break :picture try developPicture(gpa, scan, job.frame, job.look, batch.options, &batch.cancel);
@@ -626,15 +632,23 @@ pub const Batch = struct {
     }
 };
 
+/// Copies `info` and all the text in it into `arena`.
 fn copyInfo(arena: std.mem.Allocator, info: roll.Info) !roll.Info {
     var copy = info;
-    copy.name = try arena.dupe(u8, info.name);
-    inline for (.{ "stock", "created", "camera", "lens", "shot", "copyright", "notes", "scanner" }) |field| {
-        if (@field(info, field)) |text| @field(copy, field) = try arena.dupe(u8, text);
+    const info_type = @typeInfo(roll.Info).@"struct";
+    inline for (info_type.field_names, info_type.field_types) |name, Field| {
+        const value = @field(info, name);
+        @field(copy, name) = switch (Field) {
+            []const u8 => try arena.dupe(u8, value),
+            ?[]const u8 => if (value) |text| try arena.dupe(u8, text) else null,
+            []const roll.Field => fields: {
+                const own = try arena.alloc(roll.Field, value.len);
+                for (own, value) |*copied, f| copied.* = .{ .name = try arena.dupe(u8, f.name), .value = try arena.dupe(u8, f.value) };
+                break :fields own;
+            },
+            else => value,
+        };
     }
-    const own = try arena.alloc(roll.Field, info.fields.len);
-    for (own, info.fields) |*copied, f| copied.* = .{ .name = try arena.dupe(u8, f.name), .value = try arena.dupe(u8, f.value) };
-    copy.fields = own;
     return copy;
 }
 

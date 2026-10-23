@@ -106,7 +106,10 @@ pub const Orientation = enum(u3) {
     }
 
     pub fn isMirrored(o: Orientation) bool {
-        return @backingInt(o) >= 4;
+        return switch (o) {
+            .upright, .quarter, .half, .three_quarters => false,
+            .mirrored, .mirrored_quarter, .mirrored_half, .mirrored_three_quarters => true,
+        };
     }
 
     /// Whether the width and height swap over.
@@ -183,29 +186,45 @@ const least_inside = 0.6;
 const least_cover = 0.2;
 /// How many candidates from the coarse search get refined at the first fine level.
 pub const candidates = 4;
+/// The smallest the reference can be on the coarse grid, in its pixels each way.
+const min_coarse_side = 4;
+/// Candidates closer in size than this (as a log of their ratio) count as the same match.
+const same_size = 0.08;
+/// A side whose variance is below this is flat, so there's no correlation to take.
+const flat_variance = 1e-12;
+/// A placement needs this many of our pixels on the reference to be scored. The overlap shares
+/// are relaxed by `overlap_slack`, since the fine levels' pixels fall a little differently from
+/// the coarse ones.
+const min_scored_pixels = 16;
+const overlap_slack = 0.9;
+/// The pattern search: the finest nudge in pixels, how many rounds each nudge size gets, and how
+/// much a nudge has to raise the correlation to count.
+const finest_nudge = 0.25;
+const max_nudge_rounds = 50;
+const least_gain = 1e-6;
 
-/// Lines `reference` up with `ours`. Both are grey images that get brighter together.
+/// Lines `reference` up with `ours`. Both are grey images that get brighter together. Fails with
+/// `error.NoMatch` when the reference can't be placed on ours at all.
 pub fn register(gpa: std.mem.Allocator, ours: Gray, reference: Gray) !Alignment {
     var pyramid: Pyramid = try .init(gpa, reference);
     defer pyramid.deinit(gpa);
     const best = try coarse(gpa, ours, &pyramid);
 
-    var result: Alignment = .{ .quality = -2 };
+    var result: ?Alignment = null;
     for (fine_sides, 0..) |side, level| {
         var fine = try ours.reduce(gpa, side);
         defer fine.deinit(gpa);
         const source = pick(pyramid.levels(), @floatFromInt(side));
         if (level == 0) {
-            for (best) |candidate| {
-                if (candidate.quality < -1) continue;
-                const refined = refine(fine, source, candidate);
-                if (refined.quality > result.quality) result = refined;
+            for (best) |found| {
+                const refined = refine(fine, source, found orelse continue) orelse continue;
+                if (result == null or refined.quality > result.?.quality) result = refined;
             }
         } else {
-            result = refine(fine, source, result);
+            result = refine(fine, source, result orelse return error.NoMatch);
         }
     }
-    return result;
+    return result orelse error.NoMatch;
 }
 
 /// The reference reduced to several sizes, so we can resample from the one nearest in size.
@@ -235,24 +254,27 @@ pub const Pyramid = struct {
     }
 };
 
-/// Runs only the coarse search, and returns the best few placements, best first. It's quick
-/// enough to try a reference against every frame of a roll, to find the frame it shows.
-pub fn coarse(gpa: std.mem.Allocator, ours: Gray, pyramid: *const Pyramid) ![candidates]Alignment {
+/// Runs only the coarse search, and returns the best few placements, best first, with null for
+/// the places it couldn't fill. It's quick enough to try a reference against every frame of a
+/// roll, to find the frame it shows.
+pub fn coarse(gpa: std.mem.Allocator, ours: Gray, pyramid: *const Pyramid) ![candidates]?Alignment {
     var small = try ours.reduce(gpa, coarse_side);
     defer small.deinit(gpa);
-    var best: [candidates]Alignment = @splat(.{ .quality = -2 });
+    var best: [candidates]?Alignment = @splat(null);
     for (std.enums.values(Orientation)) |o| {
         var scale: f32 = smallest_scale;
         while (scale <= largest_scale) : (scale *= scale_step) {
             try coarseSearch(gpa, small, pyramid.levels(), o, scale, &best);
         }
     }
-    std.mem.sort(Alignment, &best, {}, better);
+    std.mem.sort(?Alignment, &best, {}, better);
     return best;
 }
 
-fn better(_: void, a: Alignment, b: Alignment) bool {
-    return a.quality > b.quality;
+/// Whether `a` is better than `b`. Any placement is better than none.
+fn better(_: void, a: ?Alignment, b: ?Alignment) bool {
+    const found = a orelse return false;
+    return if (b) |other| found.quality > other.quality else true;
 }
 
 /// Picks the reduced reference whose pixels are nearest in size to ours at `side` pixels across,
@@ -267,7 +289,7 @@ fn pick(pyramid: []const Gray, side: f32) *const Gray {
 
 /// Tries every position of the reference, turned by `o` and `scale` wide, on our coarse grid,
 /// and keeps each one among the `best` if it beats them.
-fn coarseSearch(gpa: std.mem.Allocator, ours: Gray, pyramid: []const Gray, o: Orientation, scale: f32, best: *[candidates]Alignment) !void {
+fn coarseSearch(gpa: std.mem.Allocator, ours: Gray, pyramid: []const Gray, o: Orientation, scale: f32, best: *[candidates]?Alignment) !void {
     // The width of our coarse grid in its own pixels, as a real number, and the turned
     // reference's size on it.
     const grid = ours.full_width / ours.factor;
@@ -275,7 +297,7 @@ fn coarseSearch(gpa: std.mem.Allocator, ours: Gray, pyramid: []const Gray, o: Or
     const turned_height = if (o.sideways()) pyramid[0].full_width else pyramid[0].full_height;
     const w: usize = @intFromFloat(@round(scale * grid));
     const h: usize = @intFromFloat(@round(scale * grid * turned_height / turned_width));
-    if (w < 4 or h < 4) return;
+    if (w < min_coarse_side or h < min_coarse_side) return;
     if (@as(f32, @floatFromInt(h)) > largest_scale * @as(f32, @floatFromInt(ours.height)) + 1) return;
 
     // The reference, resampled onto our grid.
@@ -332,7 +354,7 @@ fn coarseSearch(gpa: std.mem.Allocator, ours: Gray, pyramid: []const Gray, o: Or
                 for (row_a, row_b) |va, vb| line += va * vb;
                 cross += line;
             }
-            const quality = correlation(n, a, b, cross);
+            const quality = correlation(n, a, b, cross) orelse continue;
             keep(best, .{
                 .orientation = o,
                 .scale = @as(f32, @floatFromInt(w)) / grid,
@@ -351,18 +373,19 @@ fn nearest(gray: *const Gray, at: [2]f32) f32 {
 
 /// Keeps `candidate` among the best. The best hold different orientations and sizes, rather than
 /// the same match a pixel apart.
-fn keep(best: *[candidates]Alignment, candidate: Alignment) void {
-    for (best) |*b| {
-        if (b.orientation == candidate.orientation and @abs(@log(b.scale / candidate.scale)) < 0.08) {
-            if (candidate.quality > b.quality) b.* = candidate;
+fn keep(best: *[candidates]?Alignment, candidate: Alignment) void {
+    for (best) |*slot| {
+        const b = slot.* orelse continue;
+        if (b.orientation == candidate.orientation and @abs(@log(b.scale / candidate.scale)) < same_size) {
+            if (candidate.quality > b.quality) slot.* = candidate;
             return;
         }
     }
     var worst: usize = 0;
     for (best, 0..) |b, i| {
-        if (b.quality < best[worst].quality) worst = i;
+        if (better({}, best[worst], b)) worst = i;
     }
-    if (candidate.quality > best[worst].quality) best[worst] = candidate;
+    if (better({}, candidate, best[worst])) best[worst] = candidate;
 }
 
 /// Sums of a value and its square over rectangles, from tables of running sums.
@@ -408,19 +431,20 @@ const Sums = struct {
     }
 };
 
-/// Returns the normalised cross-correlation of `n` pairs, from their sums of a, a², b, b² and ab.
-fn correlation(n: f32, a: [2]f64, b: [2]f64, cross: f64) f32 {
+/// Returns the normalised cross-correlation of `n` pairs, from their sums of a, a², b, b² and ab,
+/// or null when either side is flat.
+fn correlation(n: f32, a: [2]f64, b: [2]f64, cross: f64) ?f32 {
     const count: f64 = n;
     const covariance = count * cross - a[0] * b[0];
     const variance_a = count * a[1] - a[0] * a[0];
     const variance_b = count * b[1] - b[0] * b[0];
-    if (variance_a <= 1e-12 or variance_b <= 1e-12) return -1;
+    if (variance_a <= flat_variance or variance_b <= flat_variance) return null;
     return @floatCast(covariance / @sqrt(variance_a * variance_b));
 }
 
 /// Returns the correlation between ours and the reference placed by `a`, over every pixel of ours
-/// it covers.
-fn score(ours: *const Gray, reference: *const Gray, a: Alignment) f32 {
+/// it covers, or null when they overlap too little.
+fn score(ours: *const Gray, reference: *const Gray, a: Alignment) ?f32 {
     const ours_width = ours.full_width;
     const full: [2]f32 = .{ reference.full_width, reference.full_height };
     var sums: [5]f64 = @splat(0);
@@ -447,21 +471,22 @@ fn score(ours: *const Gray, reference: *const Gray, a: Alignment) f32 {
         }
     }
     const covered: f32 = @floatFromInt(ours.width * ours.height);
-    if (n < 16 or n < least_inside * area * 0.9 or n < least_cover * covered * 0.9) return -1;
+    if (n < min_scored_pixels or n < least_inside * area * overlap_slack or n < least_cover * covered * overlap_slack) return null;
     return correlation(n, .{ sums[0], sums[1] }, .{ sums[2], sums[3] }, sums[4]);
 }
 
 /// Runs a pattern search on the position and the size, starting from `start`. Each one in turn is
 /// nudged either way while that helps, with the nudges halving down to a quarter of a pixel.
-fn refine(ours: Gray, reference: *const Gray, start: Alignment) Alignment {
+/// Returns null when `start` overlaps ours too little to score.
+fn refine(ours: Gray, reference: *const Gray, start: Alignment) ?Alignment {
     var current = start;
-    current.quality = score(&ours, reference, current);
+    current.quality = score(&ours, reference, current) orelse return null;
     const pixel = ours.factor / ours.full_width;
     var step: f32 = 1;
-    while (step >= 0.25) {
+    while (step >= finest_nudge) {
         var moved = true;
         var tries: usize = 0;
-        while (moved and tries < 50) : (tries += 1) {
+        while (moved and tries < max_nudge_rounds) : (tries += 1) {
             moved = false;
             for (0..3) |which| {
                 for ([_]f32{ -1, 1 }) |direction| {
@@ -479,8 +504,8 @@ fn refine(ours: Gray, reference: *const Gray, start: Alignment) Alignment {
                             next.offset[1] = middle[1] - (middle[1] - current.offset[1]) * factor;
                         },
                     }
-                    next.quality = score(&ours, reference, next);
-                    if (next.quality > current.quality + 1e-6) {
+                    next.quality = score(&ours, reference, next) orelse continue;
+                    if (next.quality > current.quality + least_gain) {
                         current = next;
                         moved = true;
                     }

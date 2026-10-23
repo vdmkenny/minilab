@@ -46,7 +46,10 @@ pub const Kind = enum {
 
     /// Whether files of this kind are finished pictures rather than raw scans.
     pub fn finished(kind: Kind) bool {
-        return kind == .jpeg;
+        return switch (kind) {
+            .jpeg => true,
+            .pnm, .tiff, .camera_raw => false,
+        };
     }
 };
 
@@ -172,7 +175,7 @@ pub const Read = struct {
     /// few for linear data, so software that writes them applies a gamma. A JPEG's sRGB curve is
     /// undone on reading, so it counts as linear.
     pub fn linear(read_scan: Read) bool {
-        return read_scan.depth == .sixteen or read_scan.kind == .jpeg;
+        return read_scan.depth == .sixteen or read_scan.kind.finished();
     }
 };
 

@@ -315,12 +315,22 @@ pub const Profile = struct {
     summary: []const u8,
     /// Options set for every scan.
     options: []const Setting,
-    /// The option for the film setting, and its value for each `Film`.
-    film_option: ?[]const u8 = null,
-    negative: []const u8 = "",
-    positive: []const u8 = "",
+    /// The option for the film setting and its value for each `Film`, if the scanner has one.
+    film: ?FilmSetting = null,
 
     pub const Setting = struct { name: []const u8, value: Value };
+    pub const FilmSetting = struct {
+        option: []const u8,
+        negative: []const u8,
+        positive: []const u8,
+
+        pub fn value(setting: FilmSetting, film: Film) []const u8 {
+            return switch (film) {
+                .negative => setting.negative,
+                .positive => setting.positive,
+            };
+        }
+    };
     pub const Value = union(enum) { string: []const u8, int: i32 };
 };
 
@@ -346,9 +356,7 @@ pub const profiles = [_]Profile{
             .{ .name = "cct-8", .value = .{ .int = 0 } },
             .{ .name = "cct-9", .value = .{ .int = 1 } },
         },
-        .film_option = "film-type",
-        .negative = "Negative Film",
-        .positive = "Positive Film",
+        .film = .{ .option = "film-type", .negative = "Negative Film", .positive = "Positive Film" },
     },
 };
 
@@ -786,7 +794,7 @@ test "sources are told apart by their names" {
 
 test "the V200 has a profile, other scanners don't" {
     const v200 = profileOf("epkowa", "Perfection V200").?;
-    try std.testing.expectEqualStrings("film-type", v200.film_option.?);
+    try std.testing.expectEqualStrings("film-type", v200.film.?.option);
     try std.testing.expectEqual(@as(?*const Profile, null), profileOf("epson2", "Perfection V200"));
     try std.testing.expectEqual(@as(?*const Profile, null), profileOf("epkowa", "GT-X980"));
 }

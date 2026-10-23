@@ -2,6 +2,9 @@
 
 const std = @import("std");
 
+/// A pivot smaller than this means the system has no single solution.
+const singular = 1e-300;
+
 /// Solves `a` · x = `b` for x, in place. `a` is n × n, stored row by row, and gets overwritten;
 /// `b` ends up holding x. It uses Gaussian elimination with partial pivoting, in f64, and fails on
 /// a singular system.
@@ -12,7 +15,7 @@ pub fn solve(n: usize, a: []f64, b: []f64) error{Singular}!void {
         for (column + 1..n) |row| {
             if (@abs(a[row * n + column]) > @abs(a[pivot * n + column])) pivot = row;
         }
-        if (@abs(a[pivot * n + column]) < 1e-300) return error.Singular;
+        if (@abs(a[pivot * n + column]) < singular) return error.Singular;
         if (pivot != column) {
             for (0..n) |k| std.mem.swap(f64, &a[pivot * n + k], &a[column * n + k]);
             std.mem.swap(f64, &b[pivot], &b[column]);

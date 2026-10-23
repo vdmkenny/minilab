@@ -88,7 +88,7 @@ pub fn toScreen(pixels: []const [3]u16, gain: f32, out: [][4]u8) void {
     var table: [table_entries]u8 = undefined;
     for (&table, 0..) |*t, i| {
         const linear = @as(f32, @floatFromInt(i)) / (table_entries - 1) * gain;
-        t.* = @intFromFloat(@round(encode.srgb(linear) * 255));
+        t.* = encode.quantise(u8, encode.srgb(linear));
     }
     const shift = @bitSizeOf(u16) - table_bits;
     for (out, pixels) |*o, p| o.* = .{ table[p[0] >> shift], table[p[1] >> shift], table[p[2] >> shift], std.math.maxInt(u8) };

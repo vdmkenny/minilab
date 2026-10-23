@@ -93,6 +93,6 @@ fn meanColour(rendered: image.Rendered, area: image.Area) [3]u8 {
     }
     const count: f64 = @floatFromInt(area.width * area.height);
     var mean: [3]u8 = undefined;
-    for (&mean, sum) |*m, s| m.* = @intFromFloat(@round(s / count * 255));
+    for (&mean, sum) |*m, s| m.* = encode.quantise(u8, @floatCast(s / count));
     return mean;
 }

@@ -111,7 +111,9 @@ pub const Detail = enum { camera, lens, shot, copyright, notes };
 
 /// One frame: which scan it comes from, its crop, and how it's developed.
 pub const FrameSettings = struct {
-    scan: []const u8,
+    /// The scan's file in the roll's scans folder, or null for a frame whose own file can't be
+    /// read.
+    scan: ?[]const u8,
     /// The scan's size in pixels, or 0 if it hasn't been recorded yet.
     width: usize = 0,
     height: usize = 0,
@@ -221,7 +223,7 @@ pub const Roll = struct {
                 // An unreadable frame keeps its place, so the others keep their files and the rest
                 // of the roll still opens.
                 std.log.err("{s}/{s}/{s} can't be read ({t}); the frame is left out of Develop", .{ path, frames_dir, name, err });
-                break :frame FrameSettings{ .scan = "" };
+                break :frame FrameSettings{ .scan = null };
             };
             upgrade(&frame.settings);
             frame.rating = frame.rating.valid();
@@ -283,7 +285,8 @@ pub const Roll = struct {
 
     /// Returns the path of frame `index`'s scan file. The caller frees it.
     pub fn scanPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
-        return std.fs.path.join(gpa, &.{ roll.path, scans_dir, roll.frames.items[index].scan });
+        const scan = roll.frames.items[index].scan orelse return error.UnreadableFrame;
+        return std.fs.path.join(gpa, &.{ roll.path, scans_dir, scan });
     }
 
     /// Returns frame `index`'s thumbnail the way Develop shows the frame: cut to its crop and
@@ -311,7 +314,8 @@ pub const Roll = struct {
     /// The caller frees it.
     pub fn thumbnailPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
         var name: [std.fs.max_name_bytes]u8 = undefined;
-        return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, try thumbnailName(&name, roll.frames.items[index].scan) });
+        const scan = roll.frames.items[index].scan orelse return error.UnreadableFrame;
+        return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, try thumbnailName(&name, scan) });
     }
 
     /// Adds the scan in `bytes` (a binary PNM) the way `addImage` does, and returns the index of
@@ -454,7 +458,8 @@ pub const Roll = struct {
             var digits: [24]u8 = undefined;
             const stem = try std.fmt.bufPrint(&digits, "{d:0>2}", .{number});
             for (roll.frames.items) |f| {
-                if (std.mem.eql(u8, std.fs.path.stem(f.scan), stem)) break;
+                const scan = f.scan orelse continue;
+                if (std.mem.eql(u8, std.fs.path.stem(scan), stem)) break;
             } else return std.fmt.allocPrint(arena, "{s}{s}", .{ stem, extension });
         }
     }
@@ -833,7 +838,7 @@ test "a 16-bit TIFF imports as the same pixels, kept as a PPM" {
     const added = try roll.importFile(gpa, io, path, null, .copy);
     try std.testing.expectEqual(Added{ .first = 0, .count = 1 }, added);
     try std.testing.expectEqual(Input.tiff_files, roll.info.input);
-    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan);
+    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan.?);
     var kept = try keptScan(&roll, 0);
     defer kept.deinit(gpa);
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, kept.pixels);
@@ -862,8 +867,8 @@ test "a finished picture goes into the roll as it is, copied or moved, and devel
     try std.testing.expectEqual(Added{ .first = 1, .count = 1 }, try roll.importFile(gpa, io, moved, null, .move));
     try std.testing.expectEqual(Input.finished, roll.info.input);
     // The roll keeps the files' own bytes, under the frames' numbers.
-    try std.testing.expectEqualStrings("01.jpg", roll.frames.items[0].scan);
-    try std.testing.expectEqualStrings("02.jpg", roll.frames.items[1].scan);
+    try std.testing.expectEqualStrings("01.jpg", roll.frames.items[0].scan.?);
+    try std.testing.expectEqualStrings("02.jpg", roll.frames.items[1].scan.?);
     for (0..2) |i| {
         const kept = try roll.scanPath(gpa, i);
         defer gpa.free(kept);
@@ -905,10 +910,10 @@ test "a strip imports as one frame per frame on it, sharing the scan" {
     const added = try roll.addImage(gpa, io, scan, strip.dpi);
     try std.testing.expectEqual(Added{ .first = 1, .count = on_film.len }, added);
 
-    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan);
+    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan.?);
     var previous_end: usize = 0;
     for (roll.frames.items[added.first..], on_film) |f, expected| {
-        try std.testing.expectEqualStrings("02.ppm", f.scan);
+        try std.testing.expectEqualStrings("02.ppm", f.scan.?);
         try std.testing.expectEqual(scan.width, f.width);
         const crop = f.crop.?;
         const centre = strip.centre(expected);
@@ -932,7 +937,7 @@ test "a strip imports as one frame per frame on it, sharing the scan" {
     var again: Roll = try .open(gpa, io, roll.path);
     defer again.close();
     try std.testing.expectEqual(1 + on_film.len, again.frames.items.len);
-    try std.testing.expectEqualStrings("02.ppm", again.frames.items[on_film.len].scan);
+    try std.testing.expectEqualStrings("02.ppm", again.frames.items[on_film.len].scan.?);
 }
 
 test "a camera roll's frames are divided by its flat field on import" {

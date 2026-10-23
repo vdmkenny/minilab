@@ -45,13 +45,16 @@ const Fix32 = extern struct {
     whole: i16,
     frac: u16,
 
+    /// One, in the fraction's units.
+    const one = 1 << 16;
+
     fn of(number: f64) Fix32 {
-        const scaled: i32 = @intFromFloat(@round(number * 65536));
+        const scaled: i32 = @intFromFloat(@round(number * one));
         return .{ .whole = @intCast(scaled >> 16), .frac = @truncate(@as(u32, @bitCast(scaled))) };
     }
 
     fn value(fix: Fix32) f64 {
-        return @as(f64, @floatFromInt(fix.whole)) + @as(f64, @floatFromInt(fix.frac)) / 65536;
+        return @as(f64, @floatFromInt(fix.whole)) + @as(f64, @floatFromInt(fix.frac)) / one;
     }
 
     fn bits(fix: Fix32) u32 {
@@ -93,8 +96,8 @@ const UserInterface = extern struct {
 };
 
 const Capability = extern struct {
-    cap: u16,
-    container_type: u16,
+    cap: CapabilityId,
+    container_type: ContainerType,
     container: ?Handle align(2),
 };
 
@@ -147,13 +150,13 @@ const PendingXfers = extern struct {
 };
 
 const Status = extern struct {
-    condition: u16,
+    condition: ConditionCode,
     data: u16,
 };
 
 const Event = extern struct {
     event: ?*anyopaque align(2),
-    message: u16,
+    message: Message,
 };
 
 const Callback = extern struct {
@@ -162,7 +165,7 @@ const Callback = extern struct {
     message: i16,
 };
 
-const EntryFn = *const fn (origin: ?*Identity, destination: ?*Identity, group: u32, data_type: u16, message: u16, data: ?*anyopaque) callconv(callconv_twain) u16;
+const EntryFn = *const fn (origin: ?*Identity, destination: ?*Identity, group: Group, data_type: DataType, message: Message, data: ?*anyopaque) callconv(callconv_twain) ReturnCode;
 
 const EntryPoint = extern struct {
     size: u32 align(2),
@@ -193,76 +196,94 @@ comptime {
 /// rows needs.
 const max_transfer_bytes = 256 << 20;
 
-const dg_control = 0x0001;
-const dg_image = 0x0002;
+/// The data groups a call can be in.
+const Group = enum(u32) { control = 0x0001, image = 0x0002 };
+/// Flags in an identity's supported groups: the app, the manager or the source speaks TWAIN 2.
 const df_app2 = 0x10000000;
 const df_dsm2 = 0x20000000;
 const df_ds2 = 0x40000000;
 
-const dat_capability = 0x0001;
-const dat_event = 0x0002;
-const dat_identity = 0x0003;
-const dat_parent = 0x0004;
-const dat_pendingxfers = 0x0005;
-const dat_setupmemxfer = 0x0006;
-const dat_status = 0x0008;
-const dat_userinterface = 0x0009;
-const dat_callback = 0x0010;
-const dat_entrypoint = 0x0403;
-const dat_imageinfo = 0x0101;
-const dat_imagelayout = 0x0102;
-const dat_imagememxfer = 0x0103;
+const DataType = enum(u16) {
+    capability = 0x0001,
+    event = 0x0002,
+    identity = 0x0003,
+    parent = 0x0004,
+    pending_xfers = 0x0005,
+    setup_mem_xfer = 0x0006,
+    status = 0x0008,
+    user_interface = 0x0009,
+    callback = 0x0010,
+    entry_point = 0x0403,
+    image_info = 0x0101,
+    image_layout = 0x0102,
+    image_mem_xfer = 0x0103,
+};
 
-const msg_get = 0x0001;
-const msg_getfirst = 0x0004;
-const msg_getnext = 0x0005;
-const msg_set = 0x0006;
-const msg_reset = 0x0007;
-const msg_xferready = 0x0101;
-const msg_closedsreq = 0x0102;
-const msg_closedsok = 0x0103;
-const msg_opendsm = 0x0301;
-const msg_closedsm = 0x0302;
-const msg_opends = 0x0401;
-const msg_closeds = 0x0402;
-const msg_disableds = 0x0501;
-const msg_enableds = 0x0502;
-const msg_processevent = 0x0601;
-const msg_endxfer = 0x0701;
-const msg_register_callback = 0x0902;
+/// The messages we send, and the ones sources send us. A source may send others.
+const Message = enum(u16) {
+    get = 0x0001,
+    get_first = 0x0004,
+    get_next = 0x0005,
+    set = 0x0006,
+    reset = 0x0007,
+    xfer_ready = 0x0101,
+    close_ds_req = 0x0102,
+    close_ds_ok = 0x0103,
+    open_dsm = 0x0301,
+    close_dsm = 0x0302,
+    open_ds = 0x0401,
+    close_ds = 0x0402,
+    disable_ds = 0x0501,
+    enable_ds = 0x0502,
+    process_event = 0x0601,
+    end_xfer = 0x0701,
+    register_callback = 0x0902,
+    _,
+};
 
-const rc_success = 0;
-const rc_failure = 1;
-const rc_checkstatus = 2;
-const rc_cancel = 3;
-const rc_dsevent = 4;
-const rc_xferdone = 6;
-const rc_endoflist = 7;
+const ReturnCode = enum(u16) {
+    success = 0,
+    check_status = 2,
+    cancel = 3,
+    ds_event = 4,
+    xfer_done = 6,
+    _,
+};
 
-const cc_lowmemory = 2;
-const cc_nods = 3;
-const cc_maxconnections = 4;
-const cc_badcap = 6;
-const cc_badvalue = 10;
-const cc_capunsupported = 13;
-const cc_paperjam = 20;
-const cc_denied = 21;
+/// Why a call failed, which the status call tells us.
+const ConditionCode = enum(u16) {
+    low_memory = 2,
+    no_ds = 3,
+    max_connections = 4,
+    bad_cap = 6,
+    bad_value = 10,
+    cap_unsupported = 13,
+    paper_jam = 20,
+    denied = 21,
+    _,
+};
 
 // Containers and their item types.
-const on_array = 3;
-const on_enumeration = 4;
-const on_onevalue = 5;
-const on_range = 6;
-const on_dontcare = 0xffff;
+const ContainerType = enum(u16) {
+    array = 3,
+    enumeration = 4,
+    one_value = 5,
+    range = 6,
+    dont_care = 0xffff,
+    _,
+};
 
-const ty_int8 = 0;
-const ty_int16 = 1;
-const ty_int32 = 2;
-const ty_uint8 = 3;
-const ty_uint16 = 4;
-const ty_uint32 = 5;
-const ty_bool = 6;
-const ty_fix32 = 7;
+const ItemType = enum(u16) {
+    int8 = 0,
+    int16 = 1,
+    int32 = 2,
+    uint8 = 3,
+    uint16 = 4,
+    uint32 = 5,
+    bool = 6,
+    fix32 = 7,
+    _,
+};
 
 // Where the containers' fields are, in bytes from the start. Each container starts with its item
 // type, and a field holding a value, a count or an index takes 4 bytes, whatever the item type.
@@ -280,21 +301,27 @@ const enumeration_items_at = 14;
 const array_items_at = 6;
 
 // Capabilities and their values.
-const cap_xfercount = 0x0001;
-const icap_pixeltype = 0x0101;
-const icap_units = 0x0102;
-const icap_xfermech = 0x0103;
-const icap_lightpath = 0x1105;
-const icap_gamma = 0x1108;
-const icap_physicalwidth = 0x1111;
-const icap_physicalheight = 0x1112;
-const icap_xresolution = 0x1118;
-const icap_yresolution = 0x1119;
-const icap_bitdepth = 0x112b;
-const icap_filmtype = 0x1169;
+const CapabilityId = enum(u16) {
+    xfer_count = 0x0001,
+    pixel_type = 0x0101,
+    units = 0x0102,
+    xfer_mech = 0x0103,
+    light_path = 0x1105,
+    gamma = 0x1108,
+    physical_width = 0x1111,
+    physical_height = 0x1112,
+    x_resolution = 0x1118,
+    y_resolution = 0x1119,
+    bit_depth = 0x112b,
+    film_type = 0x1169,
+    _,
+};
 
-const pt_gray = 1;
 const pt_rgb = 2;
+/// Bits per pixel for RGB at 16 and 8 bits a channel, and per pixel for grey at 16.
+const rgb_bits_deep = 48;
+const rgb_bits = 24;
+const grey_bits_deep = 16;
 const un_inches = 0;
 const sx_memory = 2;
 const lp_reflective = 0;
@@ -346,14 +373,14 @@ const win = struct {
     extern "user32" fn DispatchMessageW(msg: *const Msg) callconv(callconv_twain) isize;
 };
 
-/// What the source last told us through the callback: 0, or a message such as `msg_xferready`.
+/// What the source last told us through the callback: 0, or a message such as `.xfer_ready`.
 /// One scan thread holds one session, so a single value is enough.
 var callback_message: std.atomic.Value(u16) = .init(0);
 
-fn sourceCallback(origin: ?*Identity, destination: ?*Identity, group: u32, data_type: u16, message: u16, data: ?*anyopaque) callconv(callconv_twain) u16 {
+fn sourceCallback(origin: ?*Identity, destination: ?*Identity, group: Group, data_type: DataType, message: Message, data: ?*anyopaque) callconv(callconv_twain) ReturnCode {
     _ = .{ origin, destination, group, data_type, data };
-    callback_message.store(message, .release);
-    return rc_success;
+    callback_message.store(@backingInt(message), .release);
+    return .success;
 }
 
 fn str32(value: []const u8) Str32 {
@@ -398,7 +425,7 @@ pub const Library = struct {
                 .version = .{ .major = 0, .minor = 1, .language = lg_usa, .country = cy_usa, .info = str32("minilab") },
                 .protocol_major = 2,
                 .protocol_minor = 4,
-                .supported_groups = dg_control | dg_image | df_app2,
+                .supported_groups = @backingInt(Group.control) | @backingInt(Group.image) | df_app2,
                 .manufacturer = str32("minilab"),
                 .product_family = str32("minilab"),
                 .product_name = str32("minilab"),
@@ -406,9 +433,9 @@ pub const Library = struct {
             .memory = .{ .size = @sizeOf(EntryPoint), .entry = null, .allocate = null, .free = null, .lock = null, .unlock = null },
         };
         var parent: ?Handle = window;
-        if (entry(&library.app, null, dg_control, dat_parent, msg_opendsm, @ptrCast(&parent)) != rc_success) return error.Unavailable;
+        if (entry(&library.app, null, .control, .parent, .open_dsm, @ptrCast(&parent)) != .success) return error.Unavailable;
         if (library.app.supported_groups & df_dsm2 != 0) {
-            if (entry(&library.app, null, dg_control, dat_entrypoint, msg_get, @ptrCast(&library.memory)) != rc_success) library.memory.allocate = null;
+            if (entry(&library.app, null, .control, .entry_point, .get, @ptrCast(&library.memory)) != .success) library.memory.allocate = null;
         }
         return library;
     }
@@ -416,7 +443,7 @@ pub const Library = struct {
     pub fn unload(library: *Library) void {
         if (comptime !supported) unreachable;
         var parent: ?Handle = library.window;
-        _ = library.entry(&library.app, null, dg_control, dat_parent, msg_closedsm, @ptrCast(&parent));
+        _ = library.entry(&library.app, null, .control, .parent, .close_dsm, @ptrCast(&parent));
         _ = win.DestroyWindow(library.window);
         _ = win.FreeLibrary(library.module);
         library.* = undefined;
@@ -430,8 +457,8 @@ pub const Library = struct {
         var found: interface.DeviceList = .empty;
         errdefer found.deinit(gpa);
         var identity: Identity = std.mem.zeroes(Identity);
-        var message: u16 = msg_getfirst;
-        while (library.entry(&library.app, null, dg_control, dat_identity, message, @ptrCast(&identity)) == rc_success) : (message = msg_getnext) {
+        var message: Message = .get_first;
+        while (library.entry(&library.app, null, .control, .identity, message, @ptrCast(&identity)) == .success) : (message = .get_next) {
             try found.append(gpa, .{
                 .id = span32(&identity.product_name),
                 .vendor = span32(&identity.manufacturer),
@@ -448,14 +475,14 @@ pub const Library = struct {
         if (comptime !supported) return error.Unavailable;
         var source: Identity = std.mem.zeroes(Identity);
         source.product_name = str32(device.id);
-        if (library.entry(&library.app, null, dg_control, dat_identity, msg_opends, @ptrCast(&source)) != rc_success) {
+        if (library.entry(&library.app, null, .control, .identity, .open_ds, @ptrCast(&source)) != .success) {
             return library.failure(null);
         }
         var scanner: Scanner = .{ .library = library, .source = source };
         // Sources that speak TWAIN 2 can say "ready" through a callback instead of a message.
         if (source.supported_groups & df_ds2 != 0 and library.app.supported_groups & df_dsm2 != 0) {
             var callback: Callback = .{ .proc = @ptrCast(&sourceCallback), .reference = 0, .message = 0 };
-            _ = scanner.call(dg_control, dat_callback, msg_register_callback, @ptrCast(&callback));
+            _ = scanner.call(.control, .callback, .register_callback, @ptrCast(&callback));
         }
         return scanner;
     }
@@ -463,16 +490,16 @@ pub const Library = struct {
     /// Returns the error behind the last failure, from the condition code of the manager or the
     /// source.
     fn failure(library: *Library, source: ?*Identity) Error {
-        var status: Status = .{ .condition = 0, .data = 0 };
-        if (library.entry(&library.app, source, dg_control, dat_status, msg_get, @ptrCast(&status)) != rc_success) return error.Failed;
+        var status: Status = .{ .condition = @fromBackingInt(0), .data = 0 };
+        if (library.entry(&library.app, source, .control, .status, .get, @ptrCast(&status)) != .success) return error.Failed;
         return switch (status.condition) {
-            cc_lowmemory => error.OutOfMemory,
-            cc_nods => error.NotFound,
-            cc_maxconnections => error.Busy,
-            cc_badcap, cc_badvalue, cc_capunsupported => error.Unsupported,
-            cc_paperjam => error.Jammed,
-            cc_denied => error.AccessDenied,
-            else => error.Failed,
+            .low_memory => error.OutOfMemory,
+            .no_ds => error.NotFound,
+            .max_connections => error.Busy,
+            .bad_cap, .bad_value, .cap_unsupported => error.Unsupported,
+            .paper_jam => error.Jammed,
+            .denied => error.AccessDenied,
+            _ => error.Failed,
         };
     }
 
@@ -515,26 +542,26 @@ const Values = struct {
     }
 };
 
-fn itemSize(item_type: u16) ?usize {
+fn itemSize(item_type: ItemType) ?usize {
     return switch (item_type) {
-        ty_int8, ty_uint8 => 1,
-        ty_int16, ty_uint16, ty_bool => 2,
-        ty_int32, ty_uint32, ty_fix32 => 4,
-        else => null,
+        .int8, .uint8 => 1,
+        .int16, .uint16, .bool => 2,
+        .int32, .uint32, .fix32 => 4,
+        _ => null,
     };
 }
 
 /// Reads the number in a 4-byte container slot, or in a list item, of type `item_type`.
-fn itemValue(item_type: u16, bytes: []const u8) f64 {
+fn itemValue(item_type: ItemType, bytes: []const u8) f64 {
     return switch (item_type) {
-        ty_int8 => @floatFromInt(@as(i8, @bitCast(bytes[0]))),
-        ty_uint8 => @floatFromInt(bytes[0]),
-        ty_int16 => @floatFromInt(std.mem.readInt(i16, bytes[0..2], .little)),
-        ty_uint16, ty_bool => @floatFromInt(std.mem.readInt(u16, bytes[0..2], .little)),
-        ty_int32 => @floatFromInt(std.mem.readInt(i32, bytes[0..4], .little)),
-        ty_uint32 => @floatFromInt(std.mem.readInt(u32, bytes[0..4], .little)),
-        ty_fix32 => Fix32.fromBits(std.mem.readInt(u32, bytes[0..4], .little)).value(),
-        else => 0,
+        .int8 => @floatFromInt(@as(i8, @bitCast(bytes[0]))),
+        .uint8 => @floatFromInt(bytes[0]),
+        .int16 => @floatFromInt(std.mem.readInt(i16, bytes[0..2], .little)),
+        .uint16, .bool => @floatFromInt(std.mem.readInt(u16, bytes[0..2], .little)),
+        .int32 => @floatFromInt(std.mem.readInt(i32, bytes[0..4], .little)),
+        .uint32 => @floatFromInt(std.mem.readInt(u32, bytes[0..4], .little)),
+        .fix32 => Fix32.fromBits(std.mem.readInt(u32, bytes[0..4], .little)).value(),
+        _ => 0,
     };
 }
 
@@ -548,25 +575,28 @@ pub const Scanner = struct {
     library: *Library,
     source: Identity,
 
-    fn call(scanner: *Scanner, group: u32, data_type: u16, message: u16, data: ?*anyopaque) u16 {
+    fn call(scanner: *Scanner, group: Group, data_type: DataType, message: Message, data: ?*anyopaque) ReturnCode {
         return scanner.library.entry(&scanner.library.app, &scanner.source, group, data_type, message, data);
     }
 
-    fn check(scanner: *Scanner, rc: u16) Error!void {
-        if (rc != rc_success and rc != rc_checkstatus) return scanner.library.failure(&scanner.source);
+    fn check(scanner: *Scanner, rc: ReturnCode) Error!void {
+        switch (rc) {
+            .success, .check_status => {},
+            else => return scanner.library.failure(&scanner.source),
+        }
     }
 
     pub fn close(scanner: *Scanner) void {
         if (comptime !supported) unreachable;
         const library = scanner.library;
-        _ = library.entry(&library.app, null, dg_control, dat_identity, msg_closeds, @ptrCast(&scanner.source));
+        _ = library.entry(&library.app, null, .control, .identity, .close_ds, @ptrCast(&scanner.source));
         scanner.* = undefined;
     }
 
     /// Reads capability `cap`. Returns null when the source doesn't have it.
-    fn get(scanner: *Scanner, gpa: std.mem.Allocator, cap: u16) Error!?Values {
-        var capability: Capability = .{ .cap = cap, .container_type = on_dontcare, .container = null };
-        if (scanner.call(dg_control, dat_capability, msg_get, @ptrCast(&capability)) != rc_success) return null;
+    fn get(scanner: *Scanner, gpa: std.mem.Allocator, cap: CapabilityId) Error!?Values {
+        var capability: Capability = .{ .cap = cap, .container_type = .dont_care, .container = null };
+        if (scanner.call(.control, .capability, .get, @ptrCast(&capability)) != .success) return null;
         const handle = capability.container orelse return null;
         defer scanner.library.free(handle);
         const bytes = scanner.library.lock(handle) orelse return null;
@@ -574,10 +604,10 @@ pub const Scanner = struct {
 
         var values: Values = .{};
         errdefer values.deinit(gpa);
-        const item_type = std.mem.readInt(u16, bytes[item_type_at..][0..@sizeOf(u16)], .little);
+        const item_type: ItemType = @fromBackingInt(std.mem.readInt(u16, bytes[item_type_at..][0..@sizeOf(u16)], .little));
         switch (capability.container_type) {
-            on_onevalue => values.current = itemValue(item_type, field(bytes, one_value_at)),
-            on_range => {
+            .one_value => values.current = itemValue(item_type, field(bytes, one_value_at)),
+            .range => {
                 values.range = .{
                     itemValue(item_type, field(bytes, range_min_at)),
                     itemValue(item_type, field(bytes, range_max_at)),
@@ -585,41 +615,41 @@ pub const Scanner = struct {
                 };
                 values.current = itemValue(item_type, field(bytes, range_current_at));
             },
-            on_enumeration, on_array => {
+            .enumeration, .array => {
                 const size = itemSize(item_type) orelse return values;
                 const count = std.mem.readInt(u32, field(bytes, list_count_at), .little);
-                const list_at: usize = if (capability.container_type == on_enumeration) enumeration_items_at else array_items_at;
+                const list_at: usize = if (capability.container_type == .enumeration) enumeration_items_at else array_items_at;
                 for (0..count) |i| try values.items.append(gpa, itemValue(item_type, bytes[list_at + i * size ..][0..size]));
-                if (capability.container_type == on_enumeration) {
+                if (capability.container_type == .enumeration) {
                     const index = std.mem.readInt(u32, field(bytes, enumeration_current_at), .little);
                     if (index < values.items.items.len) values.current = values.items.items[index];
                 }
             },
-            else => {},
+            .dont_care, _ => {},
         }
         return values;
     }
 
     /// Sets capability `cap` to a single value of type `item_type`, whose bits are in `raw`.
-    fn set(scanner: *Scanner, cap: u16, item_type: u16, raw: u32) Error!void {
+    fn set(scanner: *Scanner, cap: CapabilityId, item_type: ItemType, raw: u32) Error!void {
         const handle = scanner.library.allocate(one_value_bytes) orelse return error.OutOfMemory;
         defer scanner.library.free(handle);
         const bytes = scanner.library.lock(handle) orelse return error.OutOfMemory;
-        std.mem.writeInt(u16, bytes[item_type_at..][0..@sizeOf(u16)], item_type, .little);
+        std.mem.writeInt(u16, bytes[item_type_at..][0..@sizeOf(u16)], @backingInt(item_type), .little);
         std.mem.writeInt(u32, field(bytes, one_value_at), raw, .little);
         scanner.library.unlock(handle);
-        var capability: Capability = .{ .cap = cap, .container_type = on_onevalue, .container = handle };
-        try scanner.check(scanner.call(dg_control, dat_capability, msg_set, @ptrCast(&capability)));
+        var capability: Capability = .{ .cap = cap, .container_type = .one_value, .container = handle };
+        try scanner.check(scanner.call(.control, .capability, .set, @ptrCast(&capability)));
     }
 
-    fn setFix(scanner: *Scanner, cap: u16, value: f64) Error!void {
-        return scanner.set(cap, ty_fix32, Fix32.of(value).bits());
+    fn setFix(scanner: *Scanner, cap: CapabilityId, value: f64) Error!void {
+        return scanner.set(cap, .fix32, Fix32.of(value).bits());
     }
 
     fn setLightPath(scanner: *Scanner, source: interface.Source) Error!void {
         switch (source) {
-            .flatbed => scanner.set(icap_lightpath, ty_uint16, lp_reflective) catch {},
-            .transparency => try scanner.set(icap_lightpath, ty_uint16, lp_transmissive),
+            .flatbed => scanner.set(.light_path, .uint16, lp_reflective) catch {},
+            .transparency => try scanner.set(.light_path, .uint16, lp_transmissive),
             .feeder => return error.Unsupported,
         }
     }
@@ -627,7 +657,7 @@ pub const Scanner = struct {
     pub fn capabilities(scanner: *Scanner, gpa: std.mem.Allocator, wanted: ?interface.Source) Error!interface.Capabilities {
         if (comptime !supported) return error.Unavailable;
         var sources: std.EnumSet(interface.Source) = .initOne(.flatbed);
-        if (try scanner.get(gpa, icap_lightpath)) |paths| {
+        if (try scanner.get(gpa, .light_path)) |paths| {
             var p = paths;
             defer p.deinit(gpa);
             if (p.contains(lp_transmissive)) sources.insert(.transparency);
@@ -635,12 +665,12 @@ pub const Scanner = struct {
         const source = wanted orelse .flatbed;
         if (!sources.contains(source)) return error.Unsupported;
         try scanner.setLightPath(source);
-        scanner.set(icap_units, ty_uint16, un_inches) catch {};
-        scanner.set(icap_pixeltype, ty_uint16, pt_rgb) catch {};
+        scanner.set(.units, .uint16, un_inches) catch {};
+        scanner.set(.pixel_type, .uint16, pt_rgb) catch {};
 
         var resolutions: std.ArrayList(u32) = .empty;
         errdefer resolutions.deinit(gpa);
-        if (try scanner.get(gpa, icap_xresolution)) |found| {
+        if (try scanner.get(gpa, .x_resolution)) |found| {
             var r = found;
             defer r.deinit(gpa);
             if (r.range) |range| {
@@ -651,24 +681,24 @@ pub const Scanner = struct {
         std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));
 
         var area: interface.Area = .{ .x = 0, .y = 0, .width = 0, .height = 0 };
-        if (try scanner.get(gpa, icap_physicalwidth)) |found| {
+        if (try scanner.get(gpa, .physical_width)) |found| {
             var w = found;
             defer w.deinit(gpa);
             area.width = @floatCast((w.current orelse 0) * formats.mm_per_inch);
         }
-        if (try scanner.get(gpa, icap_physicalheight)) |found| {
+        if (try scanner.get(gpa, .physical_height)) |found| {
             var h = found;
             defer h.deinit(gpa);
             area.height = @floatCast((h.current orelse 0) * formats.mm_per_inch);
         }
         var deep = false;
-        if (try scanner.get(gpa, icap_bitdepth)) |found| {
+        if (try scanner.get(gpa, .bit_depth)) |found| {
             var d = found;
             defer d.deinit(gpa);
-            deep = d.contains(48) or d.contains(16);
+            deep = d.contains(rgb_bits_deep) or d.contains(grey_bits_deep);
         }
         var film_setting = false;
-        if (try scanner.get(gpa, icap_filmtype)) |found| {
+        if (try scanner.get(gpa, .film_type)) |found| {
             var f = found;
             f.deinit(gpa);
             film_setting = true;
@@ -688,19 +718,19 @@ pub const Scanner = struct {
         if (comptime !supported) return error.Unavailable;
         progress.reset();
         try scanner.setLightPath(request.source);
-        try scanner.set(icap_units, ty_uint16, un_inches);
-        if (request.source == .transparency) scanner.set(icap_filmtype, ty_uint16, switch (request.film) {
+        try scanner.set(.units, .uint16, un_inches);
+        if (request.source == .transparency) scanner.set(.film_type, .uint16, switch (request.film) {
             .negative => fm_negative,
             .positive => fm_positive,
         }) catch {};
-        try scanner.set(icap_pixeltype, ty_uint16, pt_rgb);
-        scanner.set(icap_bitdepth, ty_uint16, if (request.deep) 48 else 24) catch try scanner.set(icap_bitdepth, ty_uint16, 24);
+        try scanner.set(.pixel_type, .uint16, pt_rgb);
+        scanner.set(.bit_depth, .uint16, if (request.deep) rgb_bits_deep else rgb_bits) catch try scanner.set(.bit_depth, .uint16, rgb_bits);
         const dpi: f64 = @floatFromInt(request.dpi);
-        try scanner.setFix(icap_xresolution, dpi);
-        try scanner.setFix(icap_yresolution, dpi);
-        scanner.setFix(icap_gamma, 1.0) catch {};
-        try scanner.set(icap_xfermech, ty_uint16, sx_memory);
-        scanner.set(cap_xfercount, ty_int16, 1) catch {};
+        try scanner.setFix(.x_resolution, dpi);
+        try scanner.setFix(.y_resolution, dpi);
+        scanner.setFix(.gamma, 1.0) catch {};
+        try scanner.set(.xfer_mech, .uint16, sx_memory);
+        scanner.set(.xfer_count, .int16, 1) catch {};
 
         var area = request.area orelse interface.Area{ .x = 0, .y = 0, .width = 0, .height = 0 };
         if (request.area) |a| {
@@ -715,10 +745,10 @@ pub const Scanner = struct {
                 .page_number = 1,
                 .frame_number = 1,
             };
-            try scanner.check(scanner.call(dg_image, dat_imagelayout, msg_set, @ptrCast(&layout)));
+            try scanner.check(scanner.call(.image, .image_layout, .set, @ptrCast(&layout)));
         }
         var layout: ImageLayout = undefined;
-        if (scanner.call(dg_image, dat_imagelayout, msg_get, @ptrCast(&layout)) == rc_success) {
+        if (scanner.call(.image, .image_layout, .get, @ptrCast(&layout)) == .success) {
             const left = layout.frame.left.value() * formats.mm_per_inch;
             const top = layout.frame.top.value() * formats.mm_per_inch;
             area = .{
@@ -732,17 +762,17 @@ pub const Scanner = struct {
         // Enable the source with its window hidden, and wait for it to say the image is ready.
         var ui: UserInterface = .{ .show_ui = 0, .modal_ui = 0, .parent = scanner.library.window };
         callback_message.store(0, .release);
-        try scanner.check(scanner.call(dg_control, dat_userinterface, msg_enableds, @ptrCast(&ui)));
-        defer _ = scanner.call(dg_control, dat_userinterface, msg_disableds, @ptrCast(&ui));
+        try scanner.check(scanner.call(.control, .user_interface, .enable_ds, @ptrCast(&ui)));
+        defer _ = scanner.call(.control, .user_interface, .disable_ds, @ptrCast(&ui));
         try scanner.waitUntilReady();
 
         var info: ImageInfo = undefined;
-        try scanner.check(scanner.call(dg_image, dat_imageinfo, msg_get, @ptrCast(&info)));
+        try scanner.check(scanner.call(.image, .image_info, .get, @ptrCast(&info)));
         const picture = scanner.transfer(gpa, info, area, progress);
         // End the transfer and drop any others the source has queued, whatever happened.
         var pending: PendingXfers = .{ .count = 0, .end_of_job = 0 };
-        _ = scanner.call(dg_control, dat_pendingxfers, msg_endxfer, @ptrCast(&pending));
-        if (pending.count != 0) _ = scanner.call(dg_control, dat_pendingxfers, msg_reset, @ptrCast(&pending));
+        _ = scanner.call(.control, .pending_xfers, .end_xfer, @ptrCast(&pending));
+        if (pending.count != 0) _ = scanner.call(.control, .pending_xfers, .reset, @ptrCast(&pending));
         return picture;
     }
 
@@ -751,9 +781,9 @@ pub const Scanner = struct {
     fn waitUntilReady(scanner: *Scanner) Error!void {
         const start = win.GetTickCount64();
         while (win.GetTickCount64() - start < ready_timeout_ms) {
-            switch (callback_message.swap(0, .acq_rel)) {
-                msg_xferready => return,
-                msg_closedsreq, msg_closedsok => return error.Failed,
+            switch (@as(Message, @fromBackingInt(callback_message.swap(0, .acq_rel)))) {
+                .xfer_ready => return,
+                .close_ds_req, .close_ds_ok => return error.Failed,
                 else => {},
             }
             var msg: win.Msg = undefined;
@@ -761,11 +791,11 @@ pub const Scanner = struct {
                 win.Sleep(poll_ms);
                 continue;
             }
-            var event: Event = .{ .event = @ptrCast(&msg), .message = 0 };
-            if (scanner.call(dg_control, dat_event, msg_processevent, @ptrCast(&event)) == rc_dsevent) {
+            var event: Event = .{ .event = @ptrCast(&msg), .message = @fromBackingInt(0) };
+            if (scanner.call(.control, .event, .process_event, @ptrCast(&event)) == .ds_event) {
                 switch (event.message) {
-                    msg_xferready => return,
-                    msg_closedsreq, msg_closedsok => return error.Failed,
+                    .xfer_ready => return,
+                    .close_ds_req, .close_ds_ok => return error.Failed,
                     else => {},
                 }
                 continue;
@@ -790,7 +820,7 @@ pub const Scanner = struct {
         if (info.length > 0) progress.total.store(@intCast(info.length), .release);
 
         var setup: SetupMemXfer = undefined;
-        try scanner.check(scanner.call(dg_control, dat_setupmemxfer, msg_get, @ptrCast(&setup)));
+        try scanner.check(scanner.call(.control, .setup_mem_xfer, .get, @ptrCast(&setup)));
         const row_bytes = width * channels * sample_bytes;
         // A source may say "don't care" (all ones) for its preferred size, and that isn't a real
         // size.
@@ -817,10 +847,10 @@ pub const Scanner = struct {
                 .bytes_written = 0,
                 .memory = .{ .flags = mf_appowns | mf_pointer, .length = size, .data = buffer.ptr },
             };
-            const rc = scanner.call(dg_image, dat_imagememxfer, msg_get, @ptrCast(&strip));
+            const rc = scanner.call(.image, .image_mem_xfer, .get, @ptrCast(&strip));
             switch (rc) {
-                rc_success, rc_xferdone => {},
-                rc_cancel => return error.Failed,
+                .success, .xfer_done => {},
+                .cancel => return error.Failed,
                 else => return scanner.library.failure(&scanner.source),
             }
             if (strip.x_offset != 0 or strip.columns != width) return error.Unsupported;
@@ -836,7 +866,7 @@ pub const Scanner = struct {
                 rows = @max(rows, y + 1);
             }
             _ = progress.lines.fetchAdd(strip.rows, .acq_rel);
-            if (rc == rc_xferdone) break;
+            if (rc == .xfer_done) break;
         }
         if (rows == 0) return error.Failed;
         pixels.shrinkRetainingCapacity(rows * width);
@@ -851,7 +881,7 @@ pub const Scanner = struct {
 
 test "TWAIN's fixed-point numbers" {
     try std.testing.expectEqual(@as(f64, 2400), Fix32.of(2400).value());
-    try std.testing.expectApproxEqAbs(@as(f64, 1.3), Fix32.of(1.3).value(), 1.0 / 65536.0);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.3), Fix32.of(1.3).value(), 1.0 / @as(f64, Fix32.one));
     try std.testing.expectApproxEqAbs(@as(f64, -0.25), Fix32.fromBits(Fix32.of(-0.25).bits()).value(), 1e-9);
 }
 
@@ -863,9 +893,9 @@ test "structures pack to 2 bytes" {
 }
 
 test "container items read as numbers" {
-    try std.testing.expectEqual(@as(f64, 300), itemValue(ty_fix32, &.{ 0x2c, 0x01, 0, 0 }));
-    try std.testing.expectEqual(@as(f64, 48), itemValue(ty_uint16, &.{ 48, 0 }));
-    try std.testing.expectEqual(@as(f64, -1), itemValue(ty_int16, &.{ 0xff, 0xff }));
+    try std.testing.expectEqual(@as(f64, 300), itemValue(.fix32, &.{ 0x2c, 0x01, 0, 0 }));
+    try std.testing.expectEqual(@as(f64, 48), itemValue(.uint16, &.{ 48, 0 }));
+    try std.testing.expectEqual(@as(f64, -1), itemValue(.int16, &.{ 0xff, 0xff }));
 }
 
 test "every function compiles, on every platform" {

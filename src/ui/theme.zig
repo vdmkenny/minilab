@@ -56,7 +56,7 @@ pub fn rgba8(color: Color) [4]u8 {
 }
 
 fn channel8(v: f32) u8 {
-    return @intFromFloat(@round(std.math.clamp(v, 0, 1) * 255));
+    return @intFromFloat(@round(std.math.clamp(v, 0, 1) * std.math.maxInt(u8)));
 }
 
 pub fn imU32(color: Color) u32 {

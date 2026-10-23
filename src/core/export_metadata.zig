@@ -232,7 +232,8 @@ fn rational(value: f32) [2]u32 {
 
 // EXIF -----------------------------------------------------------------------------------------
 
-/// TIFF's value types, with the numbers its directory entries use for them.
+/// TIFF's value types, with the numbers its directory entries use for them. A file can have
+/// others.
 const Type = enum(u16) {
     byte = 1,
     ascii = 2,
@@ -240,12 +241,49 @@ const Type = enum(u16) {
     long = 4,
     rational = 5,
     undefined = 7,
+    _,
+
+    /// The bytes one value takes.
+    fn size(t: Type) usize {
+        return switch (t) {
+            .byte, .ascii, .undefined, _ => 1,
+            .short => 2,
+            .long => 4,
+            .rational => 8,
+        };
+    }
 };
+
+/// A directory (IFD) is a count of its entries, the entries, and the offset of the next
+/// directory.
+const ifd_count_bytes = 2;
+const ifd_next_bytes = 4;
+/// An entry is its tag, its type, its count, and its value or the value's offset.
+const entry_bytes = 12;
+const entry_type_at = 2;
+const entry_count_at = 4;
+const entry_value_at = 8;
+/// The longest value that goes in its entry instead of after the directory.
+const inline_value_bytes = 4;
+
+/// The size of a directory of `count` entries.
+fn ifdSize(count: usize) usize {
+    return ifd_count_bytes + count * entry_bytes + ifd_next_bytes;
+}
+
+/// Entry `i` of the directory at `ifd` in `bytes`.
+fn entryAt(bytes: []const u8, ifd: usize, i: usize) *const [entry_bytes]u8 {
+    return bytes[ifd + ifd_count_bytes + i * entry_bytes ..][0..entry_bytes];
+}
+
+fn tagOf(entry: *const [entry_bytes]u8) Tag {
+    return @fromBackingInt(std.mem.readInt(u16, entry[0..entry_type_at], .little));
+}
 
 /// One entry of a TIFF directory (IFD).
 const Entry = struct {
-    tag: u16,
-    type: u16,
+    tag: Tag,
+    type: Type,
     count: u32,
     /// The value, little-endian. Up to four bytes go in the entry itself. Longer values go after
     /// the directory, and the entry points at them.
@@ -255,22 +293,23 @@ const Entry = struct {
     raw: bool = false,
 };
 
-/// The tags we write, from TIFF 6.0 and EXIF 2.32.
-const Tag = struct {
-    const model = 272;
-    const x_resolution = 282;
-    const y_resolution = 283;
-    const resolution_unit = 296;
-    const software = 305;
-    const xmp = 700;
-    const copyright = 33432;
-    const exif_ifd = 34665;
-    const exif_version = 36864;
-    const date_time_original = 36867;
-    const colour_space = 40961;
-    const pixel_x_dimension = 40962;
-    const pixel_y_dimension = 40963;
-    const lens_model = 42036;
+/// The tags we write, from TIFF 6.0 and EXIF 2.32. A file has others.
+const Tag = enum(u16) {
+    model = 272,
+    x_resolution = 282,
+    y_resolution = 283,
+    resolution_unit = 296,
+    software = 305,
+    xmp = 700,
+    copyright = 33432,
+    exif_ifd = 34665,
+    exif_version = 36864,
+    date_time_original = 36867,
+    colour_space = 40961,
+    pixel_x_dimension = 40962,
+    pixel_y_dimension = 40963,
+    lens_model = 42036,
+    _,
 };
 
 const resolution_in_inches = 2;
@@ -284,28 +323,28 @@ const Entries = struct {
     arena: std.mem.Allocator,
     list: std.ArrayList(Entry) = .empty,
 
-    fn add(e: *Entries, tag: u16, kind: Type, count: u32, value: []const u8) !void {
-        try e.list.append(e.arena, .{ .tag = tag, .type = @backingInt(kind), .count = count, .value = value });
+    fn add(e: *Entries, tag: Tag, kind: Type, count: u32, value: []const u8) !void {
+        try e.list.append(e.arena, .{ .tag = tag, .type = kind, .count = count, .value = value });
     }
 
-    fn ascii(e: *Entries, tag: u16, text: []const u8) !void {
+    fn ascii(e: *Entries, tag: Tag, text: []const u8) !void {
         const value = try std.mem.concat(e.arena, u8, &.{ text, "\x00" });
         try e.add(tag, .ascii, std.math.cast(u32, value.len) orelse return error.OutOfMemory, value);
     }
 
-    fn short(e: *Entries, tag: u16, v: u16) !void {
+    fn short(e: *Entries, tag: Tag, v: u16) !void {
         const value = try e.arena.alloc(u8, 2);
         std.mem.writeInt(u16, value[0..2], v, .little);
         try e.add(tag, .short, 1, value);
     }
 
-    fn long(e: *Entries, tag: u16, v: u32) !void {
+    fn long(e: *Entries, tag: Tag, v: u32) !void {
         const value = try e.arena.alloc(u8, 4);
         std.mem.writeInt(u32, value[0..4], v, .little);
         try e.add(tag, .long, 1, value);
     }
 
-    fn fraction(e: *Entries, tag: u16, v: [2]u32) !void {
+    fn fraction(e: *Entries, tag: Tag, v: [2]u32) !void {
         const value = try e.arena.alloc(u8, 8);
         std.mem.writeInt(u32, value[0..4], v[0], .little);
         std.mem.writeInt(u32, value[4..8], v[1], .little);
@@ -315,34 +354,34 @@ const Entries = struct {
 
 /// The EXIF sub-directory's entries.
 fn exifEntries(e: *Entries, m: Metadata) !void {
-    try e.add(Tag.exif_version, .undefined, exif_version.len, exif_version);
+    try e.add(.exif_version, .undefined, exif_version.len, exif_version);
     if (m.shot) |text| if (isoDate(text)) |date| if (date.day) |day| {
         // EXIF wants the time too, and lets unknown parts be spaces.
-        try e.ascii(Tag.date_time_original, try std.fmt.allocPrint(e.arena, "{d:0>4}:{d:0>2}:{d:0>2}   :  :  ", .{ date.year, date.month.?, day }));
+        try e.ascii(.date_time_original, try std.fmt.allocPrint(e.arena, "{d:0>4}:{d:0>2}:{d:0>2}   :  :  ", .{ date.year, date.month.?, day }));
     };
-    try e.short(Tag.colour_space, if (m.space == .srgb) exif_srgb else exif_uncalibrated);
+    try e.short(.colour_space, if (m.space == .srgb) exif_srgb else exif_uncalibrated);
     if (m.width > 0) {
-        try e.long(Tag.pixel_x_dimension, std.math.cast(u32, m.width) orelse 0);
-        try e.long(Tag.pixel_y_dimension, std.math.cast(u32, m.height) orelse 0);
+        try e.long(.pixel_x_dimension, std.math.cast(u32, m.width) orelse 0);
+        try e.long(.pixel_y_dimension, std.math.cast(u32, m.height) orelse 0);
     }
-    if (m.lens) |text| try e.ascii(Tag.lens_model, text);
+    if (m.lens) |text| try e.ascii(.lens_model, text);
 }
 
 /// The entries EXIF adds to the main directory, with a placeholder for the EXIF pointer.
 fn mainEntries(e: *Entries, m: Metadata, software: bool) !void {
-    if (m.camera) |text| try e.ascii(Tag.model, text);
+    if (m.camera) |text| try e.ascii(.model, text);
     if (m.dpi) |dpi| {
-        try e.fraction(Tag.x_resolution, rational(dpi));
-        try e.fraction(Tag.y_resolution, rational(dpi));
-        try e.short(Tag.resolution_unit, resolution_in_inches);
+        try e.fraction(.x_resolution, rational(dpi));
+        try e.fraction(.y_resolution, rational(dpi));
+        try e.short(.resolution_unit, resolution_in_inches);
     }
-    if (software) try e.ascii(Tag.software, "minilab");
-    if (m.copyright) |text| try e.ascii(Tag.copyright, text);
-    try e.long(Tag.exif_ifd, 0);
+    if (software) try e.ascii(.software, "minilab");
+    if (m.copyright) |text| try e.ascii(.copyright, text);
+    try e.long(.exif_ifd, 0);
 }
 
 fn byTag(_: void, a: Entry, b: Entry) bool {
-    return a.tag < b.tag;
+    return @backingInt(a.tag) < @backingInt(b.tag);
 }
 
 pub const Error = error{
@@ -360,30 +399,32 @@ fn appendIfd(gpa: std.mem.Allocator, out: *std.ArrayList(u8), base: usize, entri
     std.mem.sort(Entry, entries, {}, byTag);
     if ((out.items.len - base) % 2 == 1) try out.append(gpa, 0);
     const at = out.items.len - base;
-    const directory_size = 2 + entries.len * 12 + 4;
-    var data_at = at + directory_size;
-    var bytes: [12]u8 = undefined;
-    std.mem.writeInt(u16, bytes[0..2], @intCast(entries.len), .little);
-    try out.appendSlice(gpa, bytes[0..2]);
+    var data_at = at + ifdSize(entries.len);
+    var count: [ifd_count_bytes]u8 = undefined;
+    std.mem.writeInt(u16, &count, @intCast(entries.len), .little);
+    try out.appendSlice(gpa, &count);
     for (entries) |entry| {
-        std.mem.writeInt(u16, bytes[0..2], entry.tag, .little);
-        std.mem.writeInt(u16, bytes[2..4], entry.type, .little);
-        std.mem.writeInt(u32, bytes[4..8], entry.count, .little);
+        var bytes: [entry_bytes]u8 = undefined;
+        std.mem.writeInt(u16, bytes[0..entry_type_at], @backingInt(entry.tag), .little);
+        std.mem.writeInt(u16, bytes[entry_type_at..entry_count_at], @backingInt(entry.type), .little);
+        std.mem.writeInt(u32, bytes[entry_count_at..entry_value_at], entry.count, .little);
+        const value = bytes[entry_value_at..];
         if (entry.raw) {
-            @memcpy(bytes[8..12], entry.value[0..4]);
-        } else if (entry.value.len <= 4) {
-            @memset(bytes[8..12], 0);
-            @memcpy(bytes[8..][0..entry.value.len], entry.value);
+            @memcpy(value, entry.value[0..inline_value_bytes]);
+        } else if (entry.value.len <= inline_value_bytes) {
+            @memset(value, 0);
+            @memcpy(value[0..entry.value.len], entry.value);
         } else {
-            std.mem.writeInt(u32, bytes[8..12], std.math.cast(u32, data_at) orelse return error.TooLarge, .little);
+            std.mem.writeInt(u32, value, std.math.cast(u32, data_at) orelse return error.TooLarge, .little);
             data_at += entry.value.len + entry.value.len % 2;
         }
         try out.appendSlice(gpa, &bytes);
     }
-    std.mem.writeInt(u32, bytes[0..4], next, .little);
-    try out.appendSlice(gpa, bytes[0..4]);
+    var next_bytes: [ifd_next_bytes]u8 = undefined;
+    std.mem.writeInt(u32, &next_bytes, next, .little);
+    try out.appendSlice(gpa, &next_bytes);
     for (entries) |entry| {
-        if (entry.raw or entry.value.len <= 4) continue;
+        if (entry.raw or entry.value.len <= inline_value_bytes) continue;
         try out.appendSlice(gpa, entry.value);
         if (entry.value.len % 2 == 1) try out.append(gpa, 0);
     }
@@ -392,12 +433,12 @@ fn appendIfd(gpa: std.mem.Allocator, out: *std.ArrayList(u8), base: usize, entri
 }
 
 /// Sets the four value bytes of entry `tag`, in the directory at `ifd`, to `value`.
-fn patchEntry(bytes: []u8, ifd: usize, tag: u16, value: u32) void {
-    const count = std.mem.readInt(u16, bytes[ifd..][0..2], .little);
+fn patchEntry(bytes: []u8, ifd: usize, tag: Tag, value: u32) void {
+    const count = std.mem.readInt(u16, bytes[ifd..][0..ifd_count_bytes], .little);
     for (0..count) |i| {
-        const entry = bytes[ifd + 2 + i * 12 ..][0..12];
-        if (std.mem.readInt(u16, entry[0..2], .little) != tag) continue;
-        std.mem.writeInt(u32, entry[8..12], value, .little);
+        if (tagOf(entryAt(bytes, ifd, i)) != tag) continue;
+        const at = ifd + ifd_count_bytes + i * entry_bytes + entry_value_at;
+        std.mem.writeInt(u32, bytes[at..][0..4], value, .little);
         return;
     }
     unreachable;
@@ -411,31 +452,31 @@ pub fn intoTiff(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     const header = "II*\x00";
     if (file.len < 8 or !std.mem.eql(u8, file[0..4], header)) return error.UnexpectedFile;
     const first = std.mem.readInt(u32, file[4..8], .little);
-    if (first + 2 > file.len) return error.UnexpectedFile;
-    const count = std.mem.readInt(u16, file[first..][0..2], .little);
-    if (first + 2 + @as(usize, count) * 12 + 4 > file.len) return error.UnexpectedFile;
-    const next = std.mem.readInt(u32, file[first + 2 + @as(usize, count) * 12 ..][0..4], .little);
+    if (first + ifd_count_bytes > file.len) return error.UnexpectedFile;
+    const count = std.mem.readInt(u16, file[first..][0..ifd_count_bytes], .little);
+    if (first + ifdSize(count) > file.len) return error.UnexpectedFile;
+    const next = std.mem.readInt(u32, file[first + ifdSize(count) - ifd_next_bytes ..][0..ifd_next_bytes], .little);
 
     var arena_state: std.heap.ArenaAllocator = .init(gpa);
     defer arena_state.deinit();
     var added: Entries = .{ .arena = arena_state.allocator() };
     try mainEntries(&added, metadata, false);
-    if (packet) |p| try added.add(Tag.xmp, .byte, std.math.cast(u32, p.len) orelse return error.TooLarge, p);
+    if (packet) |p| try added.add(.xmp, .byte, std.math.cast(u32, p.len) orelse return error.TooLarge, p);
 
     // The file's own entries, except where a new one replaces them.
     var entries: Entries = .{ .arena = arena_state.allocator() };
     for (0..count) |i| {
-        const raw = file[first + 2 + i * 12 ..][0..12];
-        const tag = std.mem.readInt(u16, raw[0..2], .little);
+        const raw = entryAt(file, first, i);
+        const tag = tagOf(raw);
         const replaced = for (added.list.items) |a| {
             if (a.tag == tag) break true;
         } else false;
         if (replaced) continue;
         try entries.list.append(entries.arena, .{
             .tag = tag,
-            .type = std.mem.readInt(u16, raw[2..4], .little),
-            .count = std.mem.readInt(u32, raw[4..8], .little),
-            .value = raw[8..12],
+            .type = @fromBackingInt(std.mem.readInt(u16, raw[entry_type_at..entry_count_at], .little)),
+            .count = std.mem.readInt(u32, raw[entry_count_at..entry_value_at], .little),
+            .value = raw[entry_value_at..],
             .raw = true,
         });
     }
@@ -448,7 +489,7 @@ pub fn intoTiff(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     var exif: Entries = .{ .arena = arena_state.allocator() };
     try exifEntries(&exif, metadata);
     const exif_at = try appendIfd(gpa, &out, 0, exif.list.items, 0);
-    patchEntry(out.items, main, Tag.exif_ifd, exif_at);
+    patchEntry(out.items, main, .exif_ifd, exif_at);
     std.mem.writeInt(u32, out.items[4..8], main, .little);
     return out.toOwnedSlice(gpa);
 }
@@ -491,7 +532,7 @@ pub fn intoJpeg(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     var exif: Entries = .{ .arena = arena };
     try exifEntries(&exif, metadata);
     const exif_at = try appendIfd(arena, &tiff, 0, exif.list.items, 0);
-    patchEntry(tiff.items, main_at, Tag.exif_ifd, exif_at);
+    patchEntry(tiff.items, main_at, .exif_ifd, exif_at);
     std.mem.writeInt(u32, tiff.items[4..8], main_at, .little);
 
     var out: std.ArrayList(u8) = try .initCapacity(gpa, file.len + tiff.items.len + 64 + if (packet) |p| p.len else 0);
@@ -541,21 +582,16 @@ const example: Metadata = .{
 
 /// Finds `tag` in the directory at `ifd` of the TIFF in `bytes` that starts at `base`, and returns
 /// its type, count and value bytes.
-fn find(bytes: []const u8, base: usize, ifd: usize, tag: u16) ?struct { type: u16, count: u32, value: []const u8 } {
+fn find(bytes: []const u8, base: usize, ifd: usize, tag: Tag) ?struct { type: Type, count: u32, value: []const u8 } {
     const tiff = bytes[base..];
-    const count = std.mem.readInt(u16, tiff[ifd..][0..2], .little);
+    const count = std.mem.readInt(u16, tiff[ifd..][0..ifd_count_bytes], .little);
     for (0..count) |i| {
-        const entry = tiff[ifd + 2 + i * 12 ..][0..12];
-        if (std.mem.readInt(u16, entry[0..2], .little) != tag) continue;
-        const kind = std.mem.readInt(u16, entry[2..4], .little);
-        const n = std.mem.readInt(u32, entry[4..8], .little);
-        const size: usize = n * @as(usize, switch (kind) {
-            3 => 2,
-            4 => 4,
-            5 => 8,
-            else => 1,
-        });
-        const value = if (size <= 4) entry[8..][0..size] else tiff[std.mem.readInt(u32, entry[8..12], .little)..][0..size];
+        const entry = entryAt(tiff, ifd, i);
+        if (tagOf(entry) != tag) continue;
+        const kind: Type = @fromBackingInt(std.mem.readInt(u16, entry[entry_type_at..entry_count_at], .little));
+        const n = std.mem.readInt(u32, entry[entry_count_at..entry_value_at], .little);
+        const size = n * kind.size();
+        const value = if (size <= inline_value_bytes) entry[entry_value_at..][0..size] else tiff[std.mem.readInt(u32, entry[entry_value_at..], .little)..][0..size];
         return .{ .type = kind, .count = n, .value = value };
     }
     return null;
@@ -617,13 +653,13 @@ test "a TIFF gains EXIF and XMP and keeps its own tags" {
     defer gpa.free(tagged);
 
     const main = std.mem.readInt(u32, tagged[4..8], .little);
-    try std.testing.expectEqualStrings("Nikon F3\x00", find(tagged, 0, main, Tag.model).?.value);
-    try std.testing.expectEqualStrings(packet, find(tagged, 0, main, Tag.xmp).?.value);
-    const resolution = find(tagged, 0, main, Tag.x_resolution).?.value;
+    try std.testing.expectEqualStrings("Nikon F3\x00", find(tagged, 0, main, .model).?.value);
+    try std.testing.expectEqualStrings(packet, find(tagged, 0, main, .xmp).?.value);
+    const resolution = find(tagged, 0, main, .x_resolution).?.value;
     try std.testing.expectEqual(@as(u32, 2400), std.mem.readInt(u32, resolution[0..4], .little));
-    const exif_at = std.mem.readInt(u32, find(tagged, 0, main, Tag.exif_ifd).?.value[0..4], .little);
-    try std.testing.expectEqualStrings("Nikkor 50mm f/1.4\x00", find(tagged, 0, exif_at, Tag.lens_model).?.value);
-    try std.testing.expectEqualStrings("2026:10:22   :  :  \x00", find(tagged, 0, exif_at, Tag.date_time_original).?.value);
+    const exif_at = std.mem.readInt(u32, find(tagged, 0, main, .exif_ifd).?.value[0..4], .little);
+    try std.testing.expectEqualStrings("Nikkor 50mm f/1.4\x00", find(tagged, 0, exif_at, .lens_model).?.value);
+    try std.testing.expectEqualStrings("2026:10:22   :  :  \x00", find(tagged, 0, exif_at, .date_time_original).?.value);
 
     // LibTIFF reads it back, pixels, profile and all.
     var decoded = try tiff_codec.read(gpa, tagged);
@@ -654,7 +690,7 @@ test "a JPEG gains EXIF, XMP and its density, and still decodes" {
     const block = exif_at + 4 + exif_header.len;
     try std.testing.expectEqualStrings(exif_header, tagged[exif_at + 4 ..][0..exif_header.len]);
     const main = std.mem.readInt(u32, tagged[block + 4 ..][0..4], .little);
-    try std.testing.expectEqualStrings("minilab\x00", find(tagged, block, main, Tag.software).?.value);
+    try std.testing.expectEqualStrings("minilab\x00", find(tagged, block, main, .software).?.value);
     try std.testing.expect(std.mem.indexOf(u8, tagged, xmp_header) != null);
 
     var decoded = try jpeg_codec.read(gpa, tagged);

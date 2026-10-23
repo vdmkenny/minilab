@@ -60,7 +60,7 @@ pub fn render(side: usize, pixels: [][4]u8) void {
         for (pixel[0..3], ground, amber) |*out, g, a| {
             out.* = @intFromFloat(@round(@as(f32, @floatFromInt(g)) * (1 - ink) + @as(f32, @floatFromInt(a)) * ink));
         }
-        pixel[3] = @intFromFloat(@round(cover * 255));
+        pixel[3] = @intFromFloat(@round(cover * std.math.maxInt(u8)));
     }
 }
 

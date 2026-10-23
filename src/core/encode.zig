@@ -23,6 +23,13 @@ pub const srgb_to_xyz = [3][3]f64{
     .{ 0.0193339, 0.1191920, 0.9503041 },
 };
 
+/// CIE XYZ to linear sRGB, for D65 white, row by row: the inverse of `srgb_to_xyz`.
+pub const xyz_to_srgb = [3][3]f64{
+    .{ 3.2404542, -1.5371385, -0.4985314 },
+    .{ -0.9692660, 1.8760108, 0.0415560 },
+    .{ 0.0556434, -0.2040259, 1.0572252 },
+};
+
 /// How much each linear sRGB channel adds to luminance: the Y row of `srgb_to_xyz`.
 pub const luminance_weights: [3]f32 = .{ @floatCast(srgb_to_xyz[1][0]), @floatCast(srgb_to_xyz[1][1]), @floatCast(srgb_to_xyz[1][2]) };
 
@@ -45,9 +52,10 @@ pub fn linearFromSrgb(encoded: f32) f32 {
     return if (v <= k.toe_encoded) v / k.toe_slope else std.math.pow(f32, (v + k.offset) / k.scale, k.gamma);
 }
 
-fn quantise(comptime T: type, v: f32) T {
+/// `v`, from 0 to 1, as an integer of type `T` from 0 to its largest value.
+pub fn quantise(comptime T: type, v: f32) T {
     const top: f32 = @floatFromInt(std.math.maxInt(T));
-    return @intFromFloat(@round(v * top));
+    return @intFromFloat(@round(std.math.clamp(v, 0, 1) * top));
 }
 
 /// How many entries the table behind `toSrgb8` has. It's fine enough that even the deepest

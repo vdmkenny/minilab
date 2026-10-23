@@ -6,6 +6,8 @@ const std = @import("std");
 const linear = @import("linear.zig");
 
 pub const points = 33;
+/// The weight every point has at least.
+const least_weight = 1e-12;
 const segments = points - 1;
 
 /// The curve's values at x = 0, 1/32, … 1.
@@ -87,7 +89,8 @@ pub const Fitter = struct {
         }
         linear.solve(points, &a, &b) catch return identity;
 
-        for (&data_weight) |*w| w.* += pull + 1e-12;
+        // Every point gets some weight, so the monotone pass never divides by zero.
+        for (&data_weight) |*w| w.* += pull + least_weight;
         monotone(&b, &data_weight);
         var curve: Curve = undefined;
         for (&curve, b) |*out, v| out.* = @floatCast(std.math.clamp(v, 0, 1));

@@ -652,7 +652,8 @@ pub const Scanner = struct {
     /// Whether the profile's film option is there and active for the current source.
     fn hasFilmSetting(scanner: *Scanner) bool {
         const profile = scanner.profile orelse return false;
-        const found = scanner.find(profile.film_option orelse return false) orelse return false;
+        const film = profile.film orelse return false;
+        const found = scanner.find(film.option) orelse return false;
         return found.option.active();
     }
 
@@ -679,10 +680,7 @@ pub const Scanner = struct {
             // Set the film type first, because a backend may reset its colour settings when the
             // film type changes. scanimage uses the same order (film type, then the rest) for the
             // same reason.
-            if (profile.film_option) |name| _ = try scanner.setString(name, switch (request.film) {
-                .negative => profile.negative,
-                .positive => profile.positive,
-            });
+            if (profile.film) |film| _ = try scanner.setString(film.option, film.value(request.film));
             for (profile.options) |setting| {
                 const set = switch (setting.value) {
                     .string => |v| try scanner.setString(setting.name, v),

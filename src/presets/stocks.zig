@@ -1814,66 +1814,56 @@ const sane_density_max: f32 = 4.0;
 const curve_points_min = 20;
 const curve_points_max = 41;
 
-fn expectSaneDensity(density: f32) !void {
-    try std.testing.expect(density >= sane_density_min and density <= sane_density_max);
+// The stocks are data written by hand, so the build checks them.
+comptime {
+    @setEvalBranchQuota(1_000_000);
+    for (stocks, 0..) |stock, i| check(stock, stocks[i + 1 ..]);
 }
 
-test "stock names are unique" {
-    for (stocks, 0..) |stock, i| {
-        for (stocks[i + 1 ..]) |other| try std.testing.expect(!std.mem.eql(u8, stock.name, other.name));
-    }
-}
-
-test "every stock has a source and a contrast" {
-    for (stocks) |stock| {
-        try std.testing.expect(stock.source.len > 0);
-        try std.testing.expect(stock.gamma != null);
-    }
-}
-
-test "gammas are within the sane range" {
-    for (stocks) |stock| {
-        const gamma = stock.gamma orelse continue;
-        for (gamma) |slope| try std.testing.expect(slope >= sane_gamma_min and slope <= sane_gamma_max);
-    }
-}
-
-test "densities are within the sane range" {
-    for (stocks) |stock| {
-        if (stock.base_density) |base| for (base) |density| try expectSaneDensity(density);
-        if (stock.density_range) |range| for (range) |density| try expectSaneDensity(density);
-        if (stock.base_density) |base| if (stock.density_range) |range| {
-            for (base, range) |low, span| try expectSaneDensity(low + span);
+/// Stops the build if `stock` breaks a rule. `later` are the stocks after it in the list.
+fn check(comptime stock: Stock, comptime later: []const Stock) void {
+    for (later) |other| if (std.mem.eql(u8, stock.name, other.name)) fail(stock, "is in the list twice");
+    if (stock.source.len == 0) fail(stock, "has no source");
+    const gamma = stock.gamma orelse fail(stock, "has no contrast");
+    for (gamma) |slope| if (slope < sane_gamma_min or slope > sane_gamma_max) fail(stock, "has a contrast out of range");
+    if (stock.base_density) |base| for (base) |density| checkDensity(stock, density);
+    if (stock.density_range) |range| for (range) |density| checkDensity(stock, density);
+    if (stock.base_density) |base| if (stock.density_range) |range| {
+        for (base, range) |low, span| checkDensity(stock, low + span);
+    };
+    if (stock.curves) |curves| for (curves) |curve| {
+        if (curve.len < curve_points_min or curve.len > curve_points_max) fail(stock, "has a curve with too few or too many points");
+        for (curve) |point| checkDensity(stock, point.density);
+        for (curve[0 .. curve.len - 1], curve[1..]) |a, b| {
+            if (a.log_exposure >= b.log_exposure) fail(stock, "has a curve that isn't in increasing log exposure");
+        }
+        const rising = curve[curve.len - 1].density > curve[0].density;
+        const should_rise = switch (stock.kind) {
+            .colour_negative, .bw_negative => true,
+            .colour_positive, .bw_positive => false,
         };
-        const curves = stock.curves orelse continue;
-        for (curves) |curve| for (curve) |point| try expectSaneDensity(point.density);
+        if (rising != should_rise) fail(stock, "has a curve that runs the wrong way");
+    };
+    switch (stock.kind) {
+        .bw_negative, .bw_positive => {
+            if (!same(gamma)) fail(stock, "is black and white with different contrasts per channel");
+            if (stock.base_density) |base| if (!same(base)) fail(stock, "is black and white with different base densities per channel");
+            if (stock.curves) |curves| if (curves[0].ptr != curves[1].ptr or curves[1].ptr != curves[2].ptr) {
+                fail(stock, "is black and white with different curves per channel");
+            };
+        },
+        .colour_negative, .colour_positive => {},
     }
 }
 
-test "curves are sampled in increasing log exposure and run the right way" {
-    for (stocks) |stock| {
-        const curves = stock.curves orelse continue;
-        for (curves) |curve| {
-            try std.testing.expect(curve.len >= curve_points_min and curve.len <= curve_points_max);
-            for (curve[0 .. curve.len - 1], curve[1..]) |a, b| try std.testing.expect(a.log_exposure < b.log_exposure);
-            const first = curve[0].density;
-            const last = curve[curve.len - 1].density;
-            switch (stock.kind) {
-                .colour_negative, .bw_negative => try std.testing.expect(last > first),
-                .colour_positive, .bw_positive => try std.testing.expect(last < first),
-            }
-        }
-    }
+fn checkDensity(comptime stock: Stock, density: f32) void {
+    if (density < sane_density_min or density > sane_density_max) fail(stock, "has a density out of range");
 }
 
-test "black-and-white stocks repeat one value per channel" {
-    for (stocks) |stock| {
-        switch (stock.kind) {
-            .bw_negative, .bw_positive => {},
-            .colour_negative, .colour_positive => continue,
-        }
-        if (stock.gamma) |gamma| try std.testing.expect(gamma[0] == gamma[1] and gamma[1] == gamma[2]);
-        if (stock.base_density) |base| try std.testing.expect(base[0] == base[1] and base[1] == base[2]);
-        if (stock.curves) |curves| try std.testing.expect(curves[0].ptr == curves[1].ptr and curves[1].ptr == curves[2].ptr);
-    }
+fn same(values: [3]f32) bool {
+    return values[0] == values[1] and values[1] == values[2];
+}
+
+fn fail(comptime stock: Stock, comptime problem: []const u8) noreturn {
+    @compileError(stock.name ++ " " ++ problem);
 }

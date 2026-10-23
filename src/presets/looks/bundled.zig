@@ -250,6 +250,11 @@ comptime {
         if (std.mem.eql(u8, a.id, b.id)) @compileError("two looks have the id " ++ a.id);
         if (std.mem.eql(u8, a.label, b.label)) @compileError("two looks have the label " ++ a.label);
     };
+    // The list is in the baked file's order: by collection, then by film.
+    for (looks[0 .. looks.len - 1], looks[1..]) |a, b| {
+        const in_order = if (a.pack == b.pack) @backingInt(a.film) <= @backingInt(b.film) else @backingInt(a.pack) < @backingInt(b.pack);
+        if (!in_order) @compileError(b.id ++ " is out of order");
+    }
 }
 
 test "ids find their looks, and each pack has looks" {

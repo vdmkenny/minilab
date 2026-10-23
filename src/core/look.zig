@@ -43,8 +43,19 @@ pub const Builtin = enum {
     pub fn cubeFile(builtin: Builtin) ?[]const u8 {
         return switch (builtin) {
             .neutral => null,
-            .frontier => @embedFile("../presets/looks/frontier.cube"),
+            .frontier => frontier_cube,
         };
+    }
+
+    const frontier_cube = @embedFile("../presets/looks/frontier.cube");
+    /// The points along each side of the Frontier LUT.
+    pub const frontier_size = 33;
+    comptime {
+        // The size line is near the top, after the comments.
+        const header = frontier_cube[0..@min(frontier_cube.len, 1024)];
+        if (std.mem.indexOf(u8, header, std.fmt.comptimePrint("LUT_3D_SIZE {d}\n", .{frontier_size})) == null) {
+            @compileError("frontier.cube isn't the size `frontier_size` says");
+        }
     }
 };
 
@@ -54,7 +65,7 @@ pub const Builtin = enum {
 /// as a string.
 pub const Id = struct {
     bytes: [capacity]u8 = undefined,
-    len: u8 = 0,
+    len: std.math.IntFittingRange(0, capacity) = 0,
 
     pub const capacity = 160;
     const cube_prefix = "cube:";
@@ -120,7 +131,10 @@ pub const Id = struct {
     }
 
     pub fn isNeutral(id: *const Id) bool {
-        return id.kind() == .builtin and id.kind().builtin == .neutral;
+        return switch (id.kind()) {
+            .builtin => |b| b == .neutral,
+            .bundled, .cube, .fitted => false,
+        };
     }
 
     /// The look's name, for people to read.
@@ -155,7 +169,10 @@ pub const Resolved = union(enum) {
     /// Returns the settings to render with for this look. A fitted look starts from the Log tone.
     pub fn settingsFor(look: Resolved, settings: develop.Settings) develop.Settings {
         var out = settings;
-        if (look == .fitted) out.tone = .log;
+        switch (look) {
+            .fitted => out.tone = .log,
+            .neutral, .lut => {},
+        }
         return out;
     }
 

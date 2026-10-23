@@ -300,11 +300,31 @@ pub fn tooltip(text: []const u8, command: Command) void {
     if (!c.ImGui_BeginTooltip()) return;
     defer c.ImGui_EndTooltip();
     gui.text(text);
-    c.ImGui_SameLineEx(0, gui.px(12));
-    fonts.pushSized(.mono, 12);
+    c.ImGui_SameLineEx(0, gui.px(tooltip_keys_gap));
+    fonts.pushSized(.mono, fonts.small_size);
     gui.textColored(theme.text_tertiary, label(command));
     fonts.pop();
 }
+
+/// The gap between a tooltip's text and its keys, in the design's pixels.
+const tooltip_keys_gap = 12;
+
+/// The help panel's layout, in the design's pixels.
+const help = struct {
+    const width = 720;
+    const max_height = 640;
+    const top = 60;
+    /// The least room left above and below it together.
+    const margin_y = 80;
+    const padding_x = 20;
+    const padding_y = 16;
+    const column_gap = 24;
+    const group_gap = 4;
+    /// The room for a shortcut's keys at the right of its column.
+    const keys_width = 110;
+    /// The groups from this one on go in the second column.
+    const second_column = 4;
+};
 
 /// Every shortcut, in groups, for the help panel.
 const groups = [_]struct { []const u8, []const Command }{
@@ -318,42 +338,61 @@ const groups = [_]struct { []const u8, []const Command }{
     .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .help, .quit, .cancel } },
 };
 
+// Every command has keys and a place in the help panel, and no two commands share keys.
+comptime {
+    @setEvalBranchQuota(100_000);
+    for (std.enums.values(Command)) |command| {
+        var bound = false;
+        for (bindings) |b| bound = bound or b.command == command;
+        if (!bound) @compileError("no keys for " ++ @tagName(command));
+        var listed: usize = 0;
+        for (groups) |group| for (group[1]) |in_group| {
+            listed += @intFromBool(in_group == command);
+        };
+        if (listed != 1) @compileError(@tagName(command) ++ " should be in one help group");
+    }
+    for (bindings, 0..) |a, i| for (bindings[i + 1 ..]) |b| {
+        if (a.chord == b.chord) @compileError(@tagName(a.command) ++ " and " ++ @tagName(b.command) ++ " have the same keys");
+    };
+}
+
 /// Draws the help panel over the window, listing every shortcut. Returns false once it's closed.
 pub fn drawHelp() bool {
     var open = true;
     const viewport = c.ImGui_GetMainViewport();
-    const size = gui.vec2(gui.px(720), @min(viewport.*.WorkSize.y - gui.px(80), gui.px(640)));
-    c.ImGui_SetNextWindowPos(gui.vec2(viewport.*.WorkPos.x + (viewport.*.WorkSize.x - size.x) / 2, viewport.*.WorkPos.y + gui.px(60)), 0);
+    const size = gui.vec2(gui.px(help.width), @min(viewport.*.WorkSize.y - gui.px(help.margin_y), gui.px(help.max_height)));
+    c.ImGui_SetNextWindowPos(gui.vec2(viewport.*.WorkPos.x + (viewport.*.WorkSize.x - size.x) / 2, viewport.*.WorkPos.y + gui.px(help.top)), 0);
     c.ImGui_SetNextWindowSize(size, 0);
     c.ImGui_PushStyleColorImVec4(c.ImGuiCol_WindowBg, theme.panel);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(20), gui.px(16)));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(help.padding_x), gui.px(help.padding_y)));
     c.ImGui_PushStyleVar(c.ImGuiStyleVar_WindowBorderSize, 1);
     defer c.ImGui_PopStyleVarEx(2);
     defer c.ImGui_PopStyleColor();
     if (c.ImGui_Begin("Keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
-        gui.title("Keyboard shortcuts", 15);
+        gui.title("Keyboard shortcuts", fonts.title_size);
         gui.textColored(theme.text_tertiary, "As in Lightroom and Bridge");
-        c.ImGui_Dummy(gui.vec2(0, gui.px(4)));
-        const column = (c.ImGui_GetContentRegionAvail().x - gui.px(24)) / 2;
+        c.ImGui_Dummy(gui.vec2(0, gui.px(help.group_gap)));
+        const column = (c.ImGui_GetContentRegionAvail().x - gui.px(help.column_gap)) / 2;
+        const second_x = gui.px(help.padding_x + help.column_gap) + column;
+        const groups_top = c.ImGui_GetCursorPosY();
         for (groups, 0..) |group, g| {
-            if (g == 4) {
-                // The second column starts with the settings.
-                c.ImGui_SetCursorPos(gui.vec2(gui.px(20) + column + gui.px(24), gui.px(16) + c.ImGui_GetTextLineHeight() * 2 + gui.px(28) + gui.px(4)));
-            }
+            // The second column starts level with the first.
+            if (g == help.second_column) c.ImGui_SetCursorPos(gui.vec2(second_x, groups_top));
+            const in_second = g >= help.second_column;
             const x = c.ImGui_GetCursorPosX();
-            if (g >= 4) c.ImGui_SetCursorPosX(gui.px(20) + column + gui.px(24));
+            if (in_second) c.ImGui_SetCursorPosX(second_x);
             gui.heading(group[0]);
             for (group[1]) |command| {
-                if (g >= 4) c.ImGui_SetCursorPosX(gui.px(20) + column + gui.px(24));
+                if (in_second) c.ImGui_SetCursorPosX(second_x);
                 const row_x = c.ImGui_GetCursorPosX();
                 gui.textColored(theme.text_secondary, command.describe());
-                c.ImGui_SameLineEx(row_x + column - gui.px(110), 0);
-                fonts.pushSized(.mono, 12);
+                c.ImGui_SameLineEx(row_x + column - gui.px(help.keys_width), 0);
+                fonts.pushSized(.mono, fonts.small_size);
                 gui.text(label(command));
                 fonts.pop();
             }
             c.ImGui_SetCursorPosX(x);
-            c.ImGui_Dummy(gui.vec2(0, gui.px(4)));
+            c.ImGui_Dummy(gui.vec2(0, gui.px(help.group_gap)));
         }
         if (c.ImGui_IsKeyPressed(c.ImGuiKey_Escape) or (c.ImGui_IsMouseClicked(0) and !c.ImGui_IsWindowHovered(0))) open = false;
     }

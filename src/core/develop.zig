@@ -214,10 +214,13 @@ pub const Settings = struct {
     }
 };
 
+/// A warmth shift or a tint this big is one stop.
+const shift_per_stop = 200;
+
 /// The per-channel slope gains for the warm and cool balances. A `shift` of ±100 is half a stop on
 /// red and blue.
 fn warmthGains(shift: f32) [3]f32 {
-    const t = shift / 200;
+    const t = shift / shift_per_stop;
     return .{ std.math.exp2(t), 1, std.math.exp2(-t) };
 }
 
@@ -227,7 +230,7 @@ fn warmthGains(shift: f32) [3]f32 {
 pub fn lightGains(kelvin: f32, tint: f32) [3]f32 {
     const reference = blackBody(reference_kelvin);
     const light = blackBody(std.math.clamp(kelvin, min_kelvin, max_kelvin));
-    const m = tint / 200;
+    const m = tint / shift_per_stop;
     return .{ reference[0] / light[0] * std.math.exp2(m / 2), std.math.exp2(-m), reference[2] / light[2] * std.math.exp2(m / 2) };
 }
 
@@ -236,26 +239,51 @@ pub fn lightGains(kelvin: f32, tint: f32) [3]f32 {
 /// primaries.
 fn blackBody(kelvin: f32) [3]f32 {
     const t: f64 = kelvin;
-    const x = if (t <= 4000)
-        -0.2661239e9 / (t * t * t) - 0.2343589e6 / (t * t) + 0.8776956e3 / t + 0.179910
-    else
-        -3.0258469e9 / (t * t * t) + 2.1070379e6 / (t * t) + 0.2226347e3 / t + 0.240390;
-    const y = if (t <= 2222)
-        -1.1063814 * x * x * x - 1.34811020 * x * x + 2.18555832 * x - 0.20219683
-    else if (t <= 4000)
-        -0.9549476 * x * x * x - 1.37418593 * x * x + 2.09137015 * x - 0.16748867
-    else
-        3.0817580 * x * x * x - 5.87338670 * x * x + 3.75112997 * x - 0.37001483;
+    const x = cubic(pieceFor(&locus_x, t), 1 / t);
+    const y = cubic(pieceFor(&locus_y, t), x);
     const xyz = [3]f64{ x / y, 1, (1 - x - y) / y };
-    const to_srgb = [3][3]f64{
-        .{ 3.2404542, -1.5371385, -0.4985314 },
-        .{ -0.9692660, 1.8760108, 0.0415560 },
-        .{ 0.0556434, -0.2040259, 1.0572252 },
-    };
     var rgb: [3]f64 = undefined;
-    for (&rgb, to_srgb) |*v, row| v.* = row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2];
+    for (&rgb, encode.xyz_to_srgb) |*v, row| v.* = row[0] * xyz[0] + row[1] * xyz[1] + row[2] * xyz[2];
     // A very warm light has almost no blue. Keep it above zero so we can divide by it.
-    return .{ @floatCast(@max(rgb[0], 1e-4) / rgb[1]), 1, @floatCast(@max(rgb[2], 1e-4) / rgb[1]) };
+    return .{ @floatCast(@max(rgb[0], least_channel) / rgb[1]), 1, @floatCast(@max(rgb[2], least_channel) / rgb[1]) };
+}
+
+/// The least a black body's red or blue gets, against green at 1.
+const least_channel = 1e-4;
+
+/// Kim et al.'s cubic fit to the Planckian locus, in pieces by temperature: chromaticity x as a
+/// cubic in 1/T, then y as a cubic in x. Each piece reaches up to `up_to` K, and its coefficients
+/// go from the cube down.
+const Piece = struct { up_to: f64, c: [4]f64 };
+const locus_x = [_]Piece{
+    .{ .up_to = 4000, .c = .{ -0.2661239e9, -0.2343589e6, 0.8776956e3, 0.179910 } },
+    .{ .up_to = std.math.inf(f64), .c = .{ -3.0258469e9, 2.1070379e6, 0.2226347e3, 0.240390 } },
+};
+const locus_y = [_]Piece{
+    .{ .up_to = 2222, .c = .{ -1.1063814, -1.34811020, 2.18555832, -0.20219683 } },
+    .{ .up_to = 4000, .c = .{ -0.9549476, -1.37418593, 2.09137015, -0.16748867 } },
+    .{ .up_to = std.math.inf(f64), .c = .{ 3.0817580, -5.87338670, 3.75112997, -0.37001483 } },
+};
+
+fn pieceFor(pieces: []const Piece, kelvin: f64) [4]f64 {
+    for (pieces) |p| if (kelvin <= p.up_to) return p.c;
+    unreachable;
+}
+
+fn cubic(c: [4]f64, v: f64) f64 {
+    return ((c[0] * v + c[1]) * v + c[2]) * v + c[3];
+}
+
+/// Mired: a million over the temperature in K. Equal steps of it look like equal changes in the
+/// light's colour, at any temperature.
+const mired_scale = 1e6;
+
+pub fn mired(kelvin: f32) f32 {
+    return mired_scale / kelvin;
+}
+
+pub fn kelvinOfMired(m: f32) f32 {
+    return mired_scale / m;
 }
 
 /// Converts a temperature on the old scale (−100..100, from before we used kelvin) to K. On that
@@ -263,8 +291,7 @@ fn blackBody(kelvin: f32) [3]f32 {
 /// to 9200 K.
 pub fn kelvinFromShift(shift: f32) f32 {
     const mired_per_step = 0.726;
-    const mired = 1e6 / @as(f32, reference_kelvin) - shift * mired_per_step;
-    return std.math.clamp(1e6 / mired, min_kelvin, max_kelvin);
+    return std.math.clamp(kelvinOfMired(mired(reference_kelvin) - shift * mired_per_step), min_kelvin, max_kelvin);
 }
 
 /// Values that depend only on the settings, worked out once per render.

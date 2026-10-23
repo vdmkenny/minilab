@@ -74,12 +74,16 @@ pub fn filmKind(kind: develop.FilmKind) []const u8 {
     };
 }
 
+/// The film types, in the order the menus list them.
 pub const film_kinds = [_]develop.FilmKind{ .colour_negative, .bw_negative, .colour_positive, .bw_positive };
-pub const film_kind_labels = blk: {
-    var names: [film_kinds.len][]const u8 = undefined;
-    for (&names, film_kinds) |*n, k| n.* = filmKind(k);
-    break :blk names;
-};
+
+/// A film size as the roll form lists it, like "135 (35mm)".
+pub fn filmSizeChoice(size: formats.FilmSize) []const u8 {
+    return switch (size) {
+        .@"135" => "135 (35mm)",
+        else => size.label(),
+    };
+}
 
 /// A stock you can pick for a roll: its name, its film type and, if the maker publishes the
 /// numbers for one, its preset.
