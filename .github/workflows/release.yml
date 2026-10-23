@@ -5,6 +5,10 @@
 # credited to them in its notes. Each archive, and each executable in it, gets a build provenance
 # attestation, which `gh attestation verify` checks.
 #
+# The macOS builds carry SANE, so scanning works with nothing to install
+# (`scripts/build-sane-macos.sh`). Its licence asks for the source to come with it, so the source
+# archives it's built from are attached to the release too.
+#
 # Run by hand from the Actions tab, it builds everything and keeps the archives as the run's
 # artifacts, but publishes nothing and makes no attestations.
 #
@@ -48,8 +52,8 @@ jobs:
           - { name: linux-aarch64, os: ubuntu-latest, target: aarch64-linux-gnu }
           - { name: windows-x86_64, os: windows-latest, target: x86_64-windows-gnu }
           - { name: windows-aarch64, os: windows-latest, target: aarch64-windows-gnu }
-          - { name: macos-x86_64, os: macos-latest, target: x86_64-macos }
-          - { name: macos-aarch64, os: macos-latest, target: aarch64-macos }
+          - { name: macos-x86_64, os: macos-latest, target: x86_64-macos, sane: x86_64 }
+          - { name: macos-aarch64, os: macos-latest, target: aarch64-macos, sane: arm64 }
     runs-on: ${{ matrix.os }}
     # The build only reads the repository. The attestations need a token from GitHub's OIDC provider,
     # to get a signing certificate from Sigstore, and the rights `actions/attest` asks for to store
@@ -71,6 +75,9 @@ jobs:
       # An explicit target builds for the architecture's baseline processor, so the binary runs on
       # any machine of that kind, not just ones like the runner.
       - run: zig build --release=fast -Dstrip -Dtarget=${{ matrix.target }}
+      # SANE for the Mac, built from its pinned source, with the source archives kept for the release.
+      - if: matrix.sane
+        run: scripts/build-sane-macos.sh ${{ matrix.sane }} sane sane-source
       - name: Package
         shell: bash
         env:
@@ -84,6 +91,14 @@ jobs:
           # The licences and notices of the libraries and fonts whose text has to go with every copy:
           # everything the build installs beside the program.
           find zig-out -maxdepth 1 -type f -exec cp {} "$name"/ \;
+          # SANE goes next to the program, where minilab looks for it. Both Mac builds have the same
+          # source archives, so one of them puts them out for the release.
+          if [ -n "${{ matrix.sane }}" ]; then
+            cp -R sane "$name"/
+          fi
+          if [ "${{ matrix.name }}" = macos-aarch64 ]; then
+            cp sane-source/* dist/
+          fi
           case "${{ matrix.target }}" in
             *windows*)
               cp zig-out/bin/minilab.exe "$name"/
@@ -118,12 +133,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      # The SHA-256 of each archive, in the format `sha256sum --check` reads.
+      # The SHA-256 of each archive, SANE's source among them, in the format `sha256sum --check` reads.
       - name: Write the checksums of the archives
         working-directory: dist
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
-        run: sha256sum -- *.tar.gz *.zip > "minilab-$TAG-sha256sums.txt"
+        run: sha256sum -- *.tar.gz *.tar.bz2 *.zip > "minilab-$TAG-sha256sums.txt"
       # Each change a contributor made gets their handle in the notes (`release-credits.sh`).
       - name: Attach the builds to the release, and credit the contributors
         shell: bash
@@ -133,7 +148,7 @@ jobs:
         run: |
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | scripts/release-credits.sh)"
-          note="To scan, you need SANE on macOS and Linux, or your scanner maker's TWAIN driver on Windows (see the README). The macOS builds aren't signed, so macOS blocks them the first time you open one: run \`xattr -d com.apple.quarantine minilab\` once to let it through. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          note="The macOS builds come with scanner drivers (SANE). On Linux you need SANE, and on Windows your scanner maker's TWAIN driver (see the README). The macOS builds aren't signed, so macOS blocks them the first time you open one: run \`xattr -dr com.apple.quarantine .\` once in the folder you unpacked to let it through. The source of the SANE they carry is attached here too. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
 
           $changelog"

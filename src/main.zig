@@ -219,7 +219,7 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     }
     if (!list and output == null) return error.Usage;
 
-    var library = scan.Library.load(gpa) catch |err| {
+    var library = scan.Library.load(gpa, io) catch |err| {
         std.log.err("no scanner library: {t}. On macOS and Linux minilab uses SANE, on Windows TWAIN.", .{err});
         std.process.exit(1);
     };

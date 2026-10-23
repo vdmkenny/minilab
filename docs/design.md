@@ -169,10 +169,18 @@ low-resolution scan of the whole area.
 
 **SANE (macOS, Linux).**
 
-- minilab loads the system's libsane when it runs (`std.DynLib`), not when it's built. So it
-  starts fine without SANE installed, and it uses the system's own backend configuration
-  (`dll.d`), which is where the V200's epkowa backend is switched on. The types come from
-  `sane.h`, which is public domain.
+- minilab loads libsane when it runs (`std.DynLib`), not when it's built, so it starts fine
+  without SANE. The types come from `sane.h`, which is public domain.
+- On macOS, where hardly anyone has SANE, the release carries its own in a `sane` folder next to
+  the program: libsane and every sane-backends backend that builds on macOS, with libusb and
+  libjpeg-turbo (`scripts/build-sane-macos.sh`, section 12). minilab tries it first. Before SANE
+  starts, minilab points `SANE_CONFIG_DIR` and the dll backend's search path (`LD_LIBRARY_PATH`,
+  which the dll backend reads on every system) at the bundle's folders first and then the
+  system's (Homebrew's and MacPorts'). The bundle has no `dll.d`, so SANE reads the system's,
+  which is where the V200's epkowa backend is switched on, and finds epkowa in the system's
+  backend folder.
+- If that SANE doesn't load, or on Linux, minilab loads the system's libsane, with the system's
+  own configuration.
 - Options are set by name. SANE's standard names (`source`, `mode`, `depth`, `resolution`,
   `tl-x`, `tl-y`, `br-x`, `br-y`, `preview`) work with every backend. Backend-specific ones, like
   epkowa's `film-type` and `gamma-correction`, come from a scanner profile (below).
@@ -670,7 +678,8 @@ write both in Zig: we only need a handful of tags, and exiv2, the usual library 
 | translate-c package | turns C headers into a Zig module | MIT |
 | SDL3 (castholm/SDL's Zig build) | window, input, GPU (Metal, Vulkan, D3D12) | zlib |
 | IBM Plex Sans, JetBrains Mono | the interface's fonts | SIL OFL 1.1 |
-| libsane (the system's, loaded when minilab runs) | scanners on macOS and Linux | GPL-2.0+ with SANE's exception; `sane.h` public domain |
+| sane-backends 1.4.0: libsane and its backends (carried by the macOS release, the system's elsewhere; loaded when minilab runs) | scanners on macOS and Linux | GPL-2.0+ with SANE's exception, 15 backends GPL-2.0 alone (section 13); `sane.h` public domain |
+| libusb 1.0.30, libjpeg-turbo 3.2.0 (carried by the macOS release, for SANE) | USB, and JPEG for the backends that need it | LGPL-2.1+; IJG and BSD |
 | our epkowa build and `libesint7A` | the V200, unchanged, loaded by libsane | GPL-2.0+ |
 | TWAIN DSM (the system's, loaded when minilab runs) | scanners on Windows | LGPL-2.1 |
 | darktable's negative inversion model | the equations and their defaults, written in Zig from the maths; no darktable code | (credited; nothing copied) |
@@ -690,8 +699,14 @@ write both in Zig: we only need a handful of tags, and exiv2, the usual library 
   files in `deps/`, the way OpenReliant does it for FreeType and libarchive. libjpeg-turbo is built
   without its SIMD code, so you don't need NASM.
 
-libsane and the TWAIN DSM are the exceptions. They belong to the system, because the system's
-scanner configuration comes with them.
+SANE and the TWAIN DSM are the exceptions. They're loaded when minilab runs, and on Linux and
+Windows they belong to the system, because the system's scanner configuration comes with them.
+On macOS, where people don't have SANE, the release carries it. `scripts/build-sane-macos.sh`
+builds it in the release workflow, for each Mac, from sane-backends, libusb and libjpeg-turbo
+source archives pinned by version and SHA-256, so nothing comes from Homebrew. libjpeg-turbo is
+built without its SIMD code, like ours, and linked into the backends that need it. libusb stays a
+library of its own next to libsane. The `SANE for macOS` workflow builds it too whenever the
+script changes, so a broken build shows up before a release.
 
 ## 13. Licence
 
@@ -704,8 +719,25 @@ What that rules out, and how minilab stays within it:
   from the equations (section 7).
 - No data under the GPL or CC BY-SA. The stock presets are our own readings of the makers'
   datasheets (`data/stocks/README.md`).
-- GPL programs stay outside minilab. SANE and its backends, our V200 driver among them, are loaded
-  when minilab runs, and SANE's licence makes an exception for programs that use its library.
+- SANE is loaded when minilab runs, never linked into it. libsane and most backends carry SANE's
+  exception to the GPL, which lets programs under any licence use them. Our V200 driver isn't
+  shipped: people install it into their own SANE.
+- The macOS download carries SANE with every backend that builds on macOS, so that as many
+  scanners as possible work with nothing to install. Fifteen of those backends are under the GPL
+  without the exception (agfafocus, canon_lide70, coolscan3, epson2, epsonds, genesys, hp4200,
+  kodakaio, magicolor, niash, p5, pieusb through `sanei_ir.c`, s9036, stv680 and tamarack), and
+  kvs1025, kvs20xx and kvs40xx have no licence notice at all. Several of them drive common film
+  scanners: Plustek OpticFilm and Canon's film flatbeds (genesys), newer Epsons (epson2), Nikon
+  Coolscans (coolscan3) and Reflecta (pieusb).
+- The MPL allows that. Its section 3.3 lets an MPL program go out in a larger work with GPL code,
+  and minilab's own files may then be shared under the GPL as well. The GPL asks for the source of
+  the whole download: minilab's is public, the SANE, libusb and libjpeg-turbo archives are attached
+  to every release, and the script that builds them is in this repository. The `sane` folder holds
+  their licences and a README that says where the source is. Whether everything else in the
+  program, like the CC BY looks and the OFL fonts, fits under the GPL in that larger work is a grey
+  area. We chose to cover more scanners. If that ever has to change, the build script can leave
+  the GPL-only backends out, and they'd load from the system's SANE where it's installed.
+- libusb is under the LGPL-2.1 and stays a library of its own, so anyone can swap in their own.
 - LibRaw is linked statically under the LGPL-2.1, which means users must be able to relink minilab
   with their own LibRaw. minilab's source and build are public, so they can.
 
@@ -723,7 +755,8 @@ repository; the build fetches them.
 - **Build.** `zig build`, `zig build test`, `zig build run`, and `zig build check` for quick
   compile errors. A Makefile wraps them; `make help` lists what it does. The first build fetches
   and builds every library, and fetches and bakes the film looks. You don't need anything from
-  Homebrew or apt except SANE itself, for scanning.
+  Homebrew or apt except SANE itself, for scanning on Linux, or on a Mac with a build of your own
+  (the macOS releases carry SANE, and `scripts/build-sane-macos.sh` builds the same one).
 - **Platforms.** Each release has builds for macOS, Linux and Windows, each on x86-64 and Arm,
   made by GitHub Actions. CI runs the tests on Linux, macOS and Windows. Scanning on Windows can
   only be tried on a Windows machine with a scanner.

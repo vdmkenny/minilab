@@ -755,9 +755,10 @@ const sane_install = "brew install sane-backends";
 /// Where Homebrew puts itself: on Apple silicon, and on Intel Macs.
 const homebrew_paths = [_][]const u8{ "/opt/homebrew/bin/brew", "/usr/local/bin/brew" };
 
-/// Draws the steps to get scanner drivers when minilab can't find any: on a Mac, Homebrew and then
+/// Draws the steps to get scanner drivers when minilab can't load any: on a Mac, Homebrew and then
 /// SANE, with a button for each; on Linux, the SANE package; on Windows, the maker's TWAIN driver.
-/// The Refresh after it picks them up. Returns the y below.
+/// The Refresh after it picks them up. The Mac download comes with SANE, so there this only shows
+/// when that one doesn't load either, or for a build without it. Returns the y below.
 fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, width: f32) f32 {
     var y = top;
     switch (builtin.os.tag) {

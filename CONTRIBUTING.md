@@ -16,7 +16,8 @@ here. For what minilab does and why, see [docs/design.md](docs/design.md).
   belong from getting committed. `make help` lists the other `make` targets.
 - `make run` opens the app on your library (`~/Pictures/Rolls`), or on another folder with
   `ARGS='open --library <folder>'`. To scan you need SANE on macOS and Linux, or the scanner
-  maker's TWAIN driver on Windows.
+  maker's TWAIN driver on Windows. On a Mac, `scripts/build-sane-macos.sh arm64 zig-out/bin/sane`
+  builds the SANE the releases carry and puts it next to the program.
 
 ## Where things are
 
