@@ -46,6 +46,8 @@ const scanner_width = 300;
 /// Negative Film mode takes the orange mask out and inverts, so the film base can't be measured any
 /// more (and on the V200 it also clips blue on B&W film). minilab does the inverting itself.
 const scanner_film: scan.Film = .positive;
+/// The film area shown before a scanner says what its own is: the V200's film holder, in mm.
+const default_film_area: scan.Area = .{ .x = 0, .y = 0, .width = 33.02, .height = 244.348 };
 
 const queue_width = 280;
 const panel_padding = 14;
@@ -1111,7 +1113,7 @@ fn resolutionChoices(state: *const State, buffer: *[max_resolution_choices]u32) 
 fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []const u8 {
     const dpi: f32 = @floatFromInt(state.dpi);
     // Across the film it's the whole film area, and along it the frame plus its margins.
-    const across_mm = if (state.capabilities) |caps| caps.area.width else if (state.preview) |p| p.area.width else 33.02;
+    const across_mm = if (state.capabilities) |caps| caps.area.width else if (state.preview) |p| p.area.width else default_film_area.width;
     var estimate = true;
     var along_mm: f32 = formats.Standard.default.format().width_mm;
     if (roll_index) |r| along_mm = ctx.library.rolls.items[r].info.format.format().width_mm;
@@ -1212,7 +1214,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     y += gui.lineAt(list, x, y, theme.text_secondary, label) + gui.px(8);
 
     // The film area scaled to fill the column's height, with its width following.
-    const area: scan.Area = if (state.preview) |p| p.area else if (state.capabilities) |caps| caps.area else .{ .x = 0, .y = 0, .width = 33.02, .height = 244.348 };
+    const area: scan.Area = if (state.preview) |p| p.area else if (state.capabilities) |caps| caps.area else default_film_area;
     const mono_line = gui.lineFor(12);
     const below = gui.px(8) + mono_line + gui.px(8) + 2 * gui.lineHeight();
     const room = top + height - y - below;
@@ -2293,7 +2295,7 @@ test "a vertical strip's boxes map to the scanner" {
     const preview: Preview = .{
         .scan = .{ .width = 390, .height = 2886, .pixels = &.{} },
         .dpi = .{ 300, 300 },
-        .area = .{ .x = 0, .y = 0, .width = 33.02, .height = 244.348 },
+        .area = default_film_area,
         .axis = .y,
     };
     const px_per_mm: f32 = 300.0 / mm_per_inch;

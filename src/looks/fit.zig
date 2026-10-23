@@ -104,6 +104,26 @@ const crosstalk_cost = 2e-4;
 /// We keep the LUT when it removes at least this share of the error out of fold.
 const lut_threshold = 0.1;
 
+/// The damping added to the step's system: this share of its mean diagonal, plus this share of
+/// the samples' total weight, so a system with nothing in it still solves.
+const damping_share = 1e-3;
+const damping_floor = 1e-9;
+/// How many times a step that doesn't lower the error is halved before it's given up.
+const step_halvings = 6;
+
+/// A held-out pair's balance: Newton steps per channel, each a little short of the full step and
+/// no bigger than `max_balance_step`, until a step is smaller than `balance_settled`.
+const balance_steps = 8;
+const balance_shortening = 1.001;
+const max_balance_step = 0.1;
+const balance_settled = 1e-6;
+
+/// How hard the LUT pulls each grid point back to no change, and towards its neighbours, in
+/// units of an average sample. Then how many passes the smoothing takes.
+const lut_shrink = 2;
+const lut_smooth = 1;
+const lut_smoothing_passes = 60;
+
 /// Fits a look to `samples`. `held_out` has one entry per pair, true for the pairs left out of the
 /// fit so we can check it.
 pub fn fit(gpa: std.mem.Allocator, samples: []const Sample, held_out: []const bool, options: Options) !Result {
@@ -257,7 +277,7 @@ fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balan
     }
     var trace: f64 = 0;
     for (0..n) |i| trace += a[i * n + i];
-    const damping = 1e-3 * trace / @as(f64, @floatFromInt(n)) + 1e-9 * total;
+    const damping = damping_share * trace / @as(f64, @floatFromInt(n)) + damping_floor * total;
     for (0..n) |i| a[i * n + i] += damping;
     for (0..crosstalk) |i| {
         a[i * n + i] += crosstalk_cost * total;
@@ -271,7 +291,7 @@ fn stepRow(gpa: std.mem.Allocator, model: *Model, samples: []const Sample, balan
     const saved = try gpa.dupe([3]f32, balance);
     defer gpa.free(saved);
     var share: f64 = 1;
-    for (0..6) |_| {
+    for (0..step_halvings) |_| {
         if (options.matrix) {
             var next = row;
             for (others[channel], 0..) |j, i| next[j] = row[j] + @as(f32, @floatCast(share * g[i]));
@@ -294,7 +314,7 @@ fn balanceHeldOut(model: *const Model, samples: []const Sample, balance: [][3]f3
     for (held_out, 0..) |out, pair| {
         if (!out) continue;
         for (0..3) |channel| {
-            for (0..8) |_| {
+            for (0..balance_steps) |_| {
                 var gradient: f64 = 0;
                 var hessian: f64 = 0;
                 for (samples) |s| {
@@ -306,9 +326,9 @@ fn balanceHeldOut(model: *const Model, samples: []const Sample, balance: [][3]f3
                     hessian += s.weight * d * d;
                 }
                 if (hessian <= 0) break;
-                const step = -gradient / (hessian * 1.001);
-                balance[pair][channel] += @floatCast(std.math.clamp(step, -0.1, 0.1));
-                if (@abs(step) < 1e-6) break;
+                const step = -gradient / (hessian * balance_shortening);
+                balance[pair][channel] += @floatCast(std.math.clamp(step, -max_balance_step, max_balance_step));
+                if (@abs(step) < balance_settled) break;
             }
         }
     }
@@ -354,9 +374,9 @@ fn fitLut(gpa: std.mem.Allocator, model: *const Model, samples: []const Sample, 
     }
     // Shrinking and smoothing are measured in units of an average sample.
     const unit = if (used > 0) total / @as(f64, @floatFromInt(used)) else 1;
-    const shrink = 2 * unit;
-    const smooth = 1 * unit;
-    for (0..60) |_| {
+    const shrink = lut_shrink * unit;
+    const smooth = lut_smooth * unit;
+    for (0..lut_smoothing_passes) |_| {
         for (0..model_.lut_entries) |i| {
             const at = [3]usize{ i % size, i / size % size, i / (size * size) };
             var neighbours: [3]f64 = @splat(0);

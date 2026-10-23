@@ -36,6 +36,11 @@ const main_padding_x = 20;
 const main_padding_y = 16;
 const model_padding = 16;
 const table_min_width = 620;
+
+/// The sizes of the looks' parts, as the page writes them.
+const frontier_lut = std.fmt.comptimePrint("{d}³", .{minilab.look.Builtin.frontier_size});
+const fitted_lut = std.fmt.comptimePrint("{d}³", .{model.lut_size});
+const curve_points = std.fmt.comptimePrint("{d} points", .{curve.points});
 const figure_gap = 12;
 /// The width of the label column next to a collection's credit and licence.
 const pack_label_width = 90;
@@ -883,7 +888,7 @@ fn ramp(e: f32) [4]u8 {
         colour = .{ .x = a[1].x + (b[1].x - a[1].x) * t, .y = a[1].y + (b[1].y - a[1].y) * t, .z = a[1].z + (b[1].z - a[1].z) * t, .w = 1 };
         break;
     }
-    return .{ @intFromFloat(@round(colour.x * 255)), @intFromFloat(@round(colour.y * 255)), @intFromFloat(@round(colour.z * 255)), 255 };
+    return theme.rgba8(colour);
 }
 
 /// Whether `path` is a lab's reference picture: a JPEG or a TIFF.
@@ -998,7 +1003,7 @@ fn drawList(state: *State, ctx: context.Context) void {
     const item_height = gui.px(8 + 8 + 1) + gui.lineFor(13) + gui.lineFor(12) + 2;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
         .{ .neutral, "Neutral", "Inversion curve" },
-        .{ .frontier, "Frontier emulation", "Color LUT, 33³" },
+        .{ .frontier, "Frontier emulation", "Color LUT, " ++ frontier_lut },
     };
     for (built_in, 0..) |b, i| {
         c.ImGui_PushIDInt(@intCast(i));
@@ -1656,7 +1661,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
         .frontier => {
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
                 .{ "Neutral", "As set in Develop" },
-                .{ "Frontier color LUT", "33³, on Neutral's sRGB output" },
+                .{ "Frontier color LUT", frontier_lut ++ ", on Neutral's sRGB output" },
             });
             return;
         },
@@ -1683,7 +1688,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
 
     const options = [_]struct { *bool, []const u8, []const u8 }{
         .{ &own.options.balance, "Per-frame balance", gui.print("3 offsets per frame, for {s} own correction · not part of the look", .{own.references.corrector()}) },
-        .{ &own.options.curves, "Channel curves", "R, G and B, monotone, 33 points each" },
+        .{ &own.options.curves, "Channel curves", "R, G and B, monotone, " ++ curve_points ++ " each" },
         .{ &own.options.matrix, "Density matrix", "3 × 3, for crosstalk between channels" },
         .{ &own.options.lut, "3D LUT for what's left", lutNote(own) },
     };
@@ -1742,12 +1747,12 @@ fn saveLook(ctx: context.Context, own: *Own) void {
 }
 
 fn lutNote(own: *const Own) []const u8 {
-    const r = own.result orelse return "33³ · only if the residual shows structure";
+    const r = own.result orelse return fitted_lut ++ " · only if the residual shows structure";
     return switch (r.report.lut) {
-        .not_asked => "33³ · only if the residual shows structure",
-        .kept => gui.print("33³ · kept, removed {d:.0}% of the remaining error out of fold", .{r.report.lut_gain * 100}),
-        .no_structure => "33³ · left out, residual is noise",
-        .too_few_pairs => "33³ · left out, needs two fitted pairs",
+        .not_asked => fitted_lut ++ " · only if the residual shows structure",
+        .kept => gui.print("{s} · kept, removed {d:.0}% of the remaining error out of fold", .{ fitted_lut, r.report.lut_gain * 100 }),
+        .no_structure => fitted_lut ++ " · left out, residual is noise",
+        .too_few_pairs => fitted_lut ++ " · left out, needs two fitted pairs",
     };
 }
 
@@ -1803,7 +1808,7 @@ const Chart = union(enum) {
     fn label(chart: Chart) []const u8 {
         return switch (chart) {
             .neutral => "default settings",
-            .fitted => "fitted, 33 points each",
+            .fitted => "fitted, " ++ curve_points ++ " each",
             .identity => "identity, not fitted",
         };
     }

@@ -32,6 +32,22 @@ const max_file_bytes = 2 << 30;
 /// The darkest luminance the grey images tell apart. It's the floor for the log.
 const darkest = 1e-3;
 
+/// The smallest overlap worth sampling, in working pixels each way.
+const min_overlap = 8;
+/// The margin left inside the overlap: its size over `margin_divisor`, plus a few pixels.
+const margin_divisor = 30;
+const margin_pixels = 2;
+/// The fewest pixels between samples. Each sample is a block reaching a third of that out from its
+/// middle.
+const min_step = 3;
+const block_reach = 3;
+/// A block is clipped when a density comes within this of 0 or 1, or a reference value within
+/// `target_clip`.
+const density_clip = 0.001;
+const target_clip = 0.004;
+/// How much a busy block's weight falls with its variance.
+const busy_cost = 200;
+
 /// An image reduced by a whole factor, with the size it was reduced from.
 pub fn Reduced(comptime Pixel: type) type {
     return struct {
@@ -242,8 +258,8 @@ fn developPlaced(gpa: std.mem.Allocator, scan: image.Scan, longest: usize, gap_b
     gray.full_width = full[0];
     gray.full_height = full[1];
     for (neutral, gray.pixels, standard.pixels) |*n, *g, p| {
-        for (n[0..3], p) |*o, v| o.* = @intFromFloat(@round(colour.encode(v) * 255));
-        n[3] = 255;
+        for (n[0..3], p) |*o, v| o.* = minilab.encode.quantise(u8, colour.encode(v));
+        n[3] = std.math.maxInt(u8);
         g.* = std.math.log10(@max(colour.luminance(p), darkest));
     }
     const f: f32 = @floatFromInt(factor);
@@ -343,16 +359,16 @@ fn referenceAt(p: *const Prepared, a: register.Alignment, x: f32, y: f32) ?[3]f3
 pub fn sample(gpa: std.mem.Allocator, p: *const Prepared, alignment: register.Alignment, pair: u16, out: *std.ArrayList(fit.Sample)) !void {
     const a = p.onFrame(alignment);
     const box = overlap(p, a);
-    if (box[2] <= box[0] + 8 or box[3] <= box[1] + 8) return;
-    const margin_x = (box[2] - box[0]) / 30 + 2;
-    const margin_y = (box[3] - box[1]) / 30 + 2;
+    if (box[2] <= box[0] + min_overlap or box[3] <= box[1] + min_overlap) return;
+    const margin_x = (box[2] - box[0]) / margin_divisor + margin_pixels;
+    const margin_y = (box[3] - box[1]) / margin_divisor + margin_pixels;
     const x0 = box[0] + margin_x;
     const y0 = box[1] + margin_y;
     const x1 = box[2] - margin_x;
     const y1 = box[3] - margin_y;
     const area: f32 = @floatFromInt((x1 - x0) * (y1 - y0));
-    const step: usize = @max(3, @as(usize, @intFromFloat(@sqrt(area / samples_per_pair))));
-    const radius: usize = @max(1, step / 3);
+    const step: usize = @max(min_step, @as(usize, @intFromFloat(@sqrt(area / samples_per_pair))));
+    const radius: usize = @max(1, step / block_reach);
 
     var y = y0 + radius;
     while (y + radius < y1) : (y += step) {
@@ -374,7 +390,7 @@ pub fn sample(gpa: std.mem.Allocator, p: *const Prepared, alignment: register.Al
                         continue;
                     };
                     for (d, t) |dv, tv| {
-                        if (!(dv > 0.001 and dv < 0.999) or tv <= 0.004 or tv >= 0.996) clipped = true;
+                        if (!(dv > density_clip and dv < 1 - density_clip) or tv <= target_clip or tv >= 1 - target_clip) clipped = true;
                     }
                     for (&density, d) |*s, v| s.* += v;
                     for (&target, t) |*s, v| s.* += v;
@@ -395,7 +411,7 @@ pub fn sample(gpa: std.mem.Allocator, p: *const Prepared, alignment: register.Al
             const ours_variance = @max(0, ours_square / n - (ours_sum / n) * (ours_sum / n));
             const theirs_variance = @max(0, theirs_square / n - (theirs_sum / n) * (theirs_sum / n));
             const busy = ours_variance + theirs_variance;
-            try out.append(gpa, .{ .density = density, .target = target, .weight = 1 / (1 + 200 * busy), .pair = pair });
+            try out.append(gpa, .{ .density = density, .target = target, .weight = 1 / (1 + busy_cost * busy), .pair = pair });
         }
     }
 }
@@ -509,8 +525,8 @@ pub fn view(gpa: std.mem.Allocator, p: *const Prepared, on_scan: ?register.Align
             );
             v.target[k] = t orelse @splat(0);
             if (t) |c| {
-                for (v.reference[k][0..3], c) |*o, e| o.* = @intFromFloat(@round(std.math.clamp(e, 0, 1) * 255));
-                v.reference[k][3] = 255;
+                for (v.reference[k][0..3], c) |*o, e| o.* = minilab.encode.quantise(u8, e);
+                v.reference[k][3] = std.math.maxInt(u8);
             } else v.reference[k] = .{ 0, 0, 0, 0 };
         }
     }

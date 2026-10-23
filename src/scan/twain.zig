@@ -318,6 +318,10 @@ const CapabilityId = enum(u16) {
 };
 
 const pt_rgb = 2;
+/// Bits per pixel for RGB at 16 and 8 bits a channel, and per pixel for grey at 16.
+const rgb_bits_deep = 48;
+const rgb_bits = 24;
+const grey_bits_deep = 16;
 const un_inches = 0;
 const sx_memory = 2;
 const lp_reflective = 0;
@@ -691,7 +695,7 @@ pub const Scanner = struct {
         if (try scanner.get(gpa, .bit_depth)) |found| {
             var d = found;
             defer d.deinit(gpa);
-            deep = d.contains(48) or d.contains(16);
+            deep = d.contains(rgb_bits_deep) or d.contains(grey_bits_deep);
         }
         var film_setting = false;
         if (try scanner.get(gpa, .film_type)) |found| {
@@ -720,7 +724,7 @@ pub const Scanner = struct {
             .positive => fm_positive,
         }) catch {};
         try scanner.set(.pixel_type, .uint16, pt_rgb);
-        scanner.set(.bit_depth, .uint16, if (request.deep) 48 else 24) catch try scanner.set(.bit_depth, .uint16, 24);
+        scanner.set(.bit_depth, .uint16, if (request.deep) rgb_bits_deep else rgb_bits) catch try scanner.set(.bit_depth, .uint16, rgb_bits);
         const dpi: f64 = @floatFromInt(request.dpi);
         try scanner.setFix(.x_resolution, dpi);
         try scanner.setFix(.y_resolution, dpi);

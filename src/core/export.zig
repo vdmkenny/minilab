@@ -38,6 +38,9 @@ pub const Format = enum {
 
 pub const Depth = image.Depth;
 
+/// From this JPEG quality up, the colour is kept at full resolution (4:4:4) instead of halved.
+const full_colour_quality = 90;
+
 /// The colour spaces offered, in the order the interface lists them.
 pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
 
@@ -241,7 +244,7 @@ pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, em
         .jpeg => switch (picture.pixels) {
             .eight => |p| try jpeg.write(gpa, p, .{
                 .quality = options.quality,
-                .subsampling = if (options.quality >= 90) .@"4:4:4" else .@"4:2:0",
+                .subsampling = if (options.quality >= full_colour_quality) .@"4:4:4" else .@"4:2:0",
                 .icc_profile = profile,
             }),
             .sixteen => return error.JpegIsEightBit,

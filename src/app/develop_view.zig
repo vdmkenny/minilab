@@ -1591,9 +1591,9 @@ fn temperatureRow(kelvin: *f32) bool {
     c.ImGui_PushID("Temperature");
     defer c.ImGui_PopID();
     gui.rowLabel("Temperature");
-    var mired = 1e6 / kelvin.*;
-    var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
-    if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
+    var mired = develop.mired(kelvin.*);
+    var changed = gui.slider("slider", &mired, develop.mired(develop.min_kelvin), develop.mired(develop.max_kelvin), 0);
+    if (changed) kelvin.* = @round(develop.kelvinOfMired(mired) / kelvin_step) * kelvin_step;
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Shooting light");
     if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
@@ -1650,9 +1650,9 @@ fn drawBase(state: *State) void {
     const corner = c.ImGui_GetCursorScreenPos();
     const swatch = gui.px(28);
     const swatch_min = gui.vec2(corner.x, corner.y + (row_height - swatch) / 2);
-    var colour: [3]u8 = undefined;
-    for (&colour, frame.settings.base) |*out, t| out.* = @intFromFloat(@round(minilab.encode.srgb(t) * 255));
-    c.ImDrawList_AddRectFilledEx(list, swatch_min, gui.vec2(swatch_min.x + swatch, swatch_min.y + swatch), @as(u32, colour[0]) | @as(u32, colour[1]) << 8 | @as(u32, colour[2]) << 16 | 0xFF000000, gui.px(4), 0);
+    const base = frame.settings.base;
+    const colour: theme.Color = .{ .x = minilab.encode.srgb(base[0]), .y = minilab.encode.srgb(base[1]), .z = minilab.encode.srgb(base[2]), .w = 1 };
+    c.ImDrawList_AddRectFilledEx(list, swatch_min, gui.vec2(swatch_min.x + swatch, swatch_min.y + swatch), theme.imU32(colour), gui.px(4), 0);
     gui.outline(swatch_min, gui.vec2(swatch_min.x + swatch, swatch_min.y + swatch), theme.withAlpha(theme.text, 0.15), gui.px(4), 1);
     const text_x = corner.x + swatch + gui.px(10);
     fonts.push(.semibold);

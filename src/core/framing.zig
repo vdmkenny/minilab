@@ -32,6 +32,11 @@ const gap_across_share = 0.8;
 const whole_share = 0.9;
 /// A scan with at least this many whole frames on it is a strip.
 const strip_least_frames = 2;
+/// How much farther a frame marked for checking counts as being from the middle, when picking the
+/// frame a single scan shows.
+const check_distance_factor = 4;
+/// How much of the film's width the holder's lips cover, in mm, for guessing a scan's resolution.
+const holder_lips_mm = 2;
 
 /// Finds the frame on `scan`, in the full scan's pixels. See `findWithGaps`.
 pub fn find(gpa: std.mem.Allocator, scan: image.Scan, scan_width: usize, scan_height: usize, dpi: ?f32, format: frames.Format, kind: develop.FilmKind) !image.Area {
@@ -118,7 +123,7 @@ const Search = struct {
             const cx = @as(f32, @floatFromInt(f.area.x)) + @as(f32, @floatFromInt(f.area.width)) / 2;
             const cy = @as(f32, @floatFromInt(f.area.y)) + @as(f32, @floatFromInt(f.area.height)) / 2;
             var distance = std.math.hypot(cx - middle[0], cy - middle[1]);
-            if (f.confidence == .check) distance *= 4;
+            if (f.confidence == .check) distance *= check_distance_factor;
             if (distance < best_distance) {
                 best_distance = distance;
                 best = f;
@@ -213,7 +218,7 @@ fn medianOf(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area) ![3]f32 
 /// shorter side spans the film's width minus the holder's lips. It's good to a few per cent for a
 /// frame in a holder.
 pub fn guessDpi(width: usize, height: usize, format: frames.Format) f32 {
-    const across_mm = (format.size.filmWidthMm() orelse format.height_mm) - 2;
+    const across_mm = (format.size.filmWidthMm() orelse format.height_mm) - holder_lips_mm;
     return @as(f32, @floatFromInt(@min(width, height))) / across_mm * frames.formats.mm_per_inch;
 }
 

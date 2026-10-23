@@ -43,8 +43,19 @@ pub const Builtin = enum {
     pub fn cubeFile(builtin: Builtin) ?[]const u8 {
         return switch (builtin) {
             .neutral => null,
-            .frontier => @embedFile("../presets/looks/frontier.cube"),
+            .frontier => frontier_cube,
         };
+    }
+
+    const frontier_cube = @embedFile("../presets/looks/frontier.cube");
+    /// The points along each side of the Frontier LUT.
+    pub const frontier_size = 33;
+    comptime {
+        // The size line is near the top, after the comments.
+        const header = frontier_cube[0..@min(frontier_cube.len, 1024)];
+        if (std.mem.indexOf(u8, header, std.fmt.comptimePrint("LUT_3D_SIZE {d}\n", .{frontier_size})) == null) {
+            @compileError("frontier.cube isn't the size `frontier_size` says");
+        }
     }
 };
 
