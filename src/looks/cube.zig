@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const model = @import("model.zig");
+const cube_lut = @import("../core/cube_lut.zig");
 
 const Lut = model.Lut;
 
@@ -23,44 +24,17 @@ pub fn write(gpa: std.mem.Allocator, lut: *const Lut, title: []const u8, comment
     return out.toOwnedSlice();
 }
 
-pub const ReadError = error{ NotACube, WrongSize, Truncated, InvalidNumber };
+pub const ReadError = cube_lut.ParseError || error{WrongSize};
 
-/// Reads a .cube file holding a 33³ LUT over 0..1 into `lut`.
-pub fn read(bytes: []const u8, lut: *Lut) ReadError!void {
-    var lines = std.mem.tokenizeAny(u8, bytes, "\r\n");
-    var size: ?usize = null;
-    var filled: usize = 0;
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t");
-        if (line.len == 0 or line[0] == '#') continue;
-        if (std.mem.startsWith(u8, line, "TITLE")) continue;
-        if (std.mem.startsWith(u8, line, "DOMAIN_MIN") or std.mem.startsWith(u8, line, "DOMAIN_MAX")) {
-            const want: f32 = if (line[7] == 'M' and line[8] == 'I') 0 else 1;
-            var fields = std.mem.tokenizeAny(u8, line, " \t");
-            _ = fields.next();
-            while (fields.next()) |field| {
-                const v = std.fmt.parseFloat(f32, field) catch return error.InvalidNumber;
-                if (v != want) return error.NotACube;
-            }
-            continue;
-        }
-        if (std.mem.startsWith(u8, line, "LUT_1D_SIZE")) return error.NotACube;
-        if (std.mem.startsWith(u8, line, "LUT_3D_SIZE")) {
-            const value = std.mem.trim(u8, line["LUT_3D_SIZE".len..], " \t");
-            size = std.fmt.parseInt(usize, value, 10) catch return error.InvalidNumber;
-            if (size.? != model.lut_size) return error.WrongSize;
-            continue;
-        }
-        if (size == null) return error.NotACube;
-        if (filled == model.lut_entries) return error.NotACube;
-        var fields = std.mem.tokenizeAny(u8, line, " \t");
-        for (&lut.values[filled]) |*v| {
-            const field = fields.next() orelse return error.Truncated;
-            v.* = std.fmt.parseFloat(f32, field) catch return error.InvalidNumber;
-        }
-        filled += 1;
-    }
-    if (filled != model.lut_entries) return error.Truncated;
+/// Reads a .cube file holding a 33³ LUT over 0..1 into `lut`, with the core's parser.
+pub fn read(gpa: std.mem.Allocator, bytes: []const u8, lut: *Lut) ReadError!void {
+    var parsed = try cube_lut.Lut.parse(gpa, bytes);
+    defer parsed.deinit(gpa);
+    if (parsed.one != null) return error.NotACube;
+    const three = parsed.three orelse return error.NotACube;
+    if (three.size != model.lut_size) return error.WrongSize;
+    for (three.min, three.max) |low, high| if (low != 0 or high != 1) return error.NotACube;
+    @memcpy(&lut.values, three.values);
 }
 
 test "a LUT round-trips through a .cube file" {
@@ -75,10 +49,10 @@ test "a LUT round-trips through a .cube file" {
 
     const again = try gpa.create(Lut);
     defer gpa.destroy(again);
-    try read(bytes, again);
+    try read(gpa, bytes, again);
     try std.testing.expectEqual([3]f32{ 0.25, 0.5, 0.75 }, again.values[Lut.index(3, 5, 7)]);
     for (lut.values, again.values) |a, b| {
         for (a, b) |x, y| try std.testing.expectApproxEqAbs(x, y, 1e-6);
     }
-    try std.testing.expectError(error.Truncated, read(bytes[0 .. bytes.len / 2], again));
+    try std.testing.expectError(error.Truncated, read(gpa, bytes[0 .. bytes.len / 2], again));
 }

@@ -10,7 +10,8 @@
 
 const std = @import("std");
 
-pub const Kind = enum { colour_negative, bw_negative, colour_positive, bw_positive };
+/// The kinds of film, as Develop has them.
+pub const Kind = @import("../core/develop.zig").FilmKind;
 
 /// One sample of a characteristic curve.
 pub const Point = struct { log_exposure: f32, density: f32 };

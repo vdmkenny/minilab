@@ -132,10 +132,8 @@ const Options = struct {
 fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) minilab.stock_curves.Curves {
     for (minilab.stocks.stocks) |stock| {
         if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
-        // The presets' kinds have the same names as Develop's.
-        const stock_kind = std.meta.stringToEnum(minilab.develop.FilmKind, @tagName(stock.kind)).?;
-        if (stock_kind != kind) {
-            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock_kind, kind });
+        if (stock.kind != kind) {
+            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock.kind, kind });
             std.process.exit(usage_status);
         }
         const curves = minilab.stock_curves.of(stock, @splat(1)) orelse {

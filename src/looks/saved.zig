@@ -64,7 +64,7 @@ pub const Look = struct {
             const lut = try gpa.create(model.Lut);
             errdefer gpa.destroy(lut);
             const lut_bytes = try cwd.readFileAlloc(io, try std.fs.path.join(a, &.{ folder, std.fs.path.basename(lut_name) }), a, .limited(max_cube_bytes));
-            try cube.read(lut_bytes, lut);
+            try cube.read(a, lut_bytes, lut);
             look.lut = lut;
             look.model.lut = lut;
         }
