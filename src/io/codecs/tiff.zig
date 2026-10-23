@@ -247,6 +247,18 @@ fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layou
     }
 }
 
+/// LibTIFF's read callback, for files held in memory: copies up to `size` bytes of `bytes` from
+/// `position` into `buffer`, and moves `position` on.
+fn copyOut(bytes: []const u8, position: *u64, buffer: ?*anyopaque, size: c.tmsize_t) c.tmsize_t {
+    if (size < 0) return -1;
+    const start: usize = @intCast(@min(position.*, bytes.len));
+    const count = @min(@as(usize, @intCast(size)), bytes.len - start);
+    const target: [*]u8 = @ptrCast(buffer orelse return -1);
+    @memcpy(target[0..count], bytes[start..][0..count]);
+    position.* = start + count;
+    return @intCast(count);
+}
+
 /// Returns sample number `index` in `bytes`, as 16 bits. LibTIFF has already put the samples in
 /// the host's byte order.
 fn sampleAt(comptime Sample: type, bytes: []const u8, index: usize) u16 {
@@ -384,13 +396,7 @@ const Source = struct {
 
     fn readProc(handle: c.thandle_t, buffer: ?*anyopaque, size: c.tmsize_t) callconv(.c) c.tmsize_t {
         const source = from(handle);
-        if (size < 0) return -1;
-        const start = @min(source.position, source.bytes.len);
-        const count = @min(@as(u64, @intCast(size)), source.bytes.len - start);
-        const target: [*]u8 = @ptrCast(buffer orelse return -1);
-        @memcpy(target[0..count], source.bytes[start..][0..count]);
-        source.position = start + count;
-        return @intCast(count);
+        return copyOut(source.bytes, &source.position, buffer, size);
     }
 
     fn writeProc(_: c.thandle_t, _: ?*anyopaque, _: c.tmsize_t) callconv(.c) c.tmsize_t {
@@ -428,14 +434,7 @@ const Sink = struct {
 
     fn readProc(handle: c.thandle_t, buffer: ?*anyopaque, size: c.tmsize_t) callconv(.c) c.tmsize_t {
         const sink = from(handle);
-        if (size < 0) return -1;
-        const length = sink.bytes.items.len;
-        const start = @min(sink.position, length);
-        const count = @min(@as(u64, @intCast(size)), length - start);
-        const target: [*]u8 = @ptrCast(buffer orelse return -1);
-        @memcpy(target[0..count], sink.bytes.items[start..][0..count]);
-        sink.position = start + count;
-        return @intCast(count);
+        return copyOut(sink.bytes.items, &sink.position, buffer, size);
     }
 
     fn writeProc(handle: c.thandle_t, buffer: ?*anyopaque, size: c.tmsize_t) callconv(.c) c.tmsize_t {
