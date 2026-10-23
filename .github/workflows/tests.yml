@@ -1,5 +1,6 @@
 # Builds minilab and runs the tests on Linux, macOS and Windows for every pull request and every
-# push to main, and checks the Zig code's formatting and the repository's files.
+# push to main, checks the Zig code's formatting and the repository's files, and compiles every
+# target a release builds.
 name: Tests
 
 on:
@@ -28,3 +29,25 @@ jobs:
       - run: zig build test --summary all
       # Releases are built ReleaseFast, without the safety checks, so the tests run in that mode too.
       - run: zig build test --release=fast --summary all
+
+  # Compiles minilab for every target a release builds, on the same runners. The tests above only
+  # run on each system's own CPU, so a mistake that only shows up on another target would otherwise
+  # be found at release time: Windows on Arm, for one, needs function pointers 4-byte aligned.
+  release-targets:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-linux-gnu }
+          - { os: ubuntu-latest, target: aarch64-linux-gnu }
+          - { os: windows-latest, target: x86_64-windows-gnu }
+          - { os: windows-latest, target: aarch64-windows-gnu }
+          - { os: macos-latest, target: x86_64-macos }
+          - { os: macos-latest, target: aarch64-macos }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - run: zig build check --release=fast -Dtarget=${{ matrix.target }}
