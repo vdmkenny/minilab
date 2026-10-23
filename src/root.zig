@@ -33,6 +33,8 @@ pub const formats = frames.formats;
 pub const framing = @import("core/framing.zig");
 /// Scanners: SANE on macOS and Linux, TWAIN on Windows, both loaded at run time.
 pub const scan = @import("scan/root.zig");
+/// Finding, checking and installing new releases.
+pub const update = @import("update/root.zig");
 /// Film stock presets from the makers' datasheets.
 pub const stocks = @import("presets/stocks.zig");
 pub const @"export" = @import("core/export.zig");

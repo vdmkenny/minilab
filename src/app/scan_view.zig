@@ -924,7 +924,7 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
     switch (builtin.os.tag) {
         .windows => {
             y += gui.lineAt(list, x, y, theme.text, "Scanner driver needed") + gui.px(group_gap);
-            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "Maker's TWAIN driver") + gui.px(scanner_gap);
+            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "Scanner's TWAIN driver") + gui.px(scanner_gap);
         },
         .macos => {
             y += gui.lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(scanner_gap);

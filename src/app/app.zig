@@ -18,6 +18,8 @@ const context = @import("context.zig");
 const scan_view = @import("scan_view.zig");
 const export_view = @import("export_view.zig");
 const looks_view = @import("looks_view.zig");
+const update_view = @import("update_view.zig");
+const update_worker = @import("update_worker.zig");
 const version = @import("../version.zig");
 
 pub const Workspace = context.Workspace;
@@ -79,7 +81,9 @@ const library_check_ms = 2000;
 
 const Notice = context.Notice;
 
-pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
+/// Runs the app until it's closed. After an update, returns the program's folder, for the new
+/// version to start from there.
+pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
     var window: Window = try .open("minilab", start_width, start_height, options.screenshot != null);
     defer window.close();
     gui.scale = window.scale;
@@ -93,6 +97,9 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     };
     defer app.deinit(gpa, io, window.gpu);
     try app.openAtStart(gpa, io, options);
+    // A screenshot run doesn't look for updates.
+    app.updates = if (options.screenshot == null) update_worker.Worker.start(gpa, io) else null;
+    defer if (app.updates) |worker| worker.stop();
 
     var frames_drawn: usize = 0;
     var loaded_frames: usize = 0;
@@ -122,6 +129,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         app.library.work(gpa, io, window.gpu);
         if (app.library.wanted.items.len > 0 or app.notice.text() != null) window.keepBusy();
         if (app.workspace == .looks and app.looks.rendering()) window.keepBusy();
+        if (app.updates) |worker| if (worker.phase.load(.acquire) == .downloading) window.keepBusy();
+        if (app.restart) window.close_asked = true;
 
         frames_drawn += 1;
         const background: [4]f32 = .{ theme.page.x, theme.page.y, theme.page.z, 1 };
@@ -129,7 +138,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
             loaded_frames = if (complete and app.settled()) loaded_frames + 1 else 0;
             if ((frames_drawn >= screenshot_frames and loaded_frames >= screenshot_loaded_frames) or frames_drawn == screenshot_frames_max) {
                 try window.capture(background, path);
-                return;
+                return null;
             }
             c.ImGui_Render();
             app.library.releaseRetired(window.gpu);
@@ -138,6 +147,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         window.endFrame(background);
         app.library.releaseRetired(window.gpu);
     }
+    if (app.restart) return try gpa.dupe(u8, app.updates.?.folder);
+    return null;
 }
 
 /// What the app keeps from frame to frame: the library, each workspace's state, and what's
@@ -153,6 +164,11 @@ const App = struct {
     workspace: Workspace,
     panels: Panels = .all,
     show_help: bool,
+    /// Looks for an update, and installs one.
+    updates: ?*update_worker.Worker = null,
+    update_window: update_view.State = .{},
+    /// Set once an update is installed, to close and start the new version.
+    restart: bool = false,
 
     fn deinit(app: *App, gpa: std.mem.Allocator, io: std.Io, gpu: *c.SDL_GPUDevice) void {
         app.develop.save(io, &app.library);
@@ -222,7 +238,11 @@ const App = struct {
         _ = c.ImGui_Begin("minilab", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
         c.ImGui_PopStyleVar();
         defer c.ImGui_End();
-        if (app.panels != .viewer) drawHeader(&app.workspace, &app.notice, &app.library, &app.develop, scan_view.status(&app.scan));
+        if (app.panels != .viewer and drawHeader(&app.workspace, &app.notice, &app.library, &app.develop, scan_view.status(&app.scan), update_view.headerLabel(app.updates))) app.update_window.open = true;
+        // A scan or an export running would be cut short by restarting into an update.
+        if (app.updates) |worker| {
+            if (update_view.draw(&app.update_window, worker, ctx, app.scan.scanning or app.exporting.running != null)) app.restart = true;
+        }
         // When an export finishes, the user hears about it whichever workspace they're in.
         app.exporting.poll(ctx);
         // Each workspace gets its own ID space. Develop and Export both have "settings" panels,
@@ -312,7 +332,9 @@ fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *de
     for (paths) |path| develop.openLoose(gpa, io, library, path) catch |err| std.log.err("can't open {s}: {t}", .{ path, err });
 }
 
-fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Library, develop: *const develop_view.State, scanner: @TypeOf(scan_view.status(undefined))) void {
+/// Draws the header. Returns true when the update notice, `update`, was clicked.
+fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Library, develop: *const develop_view.State, scanner: @TypeOf(scan_view.status(undefined)), update: ?[:0]const u8) bool {
+    var update_clicked = false;
     const origin = c.ImGui_GetCursorScreenPos();
     const width = c.ImGui_GetContentRegionAvail().x;
     const height = gui.px(header.height);
@@ -366,6 +388,16 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     c.ImDrawList_AddText(list, gui.vec2(right, middle - scanner_size.y / 2), theme.imU32(theme.text_secondary), scanner_text);
     c.ImDrawList_AddCircleFilled(list, gui.vec2(right - gui.px(header.dot_gap + header.dot_radius), middle), gui.px(header.dot_radius), theme.imU32(if (scanner.ready) theme.ready else theme.text_tertiary), header.dot_segments);
     right -= gui.px(header.dot_gap + 2 * header.dot_radius + header.padding);
+    if (update) |label| {
+        const size = c.ImGui_CalcTextSize(label);
+        right -= size.x;
+        const corner = gui.vec2(right, middle - size.y / 2);
+        c.ImGui_SetCursorScreenPos(corner);
+        update_clicked = c.ImGui_InvisibleButton("update", size, 0);
+        const ink = if (c.ImGui_IsItemHovered(0)) theme.text else theme.accent;
+        c.ImDrawList_AddText(list, corner, theme.imU32(ink), label);
+        right -= gui.px(header.padding);
+    }
     if (workspace.* != .rolls) {
         if (develop.rollIndex(library)) |r| {
             const info = library.rolls.items[r].info;
@@ -383,6 +415,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
         c.ImDrawList_AddText(list, gui.vec2(right - size.x, middle - size.y / 2), theme.imU32(theme.accent), shown);
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + height));
+    return update_clicked;
 }
 
 /// Draws the app's mark, the icon's film strip, 20 pixels square at `corner`.

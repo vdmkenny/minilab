@@ -50,6 +50,17 @@ xattr -dr com.apple.quarantine .
 
 `minilab --version` tells you which version you have.
 
+### Updates
+
+The release builds look for a new version on GitHub each time they start, in the background.
+When there is one, the header says Update and its version. Click it to see what's new, then
+Update and restart: minilab downloads the new build, checks it against the release's checksums
+and GitHub's attestation that minilab's release workflow built it, swaps it in and starts again.
+If minilab's folder isn't writable, it offers the download instead. If macOS won't open the new
+version, the update window has the `xattr` command for your folder, ready to copy.
+
+Builds you make yourself don't look for updates.
+
 ## Building it yourself
 
 You need Zig 0.17. Then:

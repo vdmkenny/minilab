@@ -770,6 +770,26 @@ repository; the build fetches them.
 - **Platforms.** Each release has builds for macOS, Linux and Windows, each on x86-64 and Arm,
   made by GitHub Actions. CI runs the tests on Linux, macOS and Windows. Scanning on Windows can
   only be tried on a Windows machine with a scanner.
+- **Updates.** Release builds (`-Dupdates`, which `release.yml` sets) ask GitHub's API for the
+  latest release when they start, on a thread of their own (`src/app/update_worker.zig`), and say
+  nothing if there's no connection. Installing (`src/update/root.zig`) downloads the platform's
+  archive and only uses it if its SHA-256 matches the release's checksums file and GitHub's
+  attestation for it verifies (`src/update/sigstore.zig`). That means:
+  - the in-toto statement names the archive and its digest;
+  - its signature verifies with the attestation's certificate;
+  - the certificate chains to Fulcio's root at the time Rekor logged it, and names
+    `release.yml` on main, issued through GitHub Actions' tokens;
+  - Rekor's signed entry timestamp, inclusion proof and signed checkpoint all verify.
+
+  Sigstore's trusted root is in `src/update/trusted_root.json`, from `gh attestation
+  trusted-root`, and needs refreshing when Sigstore changes its keys. Only Rekor's original log is
+  handled; if GitHub's attestations move to Rekor v2, updates refuse to install until the verifier
+  reads those too ([#47](https://github.com/vdmkenny/minilab/issues/47)).
+- **Installing an update** renames each of the archive's top-level files into the program's
+  folder, and the old ones into `.previous`, which the next start deletes. Renaming a running
+  program works on every system. The app then closes as usual and starts the new program with the
+  same arguments: in place of itself on macOS and Linux, as a new process on Windows. Only macOS
+  has been tried end to end ([#48](https://github.com/vdmkenny/minilab/issues/48)).
 - **Tests**, in `test` blocks next to the code:
   - the pipeline against the formulas: the inversion model against the equations in section 7,
     worked out by hand for a few pixels;
