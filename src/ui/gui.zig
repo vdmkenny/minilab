@@ -259,6 +259,8 @@ pub const track_rounding = 2;
 const segmented_padding = 2;
 const segmented_height = 26;
 const segmented_label_padding = 10;
+/// A segmented box's height, with its border.
+pub const segmented_box_height = segmented_height + 2 * segmented_padding + 2 * border;
 
 /// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
 /// Negative / Positive. Returns the one that was clicked.
