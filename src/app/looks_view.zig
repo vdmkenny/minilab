@@ -63,6 +63,90 @@ const figure_ratio = 2.0 / 3.0;
 /// The figures' images are at most this many pixels across.
 const view_longest = 640;
 
+/// A one-pixel border, which isn't scaled.
+const border = 1;
+/// The list of looks: an item's padding, the gap between its two lines and between items, the
+/// space around a group's heading, and the add buttons with their plus sign.
+const item_padding_x = 10;
+const item_padding_y = 8;
+const item_line_gap = 1;
+const item_gap = 6;
+const heading_gap = 8;
+const add_height = 32;
+const add_icon = 12;
+const add_icon_gap = 6;
+const add_plus_arm = 4.5;
+const add_plus_thickness = 1.6;
+/// The look's header: the gap under its title, and the status badge beside it.
+const title_gap = 4;
+const badge = struct {
+    const gap = 10;
+    const drop = 4.5;
+    const padding_x = 8;
+    const padding_y = 1;
+    const rounding = 10;
+};
+/// The gap between the page's sections, and above the Use button.
+const section_gap = 14;
+const use_gap = 10;
+/// A collection's rows of credits, and the previews: the gap under the line that says what they
+/// show, under each tile's caption, and under a film's heading.
+const pack_row_gap = 4;
+const intro_gap = 10;
+const caption_gap = 6;
+const film_heading_gap = 6;
+/// The outline around a preview tile: thicker for the frame's look than on hover.
+const current_outline = 2;
+const hover_outline = 1;
+/// The references bar: its height, its gaps, and the drop-down's padding and room for its arrow.
+const bar_height = 32;
+const bar_gap = 10;
+const combo_padding = 8;
+const combo_arrow_room = 30;
+/// The pairs table's cell padding and corners.
+const cell_padding_x = 12;
+const cell_padding_y = 8;
+const table_rounding = 6;
+/// The model panel: the gap between its blocks and between its options, an option's check box
+/// and the gap after it, a stage's dot, and the buttons at the bottom.
+const block_gap = 12;
+const option_gap = 8;
+const option_box = 13;
+const option_box_drop = 3;
+const option_text_gap = 8;
+const stage_dot = 2.5;
+const stage_dot_segments = 12;
+const fit_height = 40;
+const save_height = 34;
+const button_gap = 8;
+/// The density matrix's gaps and cell padding, and the box of held-out figures.
+const matrix_gap = 4;
+const matrix_padding = 6;
+const measures_padding = 10;
+const measures_row_gap = 6;
+const note_gap = 6;
+/// The chart, in the design's units: 300 × 180, scaled to the panel's width. The plot's edges,
+/// its strokes, the identity line's dashes, how many points Neutral's curve is drawn with, and
+/// where its labels go.
+const chart_design = struct {
+    const width = 300;
+    const height = 180;
+    const left = 30;
+    const right = 290;
+    const top = 10;
+    const bottom = 160;
+    const stroke = 1.5;
+    const dash = 4;
+    const neutral_points = 65;
+    const x_label = [2]f32{ 160, 176 };
+    const y_label = [2]f32{ 12, 90 };
+    const label_left = 40;
+    const label_right = 286;
+    const label_top = 24;
+};
+/// How far the baseline sits below the top of a line, as a share of the font size.
+const ascent_share = 0.78;
+
 /// A registration at least this good counts as lined up, and one below the second value as not
 /// lined up.
 const aligned_quality = 0.8;
@@ -1000,7 +1084,7 @@ fn drawList(state: *State, ctx: context.Context) void {
 
     // In groups, the same as Develop's Look menu.
     y = groupHeading(list, origin.x, y, origin.y, "BUILT IN");
-    const item_height = gui.px(8 + 8 + 1) + gui.lineFor(fonts.ui_size) + gui.lineFor(fonts.small_size) + 2;
+    const item_height = gui.px(2 * item_padding_y + item_line_gap) + gui.lineFor(fonts.ui_size) + gui.lineFor(fonts.small_size) + 2 * border;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
         .{ .neutral, "Neutral", "Inversion curve" },
         .{ .frontier, "Frontier emulation", "Color LUT, " ++ frontier_lut },
@@ -1009,7 +1093,7 @@ fn drawList(state: *State, ctx: context.Context) void {
         c.ImGui_PushIDInt(@intCast(i));
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, b[1], b[2], std.meta.eql(state.selected, b[0]))) select(state, b[0]);
         c.ImGui_PopID();
-        y += item_height + gui.px(6);
+        y += item_height + gui.px(item_gap);
     }
     y = groupHeading(list, origin.x, y, origin.y, "FILM LOOKS");
     const packs = comptime std.enums.values(bundled.Pack);
@@ -1019,7 +1103,7 @@ fn drawList(state: *State, ctx: context.Context) void {
         const source = gui.print("{d} looks · {s}", .{ packLooks(pack), info.licence });
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, info.name, source, std.meta.eql(state.selected, .{ .pack = pack }))) select(state, .{ .pack = pack });
         c.ImGui_PopID();
-        y += item_height + gui.px(6);
+        y += item_height + gui.px(item_gap);
     }
     if (state.imported.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "IMPORTED LUTS");
     for (state.imported.items, 0..) |*id, i| {
@@ -1034,7 +1118,7 @@ fn drawList(state: *State, ctx: context.Context) void {
         const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "Can't be read";
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), size, selected)) select(state, .{ .imported = i });
         c.ImGui_PopID();
-        y += item_height + gui.px(6);
+        y += item_height + gui.px(item_gap);
     }
     if (state.own.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "FITTED LOOKS");
     for (state.own.items, 0..) |*own, i| {
@@ -1046,14 +1130,14 @@ fn drawList(state: *State, ctx: context.Context) void {
         };
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, own.name, source, selected)) select(state, .{ .own = i });
         c.ImGui_PopID();
-        y += item_height + gui.px(6);
+        y += item_height + gui.px(item_gap);
     }
 
     // New look from references, and Import .cube.
-    y += gui.px(6);
-    const height = gui.px(32);
+    y += gui.px(item_gap);
+    const height = gui.px(add_height);
     if (addButton(list, gui.vec2(origin.x, y), width, height, "New look from references", "Fitted from pairs")) state.newLook(ctx);
-    y += height + gui.px(6);
+    y += height + gui.px(item_gap);
     if (addButton(list, gui.vec2(origin.x, y), width, height, "Import .cube LUT", "3D or 1D · sRGB or Rec. 709")) state.cube_dialog.show(ctx.gpa, ctx.io);
 }
 
@@ -1064,11 +1148,11 @@ fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: 
     c.ImGui_SetCursorScreenPos(at);
     const clicked = c.ImGui_InvisibleButton(label, gui.vec2(width, height), 0);
     const hovered = c.ImGui_IsItemHovered(0);
-    if (hovered) c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.control), gui.px(5), 0);
-    gui.dashedRoundedRect(list, at, far, theme.imU32(theme.border), gui.px(5));
+    if (hovered) c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.control), gui.px(gui.control_rounding), 0);
+    gui.dashedRoundedRect(list, at, far, theme.imU32(theme.border), gui.px(gui.control_rounding));
     const ink = if (hovered) theme.text else theme.text_secondary;
-    gui.plus(list, gui.vec2(at.x + gui.px(10 + 6), at.y + height / 2), gui.px(4.5), gui.px(1.6), ink);
-    gui.textIn(list, at.x + gui.px(10 + 12 + 6), at.y, height, ink, label);
+    gui.plus(list, gui.vec2(at.x + gui.px(item_padding_x + add_icon / 2), at.y + height / 2), gui.px(add_plus_arm), gui.px(add_plus_thickness), ink);
+    gui.textIn(list, at.x + gui.px(item_padding_x + add_icon + add_icon_gap), at.y, height, ink, label);
     if (hovered) c.ImGui_SetTooltip(tooltip);
     return clicked;
 }
@@ -1076,11 +1160,11 @@ fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: 
 /// Draws a group's heading in the list at `y`, with space above it unless it's at the top of the
 /// list (`first`). Returns the y below it.
 fn groupHeading(list: *c.ImDrawList, x: f32, y: f32, first: f32, label: []const u8) f32 {
-    const top = if (y > first) y + gui.px(8) else y;
+    const top = if (y > first) y + gui.px(heading_gap) else y;
     fonts.pushSized(.semibold, fonts.small_size);
     gui.textIn(list, x, top, gui.lineFor(fonts.small_size), theme.text_secondary, label);
     fonts.pop();
-    return top + gui.lineFor(fonts.small_size) + gui.px(8);
+    return top + gui.lineFor(fonts.small_size) + gui.px(heading_gap);
 }
 
 /// Draws one look in the list: its name and where it comes from. Returns true when it's clicked.
@@ -1090,20 +1174,20 @@ fn lookItem(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, name: []
     const hovered = c.ImGui_IsItemHovered(0);
     const far = gui.vec2(at.x + width, at.y + height);
     if (selected) {
-        c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.accent_fill), gui.px(5), 0);
-        c.ImDrawList_AddRectEx(list, at, far, theme.imU32(theme.accent), gui.px(5), 1, 0);
+        c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.accent_fill), gui.px(gui.control_rounding), 0);
+        c.ImDrawList_AddRectEx(list, at, far, theme.imU32(theme.accent), gui.px(gui.control_rounding), 1, 0);
     } else if (hovered) {
-        c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.raised), gui.px(5), 0);
+        c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.raised), gui.px(gui.control_rounding), 0);
     }
-    const x = at.x + gui.px(10) + 1;
-    var y = at.y + gui.px(8) + 1;
+    const x = at.x + gui.px(item_padding_x) + border;
+    var y = at.y + gui.px(item_padding_y) + border;
     // The design's medium weight. Semibold is the nearest weight the app has.
     fonts.push(.semibold);
-    gui.textIn(list, x, y, gui.lineFor(fonts.ui_size), theme.text, gui.elideEnd(name, width - gui.px(20) - 2));
+    gui.textIn(list, x, y, gui.lineFor(fonts.ui_size), theme.text, gui.elideEnd(name, width - gui.px(2 * item_padding_x) - 2 * border));
     fonts.pop();
-    y += gui.lineFor(fonts.ui_size) + gui.px(1);
+    y += gui.lineFor(fonts.ui_size) + gui.px(item_line_gap);
     fonts.pushSized(.regular, fonts.small_size);
-    gui.textIn(list, x, y, gui.lineFor(fonts.small_size), theme.text_tertiary, gui.elideEnd(source, width - gui.px(20) - 2));
+    gui.textIn(list, x, y, gui.lineFor(fonts.small_size), theme.text_tertiary, gui.elideEnd(source, width - gui.px(2 * item_padding_x) - 2 * border));
     fonts.pop();
     return clicked;
 }
@@ -1122,7 +1206,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
     const width = c.ImGui_GetContentRegionAvail().x;
     var y = origin.y;
 
-    const title: []const u8, const badge: []const u8, const description: []const u8 = switch (state.selected) {
+    const title: []const u8, const status: []const u8, const description: []const u8 = switch (state.selected) {
         .neutral => .{ "Neutral", "Built in", "minilab's inversion · film base, density matrix, inversion curve · no added color" },
         .frontier => .{ "Frontier emulation", "Built in", "Fujifilm Frontier color, over Neutral" },
         .pack => |p| .{ p.info().name, "Film looks", p.info().about },
@@ -1151,26 +1235,26 @@ fn drawMain(state: *State, ctx: context.Context) void {
         drawRename(state, ctx);
     }
     fonts.pushSized(.regular, fonts.small_size);
-    const badge_width = textWidth(badge) + gui.px(16) + 2;
-    const badge_min = gui.vec2(origin.x + title_width + gui.px(10), y + gui.px(4.5));
-    const badge_max = gui.vec2(badge_min.x + badge_width, badge_min.y + gui.lineFor(fonts.small_size) + gui.px(2) + 2);
-    c.ImDrawList_AddRectEx(list, badge_min, badge_max, theme.imU32(theme.border), gui.px(10), 1, 0);
-    gui.textIn(list, badge_min.x + gui.px(8) + 1, badge_min.y + gui.px(1) + 1, gui.lineFor(fonts.small_size), theme.text_secondary, badge);
+    const badge_width = textWidth(status) + gui.px(2 * badge.padding_x) + 2 * border;
+    const badge_min = gui.vec2(origin.x + title_width + gui.px(badge.gap), y + gui.px(badge.drop));
+    const badge_max = gui.vec2(badge_min.x + badge_width, badge_min.y + gui.lineFor(fonts.small_size) + gui.px(2 * badge.padding_y) + 2 * border);
+    c.ImDrawList_AddRectEx(list, badge_min, badge_max, theme.imU32(theme.border), gui.px(badge.rounding), 1, 0);
+    gui.textIn(list, badge_min.x + gui.px(badge.padding_x) + border, badge_min.y + gui.px(badge.padding_y) + border, gui.lineFor(fonts.small_size), theme.text_secondary, status);
     fonts.pop();
-    y += title_height + gui.px(4);
+    y += title_height + gui.px(title_gap);
     y += gui.paragraphAt(list, origin.x, y, width, theme.text_secondary, description);
 
     const look = switch (state.selected) {
         .own => |i| i,
         .pack => |p| {
-            y += gui.px(14);
+            y += gui.px(section_gap);
             y = drawPack(list, gui.vec2(origin.x, y), width, p);
-            y += gui.px(14);
+            y += gui.px(section_gap);
             _ = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             return;
         },
         .imported => |i| {
-            y += gui.px(14);
+            y += gui.px(section_gap);
             y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
             if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
@@ -1178,7 +1262,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
             return;
         },
         .neutral, .frontier => {
-            y += gui.px(14);
+            y += gui.px(section_gap);
             y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
             return;
@@ -1187,14 +1271,14 @@ fn drawMain(state: *State, ctx: context.Context) void {
     const own = &state.own.items[look];
     // A saved look can be used as it is. Drafts and fits that aren't saved yet can't.
     if (own.saved) if (minilab.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| {
-        y += gui.px(10);
+        y += gui.px(use_gap);
         y = drawUseButton(ctx, gui.vec2(origin.x, y), id);
     } else |_| {};
-    y += gui.px(14);
+    y += gui.px(section_gap);
     y = drawReferences(state, ctx, own, look, gui.vec2(origin.x, y));
-    y += gui.px(14);
+    y += gui.px(section_gap);
     y = drawTable(state, ctx, own, gui.vec2(origin.x, y), width);
-    y += gui.px(14);
+    y += gui.px(section_gap);
     drawFigures(state, own, gui.vec2(origin.x, y), width);
 }
 
@@ -1219,7 +1303,7 @@ fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f
     for (rows) |row| {
         gui.textIn(list, at.x, y, gui.lineFor(fonts.ui_size), theme.text_secondary, row[0]);
         y += @max(gui.lineFor(fonts.ui_size), gui.paragraphAt(list, at.x + label_width, y + (gui.lineFor(fonts.ui_size) - gui.lineHeight()) / 2, width - label_width, theme.text, row[1]));
-        y += gui.px(4);
+        y += gui.px(pack_row_gap);
     }
     return y;
 }
@@ -1249,12 +1333,12 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     const where = if (ctx.develop.rollIndex(ctx.library)) |r| gui.print("{s} of {s}", .{ frame.name, ctx.library.rolls.items[r].info.name }) else frame.name;
     const intro = if (pack) gui.print("On {s} · Develop's settings", .{where}) else gui.print("On {s} · Develop's settings", .{where});
     y += gui.paragraphAt(list, at.x, y, width, theme.text_secondary, intro);
-    y += gui.px(10);
+    y += gui.px(intro_gap);
 
     const small = previews.small.?;
     const aspect = @as(f32, @floatFromInt(small.height)) / @as(f32, @floatFromInt(small.width));
     const gap = gui.px(tile_gap);
-    const caption = gui.px(6) + gui.lineFor(fonts.ui_size);
+    const caption = gui.px(caption_gap) + gui.lineFor(fonts.ui_size);
     if (!pack) {
         // Neutral and the look, side by side, no taller than `preview_max_height`.
         var w = (width - gap) / 2;
@@ -1264,7 +1348,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
             const min = gui.vec2(at.x + (w + gap) * @as(f32, @floatFromInt(i)), y);
             _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), id.label(), false, false);
         }
-        y += h + caption + gui.px(10);
+        y += h + caption + gui.px(intro_gap);
         return y;
     }
 
@@ -1282,7 +1366,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         fonts.pushSized(.semibold, fonts.small_size);
         gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else "Neutral");
         fonts.pop();
-        y += gui.lineFor(fonts.small_size) + gui.px(6);
+        y += gui.lineFor(fonts.small_size) + gui.px(film_heading_gap);
         for (from..to) |i| {
             const column: f32 = @floatFromInt((i - from) % columns);
             const row: f32 = @floatFromInt((i - from) / columns);
@@ -1294,7 +1378,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
             c.ImGui_PopID();
         }
         const rows = (to - from + columns - 1) / columns;
-        y += (h + caption + gap) * @as(f32, @floatFromInt(rows)) + gui.px(6);
+        y += (h + caption + gap) * @as(f32, @floatFromInt(rows)) + gui.px(film_heading_gap);
         from = to;
     }
     return y;
@@ -1327,7 +1411,7 @@ fn drawUseButton(ctx: context.Context, at: gui.Vec2, look_id: ?minilab.look.Id) 
 /// Draws a look's preview in `min`..`max`, with its name underneath, outlined when it's the
 /// frame's look. Returns true when it's clicked, if `clickable`.
 fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Texture, name: []const u8, current: bool, clickable: bool) bool {
-    const caption_top = max.y + gui.px(6);
+    const caption_top = max.y + gui.px(caption_gap);
     var clicked = false;
     var hovered = false;
     if (clickable) {
@@ -1335,11 +1419,11 @@ fn previewTile(list: *c.ImDrawList, min: gui.Vec2, max: gui.Vec2, texture: ?Text
         clicked = c.ImGui_InvisibleButton("tile", gui.vec2(max.x - min.x, caption_top + gui.lineFor(fonts.ui_size) - min.y), 0);
         hovered = c.ImGui_IsItemHovered(0);
     }
-    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(3), 0);
-    if (texture) |t| gui.imageCover(list, t.ref(), t.width, t.height, min, max, gui.px(3));
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(gui.box_rounding), 0);
+    if (texture) |t| gui.imageCover(list, t.ref(), t.width, t.height, min, max, gui.px(gui.box_rounding));
     if (current or hovered) {
-        const outline = gui.px(if (current) 2 else 1);
-        c.ImDrawList_AddRectEx(list, gui.vec2(min.x - outline, min.y - outline), gui.vec2(max.x + outline, max.y + outline), theme.imU32(if (current) theme.accent else theme.border), gui.px(4), outline, 0);
+        const outline = gui.px(if (current) current_outline else hover_outline);
+        c.ImDrawList_AddRectEx(list, gui.vec2(min.x - outline, min.y - outline), gui.vec2(max.x + outline, max.y + outline), theme.imU32(if (current) theme.accent else theme.border), gui.px(gui.choice_rounding), outline, 0);
     }
     gui.textIn(list, min.x, caption_top, gui.lineFor(fonts.ui_size), if (current) theme.text else theme.text_secondary, gui.elideEnd(name, max.x - min.x));
     return clicked;
@@ -1367,11 +1451,11 @@ fn drawRename(state: *State, ctx: context.Context) void {
 /// Draws the references section: where they come from, Add pairs, and the count. Returns the y
 /// below.
 fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, at: gui.Vec2) f32 {
-    const height = gui.px(32);
+    const height = gui.px(bar_height);
     const list = c.ImGui_GetWindowDrawList();
     var x = at.x;
     gui.textIn(list, x, at.y, height, theme.text_secondary, "References");
-    x += textWidth("References") + gui.px(10);
+    x += textWidth("References") + gui.px(bar_gap);
 
     const sources = comptime std.enums.values(draft.Source);
     var names: [sources.len][]const u8 = undefined;
@@ -1380,26 +1464,26 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
         n.* = s.label();
         widest = @max(widest, textWidth(n.*));
     }
-    const combo_width = widest + gui.px(8 + 30);
+    const combo_width = widest + gui.px(combo_padding + combo_arrow_room);
     c.ImGui_SetCursorScreenPos(gui.vec2(x, at.y));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (height - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(combo_padding), (height - c.ImGui_GetFontSize()) / 2));
     if (gui.combo("references", &names, gui.indexIn(draft.Source, sources, own.references), combo_width / gui.scale)) |picked| {
         own.references = sources[picked];
         own.save(ctx);
     }
     c.ImGui_PopStyleVar();
-    x += combo_width + gui.px(10);
+    x += combo_width + gui.px(bar_gap);
 
     c.ImGui_SetCursorScreenPos(gui.vec2(x, at.y));
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(12), (height - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(gui.button_padding), (height - c.ImGui_GetFontSize()) / 2));
     c.ImGui_BeginDisabled(state.running != null);
-    if (gui.buttonOf(.normal, "Add pairs", gui.vec2(0, 32))) state.dialog.show(ctx.gpa, ctx.io);
+    if (gui.buttonOf(.normal, "Add pairs", gui.vec2(0, bar_height))) state.dialog.show(ctx.gpa, ctx.io);
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
         c.ImGui_SetTooltip("References (JPEG, TIFF) · with our scans (PPM)");
     }
-    x = c.ImGui_GetItemRectMax().x + gui.px(10);
+    x = c.ImGui_GetItemRectMax().x + gui.px(bar_gap);
 
     const n = own.pairs.items.len;
     const running = if (state.running) |r| (if (r.look == look) r else null) else null;
@@ -1458,14 +1542,14 @@ const Column = enum {
 fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, available: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     const n = own.pairs.items.len;
-    const header_height = gui.px(16) + gui.lineFor(fonts.small_size) + 1;
-    const row_height = gui.px(16) + gui.lineFor(fonts.ui_size) + 1;
+    const header_height = gui.px(2 * cell_padding_y) + gui.lineFor(fonts.small_size) + border;
+    const row_height = gui.px(2 * cell_padding_y) + gui.lineFor(fonts.ui_size) + border;
     const width = @max(available, gui.px(table_min_width));
-    const height = header_height + row_height * @as(f32, @floatFromInt(n)) + 2;
+    const height = header_height + row_height * @as(f32, @floatFromInt(n)) + 2 * border;
     const far = gui.vec2(at.x + width, at.y + height);
     // With no pairs, there's a row for the hint.
     const box_height = if (n == 0) height + row_height else height;
-    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.panel), gui.px(6), 0);
+    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.panel), gui.px(table_rounding), 0);
 
     // Column widths work like a browser's automatic table layout: each column gets its widest
     // content, then the room that's left is shared out in proportion.
@@ -1481,33 +1565,33 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
     };
     var total: f32 = 0;
     for (&widths.values) |*w| {
-        w.* += gui.px(24);
+        w.* += gui.px(2 * cell_padding_x);
         total += w.*;
     }
-    const room = width - 2 - total;
+    const room = width - 2 * border - total;
     for (&widths.values) |*w| w.* += room * w.* / total;
 
     // The header, in the design's medium weight.
     fonts.pushSized(.semibold, fonts.small_size);
-    var x = at.x + 1;
+    var x = at.x + border;
     for (columns) |column| {
-        gui.textIn(list, x + gui.px(12), at.y + 1 + gui.px(8), gui.lineFor(fonts.small_size), theme.text_secondary, column.header(own));
+        gui.textIn(list, x + gui.px(cell_padding_x), at.y + border + gui.px(cell_padding_y), gui.lineFor(fonts.small_size), theme.text_secondary, column.header(own));
         x += widths.get(column);
     }
     fonts.pop();
-    c.ImDrawList_AddLine(list, gui.vec2(at.x + 1, at.y + 1 + header_height - 0.5), gui.vec2(far.x - 1, at.y + 1 + header_height - 0.5), theme.imU32(theme.divider));
+    c.ImDrawList_AddLine(list, gui.vec2(at.x + border, at.y + border + header_height - 0.5), gui.vec2(far.x - border, at.y + border + header_height - 0.5), theme.imU32(theme.divider));
 
     // The rows.
     var remove: ?usize = null;
     for (own.pairs.items, 0..) |*p, i| {
-        const top = at.y + 1 + header_height + row_height * @as(f32, @floatFromInt(i));
-        const row_min = gui.vec2(at.x + 1, top);
-        const row_max = gui.vec2(far.x - 1, top + row_height);
+        const top = at.y + border + header_height + row_height * @as(f32, @floatFromInt(i));
+        const row_min = gui.vec2(at.x + border, top);
+        const row_max = gui.vec2(far.x - border, top + row_height);
         c.ImGui_PushIDInt(@intCast(i));
         defer c.ImGui_PopID();
 
         // The Use cell toggles, and the rest of the row selects the pair.
-        const use_x = far.x - 1 - widths.get(.use);
+        const use_x = far.x - border - widths.get(.use);
         c.ImGui_SetCursorScreenPos(row_min);
         if (c.ImGui_InvisibleButton("row", gui.vec2(use_x - row_min.x, row_height), 0)) state.pair = i;
         const row_hovered = c.ImGui_IsItemHovered(0);
@@ -1530,11 +1614,11 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         }
         if (i + 1 < n) c.ImDrawList_AddLine(list, gui.vec2(row_min.x, row_max.y - 0.5), gui.vec2(row_max.x, row_max.y - 0.5), theme.imU32(theme.raised));
 
-        const text_top = top + gui.px(8);
-        x = at.x + 1;
+        const text_top = top + gui.px(cell_padding_y);
+        x = at.x + border;
         for (columns) |column| {
             const w = widths.get(column);
-            const room_in_cell = w - gui.px(24);
+            const room_in_cell = w - gui.px(2 * cell_padding_x);
             const value = column.text(own, i);
             // File names lose their start, which says the least, and the rest lose their end.
             const shown = switch (column) {
@@ -1548,7 +1632,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
                 .theirs, .stock, .registration => theme.text_secondary,
             };
             if (column.mono()) fonts.pushSized(.mono, fonts.small_size);
-            gui.textIn(list, x + gui.px(12), text_top, gui.lineFor(fonts.ui_size), ink, shown);
+            gui.textIn(list, x + gui.px(cell_padding_x), text_top, gui.lineFor(fonts.ui_size), ink, shown);
             if (column.mono()) fonts.pop();
             x += w;
         }
@@ -1568,9 +1652,9 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         }
     }
     if (n == 0) {
-        gui.textIn(list, at.x + 1 + gui.px(12), at.y + 1 + header_height + gui.px(8), gui.lineFor(fonts.ui_size), theme.text_tertiary, "No pairs");
+        gui.textIn(list, at.x + border + gui.px(cell_padding_x), at.y + border + header_height + gui.px(cell_padding_y), gui.lineFor(fonts.ui_size), theme.text_tertiary, "No pairs");
     }
-    c.ImDrawList_AddRectEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.divider), gui.px(6), 1, 0);
+    c.ImDrawList_AddRectEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.divider), gui.px(table_rounding), 1, 0);
     c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + box_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
     if (remove) |i| {
@@ -1618,19 +1702,19 @@ fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
         const min = gui.vec2(at.x + (figure_width + gap) * @as(f32, @floatFromInt(i)), at.y);
         const max = gui.vec2(min.x + figure_width, min.y + figure_height);
         if (texture) |t| {
-            c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(3), 0);
-            gui.imageCover(list, t.ref(), t.width, t.height, min, max, gui.px(3));
+            c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(gui.box_rounding), 0);
+            gui.imageCover(list, t.ref(), t.width, t.height, min, max, gui.px(gui.box_rounding));
         } else {
-            c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(3), 0);
+            c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.raised), gui.px(gui.box_rounding), 0);
             if (i == 2) {
                 const placeholder = if (own.result != null and !aligned) "[Not aligned yet]" else "[Difference map after fitting]";
                 const size = c.ImGui_CalcTextSize(gui.print("{s}", .{placeholder}));
                 gui.textIn(list, (min.x + max.x - size.x) / 2, (min.y + max.y) / 2 - gui.lineFor(fonts.ui_size) / 2, gui.lineFor(fonts.ui_size), theme.text_tertiary, placeholder);
             }
         }
-        gui.textIn(list, min.x, max.y + gui.px(6), gui.lineFor(fonts.ui_size), theme.text_secondary, gui.elideEnd(caption, figure_width));
+        gui.textIn(list, min.x, max.y + gui.px(caption_gap), gui.lineFor(fonts.ui_size), theme.text_secondary, gui.elideEnd(caption, figure_width));
     }
-    c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + figure_height + gui.px(6) + gui.lineFor(fonts.ui_size)));
+    c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + figure_height + gui.px(caption_gap) + gui.lineFor(fonts.ui_size)));
     c.ImGui_Dummy(gui.vec2(0, 0));
 }
 
@@ -1644,7 +1728,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
     fonts.pushSized(.semibold, fonts.small_size);
     gui.textIn(list, origin.x, y, gui.lineFor(fonts.small_size), theme.text_secondary, "MODEL");
     fonts.pop();
-    y += gui.lineFor(fonts.small_size) + gui.px(12);
+    y += gui.lineFor(fonts.small_size) + gui.px(block_gap);
 
     const look = switch (state.selected) {
         .own => |i| i,
@@ -1654,7 +1738,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
                 .{ "Density matrix", "3 × 3, for crosstalk between channels" },
                 .{ "Inversion curve", "Contrast, black and highlight roll-off" },
             });
-            y += gui.px(12);
+            y += gui.px(block_gap);
             y = drawChart(list, gui.vec2(origin.x, y), width, .neutral);
             return;
         },
@@ -1693,7 +1777,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
         .{ &own.options.lut, "3D LUT for what's left", lutNote(own) },
     };
     for (options, 0..) |option, i| {
-        if (i > 0) y += gui.px(8);
+        if (i > 0) y += gui.px(option_gap);
         c.ImGui_PushIDInt(@intCast(i));
         if (modelOption(list, gui.vec2(origin.x, y), width, option[0], option[1], option[2], busy)) |h| {
             own.changed();
@@ -1702,31 +1786,31 @@ fn drawModel(state: *State, ctx: context.Context) void {
         } else y += optionHeight(width, option[2]);
         c.ImGui_PopID();
     }
-    y += gui.px(12);
+    y += gui.px(block_gap);
 
     const result: ?*const fit.Result = if (own.result) |*r| r else null;
     y = drawChart(list, gui.vec2(origin.x, y), width, if (result) |r| .{ .fitted = &r.model.curves } else .identity);
-    y += gui.px(12);
+    y += gui.px(block_gap);
     y = drawMatrix(list, gui.vec2(origin.x, y), width, if (result) |r| r.model.matrix else model.identity_matrix);
-    y += gui.px(12);
+    y += gui.px(block_gap);
     _ = drawMeasures(list, gui.vec2(origin.x, y), width, own);
 
     // The buttons at the bottom.
     const bottom = c.ImGui_GetWindowPos().y + c.ImGui_GetWindowHeight() - gui.px(model_padding);
-    const save_top = bottom - gui.px(34);
-    const fit_top = save_top - gui.px(8 + 40);
+    const save_top = bottom - gui.px(save_height);
+    const fit_top = save_top - gui.px(button_gap + fit_height);
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, fit_top));
     var fitted: usize = 0;
     for (own.pairs.items, own.readings.items) |p, reading| fitted += @intFromBool(!p.held_out and linedUp(p) and reading == .read);
     c.ImGui_BeginDisabled(busy or fitted == 0);
     const fitting = if (state.running) |r| r.job.task == .fit else false;
-    if (gui.buttonOf(.primary, if (fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, 40))) state.startFit(ctx, look);
+    if (gui.buttonOf(.primary, if (fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, fit_height))) state.startFit(ctx, look);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
         c.ImGui_SetTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, save_top));
-    if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, 34))) {
+    if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, save_height))) {
         if (result == null) ctx.notice.set("Nothing to save", .{}) else saveLook(ctx, own);
     }
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -1758,7 +1842,7 @@ fn lutNote(own: *const Own) []const u8 {
 
 /// The height of a model option `width` wide, with `note` wrapped under its name.
 fn optionHeight(width: f32, note: []const u8) f32 {
-    return gui.lineFor(fonts.ui_size) + gui.paragraphHeight(note, width - gui.px(13 + 8));
+    return gui.lineFor(fonts.ui_size) + gui.paragraphHeight(note, width - gui.px(option_box + option_text_gap));
 }
 
 /// Draws one of the model's choices: a check box, its name and a note under it. Returns its height
@@ -1772,11 +1856,11 @@ fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, na
     const hovered = c.ImGui_IsItemHovered(0);
     if (clicked) checked.* = !checked.*;
 
-    const box = gui.px(13);
-    gui.checkBox(list, gui.vec2(at.x, at.y + gui.px(3)), box, checked.*, hovered);
-    const x = at.x + box + gui.px(8);
+    const box = gui.px(option_box);
+    gui.checkBox(list, gui.vec2(at.x, at.y + gui.px(option_box_drop)), box, checked.*, hovered);
+    const x = at.x + box + gui.px(option_text_gap);
     gui.textIn(list, x, at.y, gui.lineFor(fonts.ui_size), theme.text, name);
-    _ = gui.paragraphAt(list, x, at.y + gui.lineFor(fonts.ui_size), width - box - gui.px(8), theme.text_tertiary, note);
+    _ = gui.paragraphAt(list, x, at.y + gui.lineFor(fonts.ui_size), width - box - gui.px(option_text_gap), theme.text_tertiary, note);
     return if (clicked) height else null;
 }
 
@@ -1785,13 +1869,13 @@ fn modelOption(list: *c.ImDrawList, at: gui.Vec2, width: f32, checked: *bool, na
 fn drawStages(list: *c.ImDrawList, at: gui.Vec2, width: f32, stages: []const [2][]const u8) f32 {
     var y = at.y;
     for (stages, 0..) |stage, i| {
-        if (i > 0) y += gui.px(8);
-        const box = gui.px(13);
-        c.ImDrawList_AddCircleFilled(list, gui.vec2(at.x + box / 2, y + gui.px(3) + box / 2), gui.px(2.5), theme.imU32(theme.text_tertiary), 12);
-        const x = at.x + box + gui.px(8);
+        if (i > 0) y += gui.px(option_gap);
+        const box = gui.px(option_box);
+        c.ImDrawList_AddCircleFilled(list, gui.vec2(at.x + box / 2, y + gui.px(option_box_drop) + box / 2), gui.px(stage_dot), theme.imU32(theme.text_tertiary), stage_dot_segments);
+        const x = at.x + box + gui.px(option_text_gap);
         gui.textIn(list, x, y, gui.lineFor(fonts.ui_size), theme.text, stage[0]);
         y += gui.lineFor(fonts.ui_size);
-        y += gui.paragraphAt(list, x, y, width - box - gui.px(8), theme.text_tertiary, stage[1]);
+        y += gui.paragraphAt(list, x, y, width - box - gui.px(option_text_gap), theme.text_tertiary, stage[1]);
     }
     return y;
 }
@@ -1814,24 +1898,24 @@ const Chart = union(enum) {
     }
 };
 
-/// Draws `chart` the way the design does: curves against density in, 300 × 180 units scaled to
-/// `width`. Returns the y below.
+/// Draws `chart` the way the design does: curves against density in, in `chart_design`'s units
+/// scaled to `width`. Returns the y below.
 fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
-    const k = width / 300;
-    const height = 180 * k;
+    const k = width / chart_design.width;
+    const height = chart_design.height * k;
     const p = struct {
         fn at_(o: gui.Vec2, scale: f32, x: f32, y: f32) gui.Vec2 {
             return gui.vec2(o.x + x * scale, o.y + y * scale);
         }
     }.at_;
-    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.histogram_ground), gui.px(4), 0);
+    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.histogram_ground), gui.px(gui.choice_rounding), 0);
     const axis = theme.imU32(theme.border);
-    c.ImDrawList_AddLineEx(list, p(at, k, 30, 10), p(at, k, 30, 160), axis, k);
-    c.ImDrawList_AddLineEx(list, p(at, k, 30, 160), p(at, k, 290, 160), axis, k);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.top), p(at, k, chart_design.left, chart_design.bottom), axis, k);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.bottom), axis, k);
 
     const plot = struct {
         fn point(o: gui.Vec2, scale: f32, x: f32, y: f32) gui.Vec2 {
-            return gui.vec2(o.x + (30 + 260 * x) * scale, o.y + (160 - 150 * std.math.clamp(y, 0, 1)) * scale);
+            return gui.vec2(o.x + (chart_design.left + (chart_design.right - chart_design.left) * x) * scale, o.y + (chart_design.bottom - (chart_design.bottom - chart_design.top) * std.math.clamp(y, 0, 1)) * scale);
         }
     }.point;
     switch (chart) {
@@ -1840,24 +1924,24 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
             for (cs, colours) |*cv, colour| {
                 var points: [curve.points]gui.Vec2 = undefined;
                 for (&points, cv, 0..) |*pt, v, i| pt.* = plot(at, k, @as(f32, @floatFromInt(i)) / (curve.points - 1), v);
-                c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(colour), 1.5 * k, 0);
+                c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(colour), chart_design.stroke * k, 0);
             }
         },
         .neutral => {
             // Neutral's inversion curve with Develop's default settings, and the film base at full
             // transmission.
             const prepared: minilab.develop.Prepared = .init(.{});
-            var points: [65]gui.Vec2 = undefined;
+            var points: [chart_design.neutral_points]gui.Vec2 = undefined;
             for (&points, 0..) |*pt, i| {
-                const x = @as(f32, @floatFromInt(i)) / 64;
+                const x = @as(f32, @floatFromInt(i)) / (chart_design.neutral_points - 1);
                 const t = std.math.pow(f32, 10, -x * (minilab.develop.Settings{}).density_range);
                 const raw: u16 = @intFromFloat(@round(t * minilab.image.full_scale));
                 const out = minilab.develop.pixel(prepared, .{ raw, raw, raw });
                 pt.* = plot(at, k, x, minilab.encode.srgb(out[1]));
             }
-            c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.text_secondary), 1.5 * k, 0);
+            c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.text_secondary), chart_design.stroke * k, 0);
         },
-        .identity => gui.dashedLine(list, p(at, k, 30, 160), p(at, k, 290, 10), theme.imU32(theme.text_tertiary), 1.5 * k, 4 * k, 4 * k),
+        .identity => gui.dashedLine(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.top), theme.imU32(theme.text_tertiary), chart_design.stroke * k, chart_design.dash * k, chart_design.dash * k),
     }
 
     fonts.pushSized(.mono, fonts.tiny_size * k);
@@ -1865,11 +1949,11 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     const baseline = ascent();
     const density_in = "density in";
     const size = c.ImGui_CalcTextSize(density_in);
-    c.ImDrawList_AddText(list, gui.vec2(at.x + 160 * k - size.x / 2, at.y + 176 * k - baseline), small, density_in);
+    c.ImDrawList_AddText(list, gui.vec2(at.x + chart_design.x_label[0] * k - size.x / 2, at.y + chart_design.x_label[1] * k - baseline), small, density_in);
     // The "out" label, turned to read upwards: it's drawn level, then its vertices are turned
     // around its anchor.
     const out_size = c.ImGui_CalcTextSize("out");
-    const anchor = p(at, k, 12, 90);
+    const anchor = p(at, k, chart_design.y_label[0], chart_design.y_label[1]);
     const first = list.*.VtxBuffer.Size;
     c.ImDrawList_AddText(list, gui.vec2(anchor.x - out_size.x / 2, anchor.y - baseline), small, "out");
     const vertices = list.*.VtxBuffer.Data;
@@ -1886,33 +1970,33 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     fonts.pushSized(.regular, fonts.caption_size * k);
     const label = gui.print("{s}", .{chart.label()});
     const label_size = c.ImGui_CalcTextSize(label);
-    const label_x = if (chart == .fitted) at.x + 40 * k else at.x + 286 * k - label_size.x;
-    c.ImDrawList_AddText(list, gui.vec2(label_x, at.y + 24 * k - ascent()), theme.imU32(theme.text_secondary), label);
+    const label_x = if (chart == .fitted) at.x + chart_design.label_left * k else at.x + chart_design.label_right * k - label_size.x;
+    c.ImDrawList_AddText(list, gui.vec2(label_x, at.y + chart_design.label_top * k - ascent()), theme.imU32(theme.text_secondary), label);
     fonts.pop();
     return at.y + height;
 }
 
 /// How far the baseline sits below the top of a line of text, so we can place text by its
-/// baseline the way SVG does. It's about 0.78 of the size for both fonts (ImGui's font data is
-/// opaque here).
+/// baseline the way SVG does. It's about `ascent_share` of the size for both fonts (ImGui's font
+/// data is opaque here).
 fn ascent() f32 {
-    return c.ImGui_GetFontSize() * 0.78;
+    return c.ImGui_GetFontSize() * ascent_share;
 }
 
 /// Draws the density matrix, three by three. Returns the y below.
 fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matrix) f32 {
-    const gap = gui.px(4);
+    const gap = gui.px(matrix_gap);
     const cell_width = (width - 2 * gap) / 3;
-    const cell_height = gui.px(12) + gui.lineFor(fonts.small_size);
+    const cell_height = gui.px(2 * matrix_padding) + gui.lineFor(fonts.small_size);
     fonts.pushSized(.mono, fonts.small_size);
     defer fonts.pop();
     for (matrix, 0..) |row, r| {
         for (row, 0..) |v, col| {
             const min = gui.vec2(at.x + (cell_width + gap) * @as(f32, @floatFromInt(col)), at.y + (cell_height + gap) * @as(f32, @floatFromInt(r)));
-            c.ImDrawList_AddRectFilledEx(list, min, gui.vec2(min.x + cell_width, min.y + cell_height), theme.imU32(theme.raised), gui.px(3), 0);
+            c.ImDrawList_AddRectFilledEx(list, min, gui.vec2(min.x + cell_width, min.y + cell_height), theme.imU32(theme.raised), gui.px(gui.box_rounding), 0);
             const shown = gui.formatSigned("{d:.3}", v);
             const size = c.ImGui_CalcTextSize(shown);
-            gui.textIn(list, min.x + (cell_width - size.x) / 2, min.y + gui.px(6), gui.lineFor(fonts.small_size), if (r == col) theme.text else theme.text_tertiary, shown);
+            gui.textIn(list, min.x + (cell_width - size.x) / 2, min.y + gui.px(matrix_padding), gui.lineFor(fonts.small_size), if (r == col) theme.text else theme.text_tertiary, shown);
         }
     }
     return at.y + 3 * cell_height + 2 * gap;
@@ -1927,22 +2011,22 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
             values = .{ gui.print("{d:.2}", .{m}), gui.print("{d:.2}", .{r.report.p95.?}) };
         } else values = .{ "no pair held out", "no pair held out" };
     }
-    const height = gui.px(20 + 6) + 2 * gui.lineFor(fonts.ui_size);
-    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.raised), gui.px(5), 0);
+    const height = gui.px(2 * measures_padding + measures_row_gap) + 2 * gui.lineFor(fonts.ui_size);
+    c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.raised), gui.px(gui.control_rounding), 0);
     for (rows, values, 0..) |label, value, i| {
-        const y = at.y + gui.px(10) + (gui.lineFor(fonts.ui_size) + gui.px(6)) * @as(f32, @floatFromInt(i));
-        gui.textIn(list, at.x + gui.px(10), y, gui.lineFor(fonts.ui_size), theme.text_secondary, label);
+        const y = at.y + gui.px(measures_padding) + (gui.lineFor(fonts.ui_size) + gui.px(measures_row_gap)) * @as(f32, @floatFromInt(i));
+        gui.textIn(list, at.x + gui.px(measures_padding), y, gui.lineFor(fonts.ui_size), theme.text_secondary, label);
         fonts.push(.mono);
         const w = textWidth(value);
-        gui.textIn(list, at.x + width - gui.px(10) - w, y, gui.lineFor(fonts.ui_size), theme.text, value);
+        gui.textIn(list, at.x + width - gui.px(measures_padding) - w, y, gui.lineFor(fonts.ui_size), theme.text, value);
         fonts.pop();
     }
     if (own.result) |r| {
         if (own.stale) {
-            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(6), width, theme.text_tertiary, "Out of date");
+            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(note_gap), width, theme.text_tertiary, "Out of date");
         } else {
             const note = gui.print("{d} {s} fitted · {d} held out · fitted median {d:.2}", .{ r.report.fitted_pairs, if (r.report.fitted_pairs == 1) "pair" else "pairs", r.report.held_out_pairs, r.report.fitted_median });
-            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(6), width, theme.text_tertiary, note);
+            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(note_gap), width, theme.text_tertiary, note);
         }
     }
     return at.y + height;
