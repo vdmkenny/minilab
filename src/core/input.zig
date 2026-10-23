@@ -333,13 +333,9 @@ test "a camera's white level becomes full scale" {
     try std.testing.expectEqual(@as([3]u16, @splat(image.full_scale)), scan.pixels[2]);
 }
 
-/// The environment variable that names a camera RAW file for the test below, which is skipped
-/// without it. It's the same one `raw.zig`'s test reads.
-const raw_sample_variable = "MINILAB_RAW_SAMPLE";
-
 test "a camera RAW file reads as a linear scan up to full scale" {
     const gpa = std.testing.allocator;
-    const path = std.testing.environ.getAlloc(gpa, raw_sample_variable) catch |err| switch (err) {
+    const path = std.testing.environ.getAlloc(gpa, raw.sample_variable) catch |err| switch (err) {
         error.EnvironmentVariableMissing => return error.SkipZigTest,
         else => return err,
     };

@@ -187,13 +187,16 @@ const OptionDescriptor = extern struct {
         return option.constraint.word_list[1 .. count + 1];
     }
 
+    /// The values of a string list, one by one. An option without one has none.
+    fn strings(option: *const OptionDescriptor) Strings {
+        return .{ .list = if (option.constraint_type == .string_list) option.constraint.string_list else null };
+    }
+
     /// Whether `value` is in the option's string list.
     fn allows(option: *const OptionDescriptor, value: []const u8) bool {
         if (option.constraint_type != .string_list) return true;
-        var i: usize = 0;
-        while (option.constraint.string_list[i]) |s| : (i += 1) {
-            if (std.mem.eql(u8, std.mem.span(s), value)) return true;
-        }
+        var each = option.strings();
+        while (each.next()) |s| if (std.mem.eql(u8, s, value)) return true;
         return false;
     }
 
@@ -205,6 +208,19 @@ const OptionDescriptor = extern struct {
     /// Turns `value` into a word of the option's own type.
     fn word(option: *const OptionDescriptor, value: f64) Word {
         return if (option.type == .fixed) fix(value) else @intFromFloat(@round(value));
+    }
+};
+
+/// The values of a SANE string list, one by one (`OptionDescriptor.strings`).
+const Strings = struct {
+    list: ?[*]const ?[*:0]const u8,
+    at: usize = 0,
+
+    fn next(each: *Strings) ?[]const u8 {
+        const list = each.list orelse return null;
+        const value = list[each.at] orelse return null;
+        each.at += 1;
+        return std.mem.span(value);
     }
 };
 
@@ -467,10 +483,8 @@ pub const Scanner = struct {
     /// option, or no source of that kind.
     fn selectSource(scanner: *Scanner, source: interface.Source) Error!bool {
         const found = scanner.find("source") orelse return false;
-        if (found.option.constraint_type != .string_list) return false;
-        var i: usize = 0;
-        while (found.option.constraint.string_list[i]) |s| : (i += 1) {
-            const name = std.mem.span(s);
+        var each = found.option.strings();
+        while (each.next()) |name| {
             if (interface.Source.classify(name) == source) return scanner.setString("source", name);
         }
         return false;
@@ -480,12 +494,8 @@ pub const Scanner = struct {
         var sources: std.EnumSet(interface.Source) = .empty;
         var current: interface.Source = .flatbed;
         if (scanner.find("source")) |found| {
-            if (found.option.constraint_type == .string_list) {
-                var i: usize = 0;
-                while (found.option.constraint.string_list[i]) |s| : (i += 1) {
-                    if (interface.Source.classify(std.mem.span(s))) |kind| sources.insert(kind);
-                }
-            }
+            var each = found.option.strings();
+            while (each.next()) |name| if (interface.Source.classify(name)) |kind| sources.insert(kind);
         }
         if (sources.count() == 0) sources.insert(.flatbed);
         if (wanted) |w| {
@@ -553,10 +563,8 @@ pub const Scanner = struct {
                 else => .other,
             };
             var choices: std.ArrayList([]const u8) = .empty;
-            if (option.constraint_type == .string_list) {
-                var k: usize = 0;
-                while (option.constraint.string_list[k]) |s| : (k += 1) try choices.append(arena, try arena.dupe(u8, std.mem.span(s)));
-            }
+            var each = option.strings();
+            while (each.next()) |s| try choices.append(arena, try arena.dupe(u8, s));
             const range: ?[2]f64 = if (option.constraint_type == .range) .{ option.number(option.constraint.range.min), option.number(option.constraint.range.max) } else null;
             try list.append(arena, .{ .name = try arena.dupe(u8, name), .kind = kind, .choices = choices.items, .range = range });
         }
@@ -604,12 +612,12 @@ pub const Scanner = struct {
     /// The value of the film option `name` for `film`, from its list of values.
     fn filmValue(scanner: *Scanner, name: []const u8, film: interface.Film) ?[]const u8 {
         const found = scanner.find(name) orelse return null;
-        if (found.option.constraint_type != .string_list) return null;
         var choices: [max_choices][]const u8 = undefined;
         var n: usize = 0;
-        while (found.option.constraint.string_list[n]) |s| : (n += 1) {
+        var each = found.option.strings();
+        while (each.next()) |s| : (n += 1) {
             if (n == choices.len) break;
-            choices[n] = std.mem.span(s);
+            choices[n] = s;
         }
         return interface.filmChoice(choices[0..n], film);
     }

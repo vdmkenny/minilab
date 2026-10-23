@@ -781,12 +781,17 @@ test "automatic settings stay finite when a channel's shadows read as the base" 
     try std.testing.expect(std.math.isFinite(blank.density_range));
 }
 
-test "a stock's curves open up the shadows its toe crushed" {
+/// Superia X-TRA 400's curves, in Status M, for the tests.
+fn superiaCurves() stock_curves.Curves {
     const stocks = @import("../presets/stocks.zig");
     const superia = for (stocks.stocks) |s| {
         if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
     } else unreachable;
-    const curves = stock_curves.of(superia, @splat(1)).?;
+    return stock_curves.of(superia, @splat(1)).?;
+}
+
+test "a stock's curves open up the shadows its toe crushed" {
+    const curves = superiaCurves();
     const base = [3]f32{ 0.4, 0.2, 0.12 };
     // Shadows 0.08 D above the base, highlights 1.6 D.
     var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
@@ -818,11 +823,7 @@ test "a stock's curves open up the shadows its toe crushed" {
 }
 
 test "a new stock measures the frame again and keeps the user's choices" {
-    const stocks = @import("../presets/stocks.zig");
-    const superia = for (stocks.stocks) |s| {
-        if (std.mem.eql(u8, s.name, "Fujifilm Superia X-TRA 400")) break s;
-    } else unreachable;
-    const curves = stock_curves.of(superia, @splat(1)).?;
+    const curves = superiaCurves();
     const base = [3]f32{ 0.4, 0.2, 0.12 };
     var stats: Statistics = .{ .thinnest = base, .densest = undefined, .shadows = undefined, .mean_log = undefined };
     for (&stats.densest, &stats.shadows, &stats.mean_log, base) |*dense, *shadow, *mean, b| {
