@@ -1154,9 +1154,22 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const toolbar_height = gui.px(gui.segmented_box_height + 2 * toolbar.padding_y) + 1;
     const info_height = gui.lineFor(fonts.small_size) + gui.px(2 * info_padding_y) + 1;
 
-    // The toolbar.
-    c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + size.x, origin.y + toolbar_height - 1), theme.imU32(theme.divider));
+    drawToolbar(state, gpa, io, library, list, origin, size.x, toolbar_height);
+    const info_top = origin.y + size.y - info_height;
+    drawInfoLine(state, io, library, roll_index, list, gui.vec2(origin.x, info_top), size.x, info_height);
+
+    // The frame.
+    const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
+    const area_max = gui.vec2(origin.x + size.x, info_top);
+    drawPicture(state, library, area_min, area_max);
+    drawLoupe(state, gpa, io, library, gpu, area_min, area_max);
+}
+
+/// Draws the viewer's toolbar, `height` high, across the top at `origin`: the comparison, the zoom,
+/// the overlays, the crop and turn tools, and the pipeline.
+fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, list: *c.ImDrawList, origin: gui.Vec2, width: f32, toolbar_height: f32) void {
+    c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + toolbar_height), theme.imU32(theme.page));
+    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + width, origin.y + toolbar_height - 1), theme.imU32(theme.divider));
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(toolbar.padding_x), origin.y + gui.px(toolbar.padding_y)));
     if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
@@ -1229,17 +1242,20 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const controls_end = c.ImGui_GetItemRectMax().x;
     fonts.pushSized(.mono, fonts.small_size);
     const pipeline_size = c.ImGui_CalcTextSize(pipeline);
-    const pipeline_x = origin.x + size.x - gui.px(toolbar.padding_x) - pipeline_size.x;
+    const pipeline_x = origin.x + width - gui.px(toolbar.padding_x) - pipeline_size.x;
     if (pipeline_x > controls_end + gui.px(toolbar.pipeline_room)) c.ImDrawList_AddText(list, gui.vec2(pipeline_x, origin.y + (toolbar_height - pipeline_size.y) / 2), theme.imU32(theme.text_tertiary), pipeline);
     fonts.pop();
+}
 
-    // The info line along the bottom.
-    const info_top = origin.y + size.y - info_height;
-    c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, origin.y + size.y), theme.imU32(theme.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, info_top), theme.imU32(theme.divider));
+/// Draws the info line, `info_height` high, across the bottom at `origin`: the frame's details on
+/// the left and its rating on the right.
+fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize, list: *c.ImDrawList, origin: gui.Vec2, width: f32, info_height: f32) void {
+    const info_top = origin.y;
+    c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top + info_height), theme.imU32(theme.page));
+    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top), theme.imU32(theme.divider));
     if (state.frame) |frame| {
         // The rating on the right, and the frame's details from the left up to it.
-        const limit = drawRating(state, io, library, list, origin.x + size.x - gui.px(toolbar.padding_x), info_top + info_height / 2);
+        const limit = drawRating(state, io, library, list, origin.x + width - gui.px(toolbar.padding_x), info_top + info_height / 2);
         fonts.pushSized(.mono, fonts.small_size);
         var x = origin.x + gui.px(toolbar.padding_x);
         const y = info_top + (info_height - c.ImGui_GetTextLineHeight()) / 2;
@@ -1259,19 +1275,13 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
             n += 1;
         }
         for (items[0..n]) |item| {
-            const width = c.ImGui_CalcTextSize(item).x;
-            if (x + width > limit) break;
+            const item_width = c.ImGui_CalcTextSize(item).x;
+            if (x + item_width > limit) break;
             c.ImDrawList_AddText(list, gui.vec2(x, y), theme.imU32(theme.text_tertiary), item);
-            x += width + gui.px(info_item_gap);
+            x += item_width + gui.px(info_item_gap);
         }
         fonts.pop();
     }
-
-    // The frame.
-    const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
-    const area_max = gui.vec2(origin.x + size.x, info_top);
-    drawPicture(state, library, area_min, area_max);
-    drawLoupe(state, gpa, io, library, gpu, area_min, area_max);
 }
 
 /// Draws the open frame's stars and its reject button, ending at `right` and centred on `middle`.
@@ -1329,40 +1339,71 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     const positive = state.positive orelse return;
     const negative = state.negative orelse return;
     const list = c.ImGui_GetWindowDrawList();
-    const width: f32 = @floatFromInt(positive.width);
-    const height: f32 = @floatFromInt(positive.height);
-    const room = gui.vec2(area_max.x - area_min.x - gui.px(2 * picture_margin_x), area_max.y - area_min.y - gui.px(2 * picture_margin_y));
-    if (room.x <= 0 or room.y <= 0) return;
-    const scale = switch (state.zoom) {
-        .fit => @min(room.x / width, room.y / height),
-        .actual => 1,
-    };
-    const shown = gui.vec2(width * scale, height * scale);
-    const centre = gui.vec2((area_min.x + area_max.x) / 2 + state.pan.x, (area_min.y + area_max.y) / 2 + state.pan.y);
-    const min = gui.vec2(centre.x - shown.x / 2, centre.y - shown.y / 2);
-    const max = gui.vec2(min.x + shown.x, min.y + shown.y);
+    const picture = PictureOnScreen.place(state, positive, area_min, area_max) orelse return;
 
     // Hit area: the whole viewer between the bars, for panning, picking and moving the split.
     c.ImGui_SetCursorScreenPos(area_min);
     _ = c.ImGui_InvisibleButton("picture", gui.vec2(area_max.x - area_min.x, area_max.y - area_min.y), 0);
     const hovered = c.ImGui_IsItemHovered(0);
     const active = c.ImGui_IsItemActive();
-    const mouse = c.ImGui_GetMousePos();
-    const inside = mouse.x >= min.x and mouse.x < max.x and mouse.y >= min.y and mouse.y < max.y;
-    const split_x = min.x + shown.x * state.split;
-    const near_split = state.compare == .split and @abs(mouse.x - split_x) < gui.px(split_reach) and inside;
+    c.ImDrawList_PushClipRect(list, area_min, area_max, true);
+    defer c.ImDrawList_PopClipRect(list);
     if (state.cropping) |*edit| {
-        c.ImDrawList_PushClipRect(list, area_min, area_max, true);
-        defer c.ImDrawList_PopClipRect(list);
-        c.ImDrawList_AddImage(list, positive.ref(), min, max);
-        cropTool(edit, list, min, scale, .{ width, height }, hovered, active, state.format(library).ratio());
+        c.ImDrawList_AddImage(list, positive.ref(), picture.min, picture.max);
+        cropTool(edit, list, picture.min, picture.scale, picture.size, hovered, active, state.format(library).ratio());
         return;
     }
+    handlePointer(state, frame, picture, hovered, active);
+    drawComparison(state, list, picture, positive, negative);
+}
+
+/// Where the frame is drawn in the viewer.
+const PictureOnScreen = struct {
+    min: gui.Vec2,
+    max: gui.Vec2,
+    /// Screen pixels per pixel of the picture, and the picture's size in its own pixels.
+    scale: f32,
+    size: [2]f32,
+
+    /// Fits the picture into the viewer from `area_min` to `area_max` at the zoom, moved by the
+    /// pan. Null when there's no room for it.
+    fn place(state: *const State, picture: Texture, area_min: gui.Vec2, area_max: gui.Vec2) ?PictureOnScreen {
+        const width: f32 = @floatFromInt(picture.width);
+        const height: f32 = @floatFromInt(picture.height);
+        const room = gui.vec2(area_max.x - area_min.x - gui.px(2 * picture_margin_x), area_max.y - area_min.y - gui.px(2 * picture_margin_y));
+        if (room.x <= 0 or room.y <= 0) return null;
+        const scale = switch (state.zoom) {
+            .fit => @min(room.x / width, room.y / height),
+            .actual => 1,
+        };
+        const shown = gui.vec2(width * scale, height * scale);
+        const centre = gui.vec2((area_min.x + area_max.x) / 2 + state.pan.x, (area_min.y + area_max.y) / 2 + state.pan.y);
+        const min = gui.vec2(centre.x - shown.x / 2, centre.y - shown.y / 2);
+        return .{ .min = min, .max = gui.vec2(min.x + shown.x, min.y + shown.y), .scale = scale, .size = .{ width, height } };
+    }
+
+    fn contains(picture: PictureOnScreen, p: gui.Vec2) bool {
+        return p.x >= picture.min.x and p.x < picture.max.x and p.y >= picture.min.y and p.y < picture.max.y;
+    }
+
+    /// Where the split between the negative and the positive is on screen.
+    fn splitX(picture: PictureOnScreen, split: f32) f32 {
+        return picture.min.x + (picture.max.x - picture.min.x) * split;
+    }
+};
+
+/// What the mouse does over the picture: picks the film base or a neutral, moves the split, pans,
+/// and places the loupe.
+fn handlePointer(state: *State, frame: *Frame, picture: PictureOnScreen, hovered: bool, active: bool) void {
+    const mouse = c.ImGui_GetMousePos();
+    const inside = picture.contains(mouse);
+    const split_x = picture.splitX(state.split);
+    const near_split = state.compare == .split and @abs(mouse.x - split_x) < gui.px(split_reach) and inside;
     if (state.picking != null and hovered and inside) {
         c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_Hand);
         if (c.ImGui_IsMouseClicked(0)) {
-            const x: usize = @intFromFloat(std.math.clamp((mouse.x - min.x) / scale, 0, width - 1));
-            const y: usize = @intFromFloat(std.math.clamp((mouse.y - min.y) / scale, 0, height - 1));
+            const x: usize = @intFromFloat(std.math.clamp((mouse.x - picture.min.x) / picture.scale, 0, picture.size[0] - 1));
+            const y: usize = @intFromFloat(std.math.clamp((mouse.y - picture.min.y) / picture.scale, 0, picture.size[1] - 1));
             switch (state.picking.?) {
                 .base => frame.pickBase(x, y),
                 .neutral => frame.pickNeutral(x, y),
@@ -1373,7 +1414,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     } else if (active and c.ImGui_IsMouseDragging(0, 0)) {
         const delta = c.ImGui_GetIO().*.MouseDelta;
         if (state.compare == .split and (near_split or state.zoom == .fit)) {
-            state.split = std.math.clamp((mouse.x - min.x) / shown.x, 0, 1);
+            state.split = std.math.clamp((mouse.x - picture.min.x) / (picture.max.x - picture.min.x), 0, 1);
         } else if (state.zoom == .actual) {
             state.pan.x += delta.x;
             state.pan.y += delta.y;
@@ -1384,15 +1425,19 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     state.loupe_target = null;
     if (state.loupe and hovered and inside and !near_split) {
         const on_negative = state.compare == .negative or (state.compare == .split and mouse.x < split_x);
-        state.loupe_target = .{ .at = .{ (mouse.x - min.x) / scale, (mouse.y - min.y) / scale }, .screen = mouse, .negative = on_negative };
+        state.loupe_target = .{ .at = .{ (mouse.x - picture.min.x) / picture.scale, (mouse.y - picture.min.y) / picture.scale }, .screen = mouse, .negative = on_negative };
         c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_None);
     }
+}
 
-    c.ImDrawList_PushClipRect(list, area_min, area_max, true);
-    defer c.ImDrawList_PopClipRect(list);
-    // Where the split is now: a drag above may have just moved it, and the halves have to be cut
-    // at the same place on screen as in the pictures, or they stretch.
-    const split_now = min.x + shown.x * state.split;
+/// Draws the positive, the negative, or the two split, with the split's line and labels and the
+/// picking hint.
+fn drawComparison(state: *const State, list: *c.ImDrawList, picture: PictureOnScreen, positive: Texture, negative: Texture) void {
+    const min = picture.min;
+    const max = picture.max;
+    // Where the split is now: a drag may have just moved it, and the halves have to be cut at the
+    // same place on screen as in the pictures, or they stretch.
+    const split_now = picture.splitX(state.split);
     switch (state.compare) {
         .positive => c.ImDrawList_AddImage(list, positive.ref(), min, max),
         .negative => c.ImDrawList_AddImage(list, negative.ref(), min, max),
@@ -1624,46 +1669,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     // A fitted look makes its own tones from the density, so the tone and inversion don't apply.
     const fitted = frame.look.kind() == .fitted;
 
-    gui.beginSection("preset");
-    gui.heading("PRESET");
-    {
-        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
-        defer c.ImGui_PopStyleVar();
-        gui.rowLabel("Film type");
-        if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
-            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
-            frame.measure(picked);
-            state.changed();
-        }
-        gui.rowLabel("Stock");
-        drawStock(state, gpa, io, library, roll_index);
-        gui.rowLabel("Look");
-        state.drawLook(gpa, io, library);
-        gui.rowLabel("Tone");
-        c.ImGui_BeginDisabled(fitted);
-        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
-            s.tone = picked;
-            state.changed();
-        }
-        c.ImGui_EndDisabled();
-        gui.rowLabel("White balance");
-        const modes = comptime std.enums.values(develop.WhiteBalance);
-        var mode_names: [modes.len][]const u8 = undefined;
-        const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
-        for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
-        if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
-            switch (modes[picked]) {
-                .picked => state.picking = .neutral,
-                .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),
-                else => |mode| frame.rebalance(mode, null),
-            }
-            state.changed();
-        }
-        if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
-    }
-    if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
-    gui.endSection(true);
-
+    drawPreset(state, gpa, io, library, roll_index, fitted);
     drawBase(state);
 
     gui.beginSection("density");
@@ -1715,6 +1721,59 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
     }
     gui.endSection(false);
+}
+
+/// Draws the Preset section: the film type, stock, look, tone and white balance.
+fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize, fitted: bool) void {
+    const frame = &state.frame.?;
+    const s = &frame.settings;
+    gui.beginSection("preset");
+    gui.heading("PRESET");
+    {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
+        defer c.ImGui_PopStyleVar();
+        gui.rowLabel("Film type");
+        if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
+            if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
+            frame.measure(picked);
+            state.changed();
+        }
+        gui.rowLabel("Stock");
+        drawStock(state, gpa, io, library, roll_index);
+        gui.rowLabel("Look");
+        state.drawLook(gpa, io, library);
+        gui.rowLabel("Tone");
+        c.ImGui_BeginDisabled(fitted);
+        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
+            s.tone = picked;
+            state.changed();
+        }
+        c.ImGui_EndDisabled();
+        drawWhiteBalance(state, library, roll_index);
+        if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
+    }
+    if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
+    gui.endSection(true);
+}
+
+/// Draws the white balance menu. Stock balance names the maker whose preset it uses, or why it
+/// can't be used yet.
+fn drawWhiteBalance(state: *State, library: *Library, roll_index: ?usize) void {
+    const frame = &state.frame.?;
+    const s = &frame.settings;
+    gui.rowLabel("White balance");
+    const modes = comptime std.enums.values(develop.WhiteBalance);
+    var mode_names: [modes.len][]const u8 = undefined;
+    const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
+    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
+    if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
+        switch (modes[picked]) {
+            .picked => state.picking = .neutral,
+            .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),
+            else => |mode| frame.rebalance(mode, null),
+        }
+        state.changed();
+    }
 }
 
 /// The temperature slider for the light, in K. It moves in even steps of mired (a million over
@@ -1839,7 +1898,6 @@ fn drawMatrix(state: *State) void {
 }
 
 fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
-    const frame = &state.frame.?;
     const reset_width = c.ImGui_CalcTextSize("Reset").x + gui.px(2 * reset_padding);
     const sync_width = c.ImGui_GetContentRegionAvail().x - reset_width - gui.px(bar_gap);
     c.ImGui_BeginDisabled(roll_index == null);
@@ -1852,6 +1910,30 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     shortcuts.tooltip("Reset", .reset);
 
     const r = roll_index orelse return;
+    drawSyncMenu(state, gpa, io, library, r);
+}
+
+/// Gives the open frame's settings, in the groups chosen, to the other frames of roll `r`.
+fn syncRoll(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
+    const frame = &state.frame.?;
+    const rl = &library.rolls.items[r];
+    var failed: usize = 0;
+    for (0..rl.frames.items.len) |i| {
+        if (i == state.selected) continue;
+        rl.frames.items[i] = synced(gpa, io, rl, i, frame, rl.frames.items[state.selected.?].scan, state.sync) catch |err| {
+            std.log.err("can't sync frame {d}: {t}", .{ i + 1, err });
+            failed += 1;
+            continue;
+        };
+        rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
+        library.invalidate(.{ .roll = r, .frame = i });
+    }
+    state.write(io, library, .all);
+    if (failed > 0) std.log.warn("{d} frames weren't synced", .{failed});
+}
+
+/// Draws the Sync menu, which gives the open frame's settings to the roll's other frames.
+fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
     if (!c.ImGui_BeginPopup("sync", 0)) return;
     defer c.ImGui_EndPopup();
     const rl = &library.rolls.items[r];
@@ -1867,19 +1949,7 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
     if (gui.buttonOf(.primary, "Sync", gui.vec2(0, 0))) {
-        var failed: usize = 0;
-        for (0..rl.frames.items.len) |i| {
-            if (i == state.selected) continue;
-            rl.frames.items[i] = synced(gpa, io, rl, i, frame, rl.frames.items[state.selected.?].scan, state.sync) catch |err| {
-                std.log.err("can't sync frame {d}: {t}", .{ i + 1, err });
-                failed += 1;
-                continue;
-            };
-            rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
-            library.invalidate(.{ .roll = r, .frame = i });
-        }
-        state.write(io, library, .all);
-        if (failed > 0) std.log.warn("{d} frames weren't synced", .{failed});
+        syncRoll(state, gpa, io, library, r);
         c.ImGui_CloseCurrentPopup();
     }
     c.ImGui_SameLine();
