@@ -10,6 +10,7 @@
 const std = @import("std");
 const c = @import("codecs");
 const image = @import("../../core/image.zig");
+const encode = @import("../../core/encode.zig");
 
 /// The colour spaces minilab writes.
 pub const Space = enum {
@@ -56,7 +57,10 @@ const Transfer = union(enum) {
 const parametric_with_toe = 4;
 
 /// The sRGB curve from IEC 61966-2-1. Display P3 uses it too.
-const srgb_transfer: Transfer = .{ .parametric = .{ 2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045 } };
+const srgb_transfer: Transfer = transfer: {
+    const k = encode.srgb_curve;
+    break :transfer .{ .parametric = .{ k.gamma, 1.0 / k.scale, k.offset / k.scale, 1.0 / k.toe_slope, k.toe_encoded } };
+};
 
 /// The white points, in CIE 1931 xy.
 const d65: c.cmsCIExyY = .{ .x = 0.3127, .y = 0.3290, .Y = unit_luminance };

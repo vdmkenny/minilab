@@ -4,23 +4,12 @@
 //! sRGB's white point.
 
 const std = @import("std");
+const srgb = @import("../core/encode.zig");
 
-/// The sRGB transfer curve: turns linear 0..1 into encoded 0..1.
-pub fn encode(linear: f32) f32 {
-    const v = std.math.clamp(linear, 0, 1);
-    return if (v <= 0.0031308) 12.92 * v else 1.055 * std.math.pow(f32, v, 1.0 / 2.4) - 0.055;
-}
-
-/// The sRGB transfer curve in reverse: turns encoded 0..1 back into linear 0..1.
-pub fn decode(encoded: f32) f32 {
-    const v = std.math.clamp(encoded, 0, 1);
-    return if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
-}
-
-/// Returns the relative luminance of a linear sRGB colour.
-pub fn luminance(linear: [3]f32) f32 {
-    return 0.2126729 * linear[0] + 0.7151522 * linear[1] + 0.0721750 * linear[2];
-}
+/// The sRGB transfer curve, and back.
+pub const encode = srgb.srgb;
+pub const decode = srgb.linearFromSrgb;
+pub const luminance = srgb.luminance;
 
 /// sRGB's D65 white point, in XYZ.
 const white: [3]f64 = .{ 0.95047, 1.0, 1.08883 };
@@ -29,11 +18,8 @@ const white: [3]f64 = .{ 0.95047, 1.0, 1.08883 };
 pub fn lab(encoded: [3]f32) [3]f32 {
     var rgb: [3]f64 = undefined;
     for (&rgb, encoded) |*l, e| l.* = decode(e);
-    const xyz: [3]f64 = .{
-        0.4124564 * rgb[0] + 0.3575761 * rgb[1] + 0.1804375 * rgb[2],
-        0.2126729 * rgb[0] + 0.7151522 * rgb[1] + 0.0721750 * rgb[2],
-        0.0193339 * rgb[0] + 0.1191920 * rgb[1] + 0.9503041 * rgb[2],
-    };
+    var xyz: [3]f64 = undefined;
+    for (&xyz, srgb.srgb_to_xyz) |*v, row| v.* = row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2];
     var f: [3]f64 = undefined;
     for (&f, xyz, white) |*out, v, n| out.* = labCurve(v / n);
     return .{ @floatCast(116 * f[1] - 16), @floatCast(500 * (f[0] - f[1])), @floatCast(200 * (f[1] - f[2])) };

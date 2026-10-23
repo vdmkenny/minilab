@@ -370,8 +370,6 @@ fn invert(prepared: Prepared, d: [3]f32) [3]f32 {
     return y;
 }
 
-/// Rec. 709's luminance weights, for linear sRGB.
-const luminance_weights = [3]f32{ 0.2126, 0.7152, 0.0722 };
 
 /// Changes the saturation of linear `pixels` in place. Each pixel is mixed with its own luminance
 /// in linear light, which keeps its hue and its luminance. Colours pushed outside sRGB are cut off
@@ -380,7 +378,7 @@ pub fn saturate(prepared: Prepared, pixels: [][3]f32) void {
     const s = prepared.saturation;
     if (s == 1) return;
     for (pixels) |*p| {
-        const y = luminance_weights[0] * p[0] + luminance_weights[1] * p[1] + luminance_weights[2] * p[2];
+        const y = encode.luminance(p.*);
         for (p) |*v| v.* = @max(0, y + s * (v.* - y));
     }
 }
@@ -697,13 +695,13 @@ test "saturation keeps luminance and hue, and 0 is grey" {
     var pixels = [_][3]f32{.{ 0.6, 0.3, 0.1 }};
     saturate(.init(grey), &pixels);
     try std.testing.expectApproxEqAbs(pixels[0][0], pixels[0][1], 1e-6);
-    try std.testing.expectApproxEqAbs(0.2126 * 0.6 + 0.7152 * 0.3 + 0.0722 * 0.1, pixels[0][1], 1e-6);
+    try std.testing.expectApproxEqAbs(encode.luminance(.{ 0.6, 0.3, 0.1 }), pixels[0][1], 1e-6);
     grey.saturation = 1.5;
     var more = [_][3]f32{.{ 0.6, 0.3, 0.1 }};
     saturate(.init(grey), &more);
     // Further from grey along the same line, so the ratios between the channels' differences
     // stay the same.
-    const y = 0.2126 * 0.6 + 0.7152 * 0.3 + 0.0722 * 0.1;
+    const y = encode.luminance(.{ 0.6, 0.3, 0.1 });
     try std.testing.expectApproxEqAbs((0.6 - y) * 1.5 + y, more[0][0], 1e-6);
     try std.testing.expectApproxEqAbs((0.3 - y) * 1.5 + y, more[0][1], 1e-6);
     // B&W stays as it is.
