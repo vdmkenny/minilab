@@ -264,6 +264,8 @@ pub const Worker = struct {
 
     fn handle(worker: *Worker, job: Job) void {
         const gpa = worker.gpa;
+        // Looking for scanners tries the scanner library again, so it's found once it's installed.
+        if (worker.library == null and job == .list) worker.library = scan.Library.load(gpa) catch null;
         const library = if (worker.library) |*l| l else {
             freeJob(gpa, job);
             worker.post(.{ .failed = .{ .stage = switch (job) {

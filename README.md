@@ -112,9 +112,27 @@ instead of copying them. Raw scans are always converted, so their originals stay
 
 ## Scanning
 
-On macOS and Linux minilab scans through SANE, the usual scanner library there. It only loads
-SANE when you scan, so the app starts fine without it, and it uses whatever scanner drivers your
-SANE setup has. On Windows it uses TWAIN with the scanner maker's own driver.
+minilab doesn't come with scanner drivers. It uses the ones your computer already has, and only
+looks for them when you open Scan, so everything else works without them.
+
+**On a Mac** the drivers are SANE, a free collection of drivers for most scanners. macOS doesn't
+come with it, so you install it once, from Homebrew:
+
+1. If you don't have Homebrew yet, get it from [brew.sh](https://brew.sh). It's one command to
+   paste into Terminal.
+2. In Terminal, run `brew install sane-backends`.
+3. In minilab's Scan screen, press Refresh. Your scanner shows up in the list.
+
+The Scan screen shows these same steps, with a button to copy the command, whenever it can't find
+SANE. You don't need the scanner maker's own Mac software, and you can leave it installed. Just
+don't have it open while minilab scans, since only one program can use the scanner at a time.
+
+**On Linux** install your distribution's SANE package (often `sane-utils` or `sane-backends`).
+
+**On Windows** minilab uses the scanner maker's own TWAIN driver, so install that.
+
+A few scanners need their maker's own SANE driver rather than one of SANE's. The Epson Perfection
+V200 is one of them: it needs Epson's epkowa driver and its plugin.
 
 For scanners minilab has a profile for (only the Epson Perfection V200 so far), it scans raw:
 linear 16-bit data, with the scanner doing no inversion or colour correction of its own. That
