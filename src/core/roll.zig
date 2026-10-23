@@ -1,17 +1,17 @@
-//! Rolls on disk. A roll is a folder:
+//! Rolls on disk. A roll is a folder like this:
 //!
 //!     roll.json          what the roll is: film, format, camera, dates, notes
 //!     scans/01.ppm …     the raw scans, never changed
 //!     frames/01.json …   each frame's crop and develop settings
-//!     thumbs/01.ppm …    the raw scans reduced, for quick previews, named as the scans
+//!     thumbs/01.ppm …    reduced copies of the raw scans for quick previews, named like the scans
 //!     exports/           developed files
 //!     preview.ppm        the last preview of the film holder, from Scan
 //!     preview.json       the frames' boxes on it, hand edits included
-//!     flat.ppm           camera rolls: the flat field, if the roll has one
+//!     flat.ppm           camera rolls only: the flat field, if the roll has one
 //!
 //! Scans are kept as 16-bit binary PPM, whatever they were imported from (`input.zig`): linear
-//! transmission in the scanner's or the camera's channels. A scan usually holds one frame. A strip
-//! holds several, which share the scan, each with its own crop.
+//! transmission in the scanner's or the camera's channels. A scan usually holds one frame. A
+//! strip holds several, which share the scan and each have their own crop.
 //!
 //! A library is a folder of rolls.
 
@@ -34,8 +34,8 @@ pub const thumbs_dir = "thumbs";
 pub const flat_file = "flat.ppm";
 /// A thumbnail's longer side, in pixels.
 pub const thumbnail_longest = 256;
-/// A strip's thumbnail is larger, so that each of its frames gets about `thumbnail_longest`, up to
-/// this along its longer side.
+/// A strip's thumbnail is larger, so that each of its frames gets about `thumbnail_longest`. This
+/// is the most it can have along its longer side.
 pub const strip_thumbnail_longest = 2048;
 const json_options: std.json.Stringify.Options = .{ .whitespace = .indent_2 };
 
@@ -53,7 +53,7 @@ pub const Input = enum {
         };
     }
 
-    /// Where a file of `kind` comes from.
+    /// Returns where a file of `kind` comes from.
     pub fn of(kind: file_input.Kind) Input {
         return switch (kind) {
             .pnm => .scanner,
@@ -63,23 +63,23 @@ pub const Input = enum {
     }
 };
 
-/// The frames one scan added to a roll: `count` of them from index `first`.
+/// The frames one scan added to a roll: `count` of them, starting at index `first`.
 pub const Added = struct {
     first: usize,
     count: usize,
 };
 
-/// What a roll is. Free text where the user types it.
+/// What a roll is. Anything the user types is free text.
 pub const Info = struct {
     name: []const u8,
     kind: develop.FilmKind = .colour_negative,
     stock: ?[]const u8 = null,
-    /// Whether the stock's datasheet corrects the frames: its curves, and on a calibrated scanner
-    /// its balance. Off, the stock is the roll's metadata alone.
+    /// Whether the stock's datasheet corrects the frames: its curves, and its balance on a
+    /// calibrated scanner. When it's off, the stock is just metadata for the roll.
     stock_corrections: bool = true,
     /// One format for the whole roll.
     format: formats.Standard = .default,
-    /// The day the roll was made here, YYYY-MM-DD.
+    /// The day the roll was created in the library, YYYY-MM-DD.
     created: ?[]const u8 = null,
     input: Input = .scanner,
     /// The resolution the roll is scanned at, in pixels per inch, when known.
@@ -95,20 +95,20 @@ pub const Info = struct {
 /// One frame: which scan it comes from, its crop, and how it's developed.
 pub const FrameSettings = struct {
     scan: []const u8,
-    /// The scan's size in pixels; 0 when not recorded yet.
+    /// The scan's size in pixels, or 0 if it hasn't been recorded yet.
     width: usize = 0,
     height: usize = 0,
-    /// The scan's resolution in pixels per inch, when the scanner said.
+    /// The scan's resolution in pixels per inch, if the scanner gave one.
     dpi: ?f32 = null,
-    /// The frame within the scan, in the scan's pixels; null is the whole scan.
+    /// The frame within the scan, in the scan's pixels. Null means the whole scan.
     crop: ?image.Area = null,
     /// Quarter turns clockwise after cropping, 0 to 3.
     quarter_turns: u2 = 0,
-    /// Mirrored left to right after cropping, before the turns: for a scan made from the wrong
-    /// side of the film.
+    /// Whether to mirror left to right after cropping, before the turns. It's for a scan made from
+    /// the wrong side of the film.
     mirrored: bool = false,
     /// The film base's transmission per channel, 0..1, measured in the clear film beside the
-    /// frame; null where the gaps aren't on the scan.
+    /// frame. Null when the gaps aren't on the scan.
     film_base: ?[3]f32 = null,
     look: look.Id = .neutral,
     settings: develop.Settings = .{},
@@ -121,9 +121,9 @@ pub const Roll = struct {
     info: Info,
     frames: std.ArrayList(FrameSettings) = .empty,
 
-    /// Creates a roll folder named after `info.name` in `library`.
-    /// Fails with `error.RollExists` when the library has a roll of that name, and with
-    /// `error.BadRollName` for a name that can't be one folder.
+    /// Creates a roll folder named after `info.name` in `library`. Fails with `error.RollExists`
+    /// if the library already has a roll with that name, and with `error.BadRollName` if the name
+    /// can't be a single folder.
     pub fn create(gpa: std.mem.Allocator, io: Io, library: []const u8, info: Info) !Roll {
         if (!validName(info.name)) return error.BadRollName;
         var roll: Roll = .{ .arena = .init(gpa), .path = undefined, .info = undefined };
@@ -161,13 +161,14 @@ pub const Roll = struct {
         while (try each.next(io)) |entry| {
             if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".json")) try names.append(arena, try arena.dupe(u8, entry.name));
         }
-        // By number, as `saveFrame` names them: as text, 100.json would come before 11.json.
+        // Sort by number, the way `saveFrame` names them. As text, 100.json would come before
+        // 11.json.
         std.mem.sort([]const u8, names.items, {}, byNumber);
         for (names.items) |name| {
             const bytes = try dir.readFileAlloc(io, name, arena, .limited(max_json_bytes));
             var frame = std.json.parseFromSliceLeaky(FrameSettings, arena, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| frame: {
-                // One unreadable frame keeps its place, so the others keep their files, and the
-                // rest of the roll still opens.
+                // An unreadable frame keeps its place, so the others keep their files and the rest
+                // of the roll still opens.
                 std.log.err("{s}/{s}/{s} can't be read ({t}); the frame is left out of Develop", .{ path, frames_dir, name, err });
                 break :frame FrameSettings{ .scan = "" };
             };
@@ -190,25 +191,25 @@ pub const Roll = struct {
         try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, info_file }), .data = bytes });
     }
 
-    /// An arena for what a call needs only while it runs, so that the roll's own arena, which
-    /// lives as long as the roll, doesn't grow with every save.
+    /// An arena for things a call only needs while it runs, so the roll's own arena, which lives
+    /// as long as the roll, doesn't grow with every save.
     fn scratch(roll: *Roll) std.heap.ArenaAllocator {
         return .init(roll.arena.child_allocator);
     }
 
-    /// The scan file of frame `index`, as a path. The caller frees it.
+    /// Returns the path of frame `index`'s scan file. The caller frees it.
     pub fn scanPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
         return std.fs.path.join(gpa, &.{ roll.path, scans_dir, roll.frames.items[index].scan });
     }
 
-    /// Frame `index`'s thumbnail as Develop shows the frame: cut to its crop and turned. The
-    /// caller frees it.
+    /// Returns frame `index`'s thumbnail the way Develop shows the frame: cut to its crop and
+    /// turned. The caller frees it.
     pub fn frameThumbnail(roll: *Roll, gpa: std.mem.Allocator, io: Io, index: usize) !image.Scan {
         return roll.thumbnailAs(gpa, io, index, roll.frames.items[index]);
     }
 
-    /// Frame `index`'s thumbnail cut and turned as `frame` says, which may differ from what the
-    /// roll has for it yet.
+    /// Returns frame `index`'s thumbnail, cut and turned the way `frame` says, which may not match
+    /// what the roll has saved for it yet.
     pub fn thumbnailAs(roll: *Roll, gpa: std.mem.Allocator, io: Io, index: usize, frame: FrameSettings) !image.Scan {
         const path = try roll.thumbnailPath(gpa, index);
         defer gpa.free(path);
@@ -222,32 +223,32 @@ pub const Roll = struct {
         return cut.orient(gpa, frame.quarter_turns, frame.mirrored);
     }
 
-    /// The thumbnail of frame `index`'s scan, as a path; frames of one strip share it. The caller
-    /// frees it.
+    /// Returns the path of the thumbnail of frame `index`'s scan. Frames from one strip share it.
+    /// The caller frees it.
     pub fn thumbnailPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
         var name: [std.fs.max_name_bytes]u8 = undefined;
         const file = try std.fmt.bufPrint(&name, "{s}.ppm", .{std.fs.path.stem(roll.frames.items[index].scan)});
         return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, file });
     }
 
-    /// Adds the scan in `bytes` (a binary PNM) as `addImage` does, and returns the index of its
-    /// first frame.
+    /// Adds the scan in `bytes` (a binary PNM) the way `addImage` does, and returns the index of
+    /// its first frame.
     pub fn addScan(roll: *Roll, gpa: std.mem.Allocator, io: Io, bytes: []const u8) !usize {
         return roll.addScanAt(gpa, io, bytes, null);
     }
 
-    /// `addScan` for a scan made at `dpi` pixels per inch, which frame detection needs.
+    /// Like `addScan`, for a scan made at `dpi` pixels per inch, which frame detection needs.
     pub fn addScanAt(roll: *Roll, gpa: std.mem.Allocator, io: Io, bytes: []const u8, dpi: ?f32) !usize {
         var scan = try pnm.read(gpa, bytes);
         defer scan.deinit(gpa);
         return (try roll.addImage(gpa, io, scan, dpi)).first;
     }
 
-    /// Imports the file at `path`, of any kind `input.zig` reads, as `addImage` does. A camera
-    /// frame is divided by `flat` first, the roll's flat field (`flatField`), when there is one.
-    /// A roll still empty and without a flat field takes its input from the file's kind. A camera
-    /// raw file's colour goes with its frames, for slides: with a flat field, which has made the
-    /// light behind the film white already, its matrix alone.
+    /// Imports the file at `path`, of any kind `input.zig` reads, the way `addImage` does. If
+    /// there's a flat field `flat` (the roll's, from `flatField`), a camera frame is divided by it
+    /// first. A roll that's still empty and has no flat field takes its input from the file's
+    /// kind. A camera RAW file's colour goes with its frames, for slides. With a flat field, which
+    /// has already made the light behind the film white, only its matrix goes with them.
     pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField) !Added {
         var read = try file_input.read(gpa, io, path);
         defer read.deinit(gpa);
@@ -264,19 +265,20 @@ pub const Roll = struct {
     }
 
     /// Saves `scan` as the roll's next scan file, with its thumbnail, and adds a frame for each
-    /// frame on it, cropped and with the film base measured in the gaps beside it, so that
-    /// thumbnails and Develop start cropped. A scan of one frame adds one; a strip adds one per
-    /// whole frame on it, all sharing the scan. A scan where detection finds no frame adds one,
-    /// uncropped. `dpi` is the scan's resolution, when known.
+    /// frame on it. Each one is cropped, with the film base measured in the gaps beside it, so
+    /// thumbnails and Develop start out cropped. A scan of one frame adds one frame, and a strip
+    /// adds one per whole frame on it, all sharing the scan. If detection finds no frame, the scan
+    /// adds one uncropped frame. `dpi` is the scan's resolution, if known.
     pub fn addImage(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32) !Added {
         return roll.addImageWith(gpa, io, scan, dpi, null);
     }
 
-    /// `addImage` for a scan with a camera's colour, `slide`, for its frames when they're slides.
+    /// Like `addImage`, for a scan with a camera's colour, `slide`, which its frames use when
+    /// they're slides.
     fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32, slide: ?develop.SlideColour) !Added {
         const arena = roll.arena.allocator();
         const first = roll.frames.items.len;
-        // Frames added before a failure would have no file; they go again.
+        // Frames added before a failure would have no file, so they're removed again.
         errdefer roll.frames.shrinkRetainingCapacity(first);
         const name = try roll.nextScanName();
 
@@ -318,7 +320,8 @@ pub const Roll = struct {
         return .{ .first = first, .count = roll.frames.items.len - first };
     }
 
-    /// A name for the next scan file, numbered as the next frame unless a frame already has it.
+    /// Picks a name for the next scan file, numbered like the next frame unless a frame already
+    /// uses that name.
     fn nextScanName(roll: *Roll) ![]const u8 {
         const arena = roll.arena.allocator();
         var number = roll.frames.items.len + 1;
@@ -344,11 +347,11 @@ pub const Roll = struct {
         return try FlatField.init(gpa, shot);
     }
 
-    /// Keeps `shot`, the light source photographed with no film, as the roll's flat field, which
-    /// makes the roll a camera roll. Frames imported from now on are divided by it; the frames
+    /// Keeps `shot`, a photo of the light source with no film, as the roll's flat field. That
+    /// makes the roll a camera roll. Frames imported from now on are divided by it, and the frames
     /// already in the roll stay as they are.
     pub fn setFlatField(roll: *Roll, gpa: std.mem.Allocator, io: Io, shot: image.Scan) !void {
-        // A shot that can't be a flat field is refused before it replaces one that could.
+        // Refuse a shot that can't work as a flat field before it replaces one that can.
         var check: FlatField = try .init(gpa, shot);
         check.deinit(gpa);
         const bytes = try pnm.write(gpa, u16, shot);
@@ -378,15 +381,15 @@ pub const Roll = struct {
         return count;
     }
 
-    /// The roll's film base: per channel, the median of the bases measured in the frames' gaps.
-    /// Null when no frame has one.
+    /// Returns the roll's film base: per channel, the median of the bases measured in the frames'
+    /// gaps. Returns null when no frame has one.
     pub fn filmBase(roll: *const Roll) ?[3]f32 {
         return medianBase(roll.frames.items);
     }
 
-    /// The film base for frame `index`: the one measured in the gaps beside it, unless that is
-    /// further than `base_tolerance` from the roll's in some channel, as when a gap fell on the
-    /// leader, a light leak or the holder. Then the roll's.
+    /// Returns the film base for frame `index`. That's the one measured in the gaps beside it,
+    /// unless it's further than `base_tolerance` from the roll's base in some channel, say because
+    /// a gap fell on the leader, a light leak or the holder. Then it's the roll's base.
     pub fn baseFor(roll: *const Roll, index: usize) ?[3]f32 {
         const roll_base = roll.filmBase() orelse return null;
         const own = roll.frames.items[index].film_base orelse return roll_base;
@@ -397,8 +400,8 @@ pub const Roll = struct {
     }
 };
 
-/// How far a frame's film base may be from the roll's, as a share. The frames of one roll agree
-/// within a few percent; a gap that fell on something else is off by a third or more.
+/// How far a frame's film base can be from the roll's, as a share. The frames of one roll agree to
+/// within a few percent, and a gap that fell on something else is off by a third or more.
 pub const base_tolerance = 0.15;
 
 fn medianBase(frames: []const FrameSettings) ?[3]f32 {
@@ -419,10 +422,11 @@ fn medianBase(frames: []const FrameSettings) ?[3]f32 {
     return base;
 }
 
-/// The most frames the roll's base is worked out from; more than any roll has.
+/// The most frames the roll's base is worked out from. That's more than any roll has.
 const max_median_frames = 256;
 
-/// The longer side of the thumbnail of `scan`, on which detection found `found`.
+/// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on
+/// it.
 fn thumbnailLongest(scan: image.Scan, found: []const framing.Found) usize {
     if (found.len < 2) return thumbnail_longest;
     var shortest: usize = std.math.maxInt(usize);
@@ -455,14 +459,14 @@ fn today(arena: std.mem.Allocator, io: Io) ![]const u8 {
     return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}", .{ year_day.year, month_day.month.numeric(), month_day.day_index + 1 });
 }
 
-/// Frame files by their number, `7.json` before `10.json`; names without one last, as text.
+/// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
 fn byNumber(_: void, a: []const u8, b: []const u8) bool {
     const x = std.fmt.parseInt(usize, std.fs.path.stem(a), 10) catch return false;
     const y = std.fmt.parseInt(usize, std.fs.path.stem(b), 10) catch return true;
     return x < y;
 }
 
-/// Whether `name` can be a roll's folder in the library: one folder, not a path.
+/// Whether `name` works as a roll's folder in the library: a single folder, not a path.
 fn validName(name: []const u8) bool {
     if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
     return std.mem.indexOfAny(u8, name, "/\\:") == null;
@@ -476,7 +480,8 @@ fn finite(comptime T: type, value: *T, default: T) void {
         },
         .array => for (value, default) |*v, d| finite(@TypeOf(d), v, d),
         .@"struct" => |s| inline for (s.field_names, s.field_types) |name, Field| finite(Field, &@field(value, name), @field(default, name)),
-        // An optional with anything not finite in it is dropped: there is no default inside it.
+        // An optional with anything that isn't finite in it is dropped, since there's no default
+        // to use inside it.
         .optional => |o| if (value.*) |inner| {
             if (!allFinite(o.child, inner)) value.* = null;
         },
@@ -484,8 +489,8 @@ fn finite(comptime T: type, value: *T, default: T) void {
     }
 }
 
-/// Settings saved by an earlier minilab, brought up to date: temperatures from before they were in
-/// K, −100..100 then, as K.
+/// Brings settings saved by an earlier minilab up to date. Temperatures from before they were in
+/// K (when they ran from −100 to 100) are converted to K.
 fn upgrade(settings: *develop.Settings) void {
     for (&settings.temperature) |*t| {
         if (t.* < develop.min_kelvin) t.* = develop.kelvinFromShift(t.*);
@@ -506,10 +511,11 @@ fn allFinite(comptime T: type, value: T) bool {
 }
 
 const max_json_bytes = 1 << 20;
-/// The largest thumbnail read: far more than a 256-pixel thumbnail of even a long strip.
+/// The largest thumbnail we read: far more than any thumbnail, even a long strip's at
+/// `strip_thumbnail_longest`.
 const max_thumbnail_bytes = 64 << 20;
 
-/// The rolls in `library`, opened; folders without a roll.json are skipped.
+/// Opens the rolls in `library`. Folders without a roll.json are skipped.
 pub fn listRolls(gpa: std.mem.Allocator, io: Io, library: []const u8) !std.ArrayList(Roll) {
     var rolls: std.ArrayList(Roll) = .empty;
     errdefer {
@@ -527,8 +533,8 @@ pub fn listRolls(gpa: std.mem.Allocator, io: Io, library: []const u8) !std.Array
         const path = try std.fs.path.join(gpa, &.{ library, entry.name });
         defer gpa.free(path);
         var roll = Roll.open(gpa, io, path) catch |err| {
-            // A folder without a roll.json isn't a roll, and says nothing; a roll that won't open
-            // should.
+            // A folder without a roll.json isn't a roll, so we stay quiet about it. A roll that
+            // won't open gets an error.
             if (err != error.FileNotFound) std.log.err("the roll in {s} can't be opened: {t}", .{ path, err });
             continue;
         };
@@ -541,7 +547,7 @@ pub fn listRolls(gpa: std.mem.Allocator, io: Io, library: []const u8) !std.Array
     return rolls;
 }
 
-/// Newest made first, then by name, last first.
+/// Sorts rolls with the newest first (by the day they were created), then by name, from Z to A.
 fn newerFirst(_: void, a: Roll, b: Roll) bool {
     const a_date = a.info.created orelse "";
     const b_date = b.info.created orelse "";
@@ -581,7 +587,7 @@ test "a roll round-trips through its folder" {
 const synthetic = @import("../frames/synthetic.zig");
 const codecs_tiff = @import("../io/codecs/tiff.zig");
 
-/// A roll made in a new folder of `tmp` for a test, with the folder's path.
+/// Makes a roll in a new folder of `tmp` for a test, along with the folder's path.
 fn testRoll(tmp: *std.testing.TmpDir, info: Info) !Roll {
     const gpa = std.testing.allocator;
     const library = try tmp.dir.realPathFileAlloc(std.testing.io, ".", gpa);
@@ -638,7 +644,7 @@ test "a strip imports as one frame per frame on it, sharing the scan" {
     var scan = try strip.render(gpa);
     defer scan.deinit(gpa);
 
-    // The first frame scanned on its own with a bit of the next, then the whole strip.
+    // First the first frame scanned on its own, with a bit of the next one, then the whole strip.
     const px_per_mm = strip.dpi / formats.mm_per_inch;
     const one_frame: image.Area = .{ .x = 0, .y = 0, .width = scan.width, .height = @intFromFloat((synthetic.pitch_135_mm + 2 * synthetic.leader_135_mm) * px_per_mm) };
     var single = try scan.crop(gpa, one_frame);
@@ -686,7 +692,7 @@ test "a camera roll's frames are divided by its flat field on import" {
     defer roll.close();
     try std.testing.expectEqual(null, try roll.flatField(gpa, io));
 
-    // Light twice as bright on the left as on the right, and film passing a quarter of it.
+    // Light twice as bright on the left as on the right, and film that passes a quarter of it.
     const width = 64;
     const height = 48;
     const bright = 60000;
@@ -715,7 +721,7 @@ test "a camera roll's frames are divided by its flat field on import" {
     _ = try roll.importFile(gpa, io, path, &flat);
     var kept = try keptScan(&roll, 0);
     defer kept.deinit(gpa);
-    // Even across, at what the film passes of the brightest light.
+    // Even all the way across, at the film's share of the brightest light.
     for (kept.pixels) |p| try std.testing.expectApproxEqRel(@as(f32, bright * film), @as(f32, @floatFromInt(p[0])), 0.01);
 }
 

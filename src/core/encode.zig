@@ -1,4 +1,4 @@
-//! Rendered linear values to encoded output, with the sRGB transfer curve.
+//! Encodes rendered linear values for output, using the sRGB transfer curve.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -9,7 +9,7 @@ pub fn srgb(linear: f32) f32 {
     return if (v <= 0.0031308) 12.92 * v else 1.055 * std.math.pow(f32, v, 1.0 / 2.4) - 0.055;
 }
 
-/// The sRGB transfer curve backwards: encoded 0..1 to linear 0..1.
+/// The sRGB transfer curve in reverse: encoded 0..1 to linear 0..1.
 pub fn linearFromSrgb(encoded: f32) f32 {
     const v = std.math.clamp(encoded, 0, 1);
     return if (v <= 0.04045) v / 12.92 else std.math.pow(f32, (v + 0.055) / 1.055, 2.4);
@@ -20,8 +20,8 @@ fn quantise(comptime T: type, v: f32) T {
     return @intFromFloat(@round(v * top));
 }
 
-/// Entries of the table `toSrgb8` encodes through: fine enough that the deepest shadows, where
-/// the curve is steepest, are off by at most one step of 255.
+/// How many entries the table behind `toSrgb8` has. It's fine enough that even the deepest
+/// shadows, where the curve is steepest, are off by at most one step in 255.
 const table_entries = 1 << 14;
 
 pub fn toSrgb8(gpa: std.mem.Allocator, rendered: image.Rendered) !image.Encoded8 {

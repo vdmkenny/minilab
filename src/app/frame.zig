@@ -1,5 +1,5 @@
-//! A frame open for developing: a reduced copy of its scan for the viewer, its settings, and the
-//! viewer's renderings of it, negative and positive.
+//! A frame that's open for developing: a reduced copy of its scan for the viewer, its settings,
+//! and the viewer's renderings of it as a negative and a positive.
 
 const std = @import("std");
 const minilab = @import("minilab");
@@ -10,56 +10,59 @@ const look = minilab.look;
 
 /// The viewer's copy of a frame is at most this many pixels along its longer side.
 pub const preview_longest = 1600;
-/// The reduced copy of a strip, which its frames are cut from, is at most this long, so that a
-/// frame of a long strip still gets most of `preview_longest`.
+/// The most pixels along the longer side of a strip's reduced copy, which its frames are cut from.
+/// It's this big so that a frame on a long strip still gets most of `preview_longest`.
 const strip_longest = 8192;
-/// Bins of the histogram of the rendering.
+/// The number of bins in the rendering's histogram.
 pub const histogram_bins = 256;
-/// The side of the square averaged when a point is picked, in preview pixels.
+/// The size of the square that's averaged when you pick a point, in preview pixels.
 const pick_size = 5;
 
 pub const Histogram = [histogram_bins][image.channel_count]u32;
 
 pub const Frame = struct {
     name: []const u8,
-    /// The scan's size, for the info line and for crops, which are in its pixels.
+    /// The scan's size, for the info line and for crops (which are in the scan's pixels).
     scan_width: usize,
     scan_height: usize,
-    /// The whole scan, reduced: what crops are cut from.
+    /// A reduced copy of the whole scan, which crops are cut from.
     full: image.Scan,
-    /// The frame's part of the scan, `crop` of it, mirrored if `mirrored`, then turned
-    /// `quarter_turns`; null crop is all of it.
+    /// The frame's part of the scan: `crop` of it, mirrored if `mirrored`, then turned by
+    /// `quarter_turns`. A null crop means the whole scan.
     crop: ?image.Area = null,
     quarter_turns: u2 = 0,
     mirrored: bool = false,
     /// What the viewer shows: `full` cropped and turned.
     preview: image.Scan,
-    /// Statistics of the middle of the frame, and of all of it, for the automatic settings.
+    /// Statistics for the middle of the frame (`centre`) and all of it (`whole`), for the
+    /// automatic settings.
     centre: develop.Statistics,
     whole: develop.Statistics,
     look: look.Id = .neutral,
     settings: develop.Settings = .{},
-    /// The stock's layer slopes on this scanner, for Stock balance: null without a preset or a
+    /// The stock's layer slopes on this scanner, for Stock balance. Null without a preset or a
     /// calibrated scanner (`calibration`).
     stock_slopes: ?[3]f32 = null,
-    /// The film base measured in the gaps beside the frame, or the roll's when that is far off
-    /// or missing (`roll.Roll.baseFor`).
+    /// The film base measured in the gaps beside the frame, or the roll's base when the frame's
+    /// own is far off or missing (`roll.Roll.baseFor`).
     gap_base: ?[3]f32 = null,
     /// Whether `gap_base` is the roll's rather than the frame's own.
     base_from_roll: bool = false,
-    /// The viewer's rendering, RGBA, the size of `preview`.
+    /// The viewer's rendering, in RGBA, the same size as `preview`.
     rendered: [][4]u8,
-    /// The scan as it is, a negative on a light table, RGBA: for the viewer's comparison.
+    /// The scan as it is, like a negative on a light table, in RGBA. The viewer shows it for
+    /// comparison.
     negative: [][4]u8,
     histogram: Histogram = std.mem.zeroes(Histogram),
-    /// Shares of the pixels clipped to black and to white in some channel.
+    /// The share of pixels clipped to black, and to white, in at least one channel.
     clipped_shadows: f32 = 0,
     clipped_highlights: f32 = 0,
     /// Whether `rendered` is out of date with the settings.
     stale: bool = true,
 
-    /// Loads the scan at `path`, of any kind `minilab.input` reads, as the frame `name`, cut to
-    /// `crop` and turned, with default settings: the caller measures or applies saved ones.
+    /// Loads the scan at `path` (any kind `minilab.input` can read) as the frame `name`, cut to
+    /// `crop` and turned, with default settings. The caller then measures the settings or applies
+    /// saved ones.
     pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, name: []const u8, crop: ?image.Area, quarter_turns: u2, mirrored: bool) !Frame {
         var scan = (try minilab.input.read(gpa, io, path)).scan;
         defer scan.deinit(gpa);
@@ -97,13 +100,14 @@ pub const Frame = struct {
         frame.negative = &.{};
     }
 
-    /// The scan's pixels per pixel of `full`.
+    /// How many of the scan's pixels there are per pixel of `full`.
     pub fn scale(frame: *const Frame) f64 {
         return @as(f64, @floatFromInt(frame.scan_width)) / @as(f64, @floatFromInt(frame.full.width));
     }
 
-    /// Cuts the viewer's copy to `crop` (in the scan's pixels; null for all of it) and turns it,
-    /// and measures it again. The settings stay; the caller re-measures them if it wants.
+    /// Cuts the viewer's copy to `crop` (in the scan's pixels, or null for all of it), turns it
+    /// and measures it again. The settings stay as they are; the caller re-measures them if it
+    /// wants.
     pub fn setGeometry(frame: *Frame, gpa: std.mem.Allocator, crop: ?image.Area, quarter_turns: u2, mirrored: bool) !void {
         const area: image.Area = if (crop) |c| c.rescale(frame.scan_width, frame.full.width, frame.full.width, frame.full.height) else .whole(frame.full.width, frame.full.height);
         var cut = try frame.full.crop(gpa, area);
@@ -128,21 +132,22 @@ pub const Frame = struct {
         frame.fillNegative();
     }
 
-    /// Fills `negative` as the frame looks on a light table: its film base, from the gaps when
-    /// it's known or else the frame's thinnest film, nearly white through the mask.
+    /// Fills `negative` with the frame as it looks on a light table, with the film base showing
+    /// nearly white through the mask. The base comes from the gaps when it's known, or else from
+    /// the frame's thinnest film.
     pub fn fillNegative(frame: *Frame) void {
         const gain = minilab.light_table.gainForBase(frame.gap_base orelse frame.whole.thinnest);
         minilab.light_table.toScreen(frame.preview.pixels, gain, frame.negative);
     }
 
-    /// The frame on the scan found by frame detection, in the scan's pixels. `dpi` is the scan's
-    /// resolution; null guesses it.
+    /// Runs frame detection on the scan and returns the frame it finds, in the scan's pixels.
+    /// `dpi` is the scan's resolution; pass null to have it guessed.
     pub fn detect(frame: *const Frame, gpa: std.mem.Allocator, format: minilab.formats.Format, dpi: ?f32) !image.Area {
         return minilab.framing.find(gpa, frame.full, frame.scan_width, frame.scan_height, dpi, format, frame.settings.kind);
     }
 
-    /// Works out the automatic settings for film `kind`, with the base measured, and balanced the
-    /// way the settings ask.
+    /// Works out the automatic settings for film `kind` on the measured base, and balances them
+    /// the way the settings ask.
     pub fn measure(frame: *Frame, kind: develop.FilmKind) void {
         const keep = frame.settings;
         frame.settings = develop.automatic(kind, frame.gap_base orelse frame.whole.thinnest, frame.centre, keep.curves());
@@ -151,19 +156,19 @@ pub const Frame = struct {
         frame.rebalance(if (keep.white_balance == .picked) .auto_neutral else keep.white_balance, null);
     }
 
-    /// The automatic settings for the frame on its film base as it stands: what Develop's sliders
-    /// reset to.
+    /// The automatic settings for the frame on its current film base. Develop's sliders reset to
+    /// these.
     pub fn automaticSettings(frame: *const Frame) develop.Settings {
         return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre, frame.settings.curves());
     }
 
-    /// Sets the balance by `mode`; `.picked` needs `picked`, the transmission to make neutral.
+    /// Sets the balance with `mode`. For `.picked`, `picked` is the transmission to make neutral.
     pub fn rebalance(frame: *Frame, mode: develop.WhiteBalance, picked: ?[3]f32) void {
         frame.settings = develop.balanced(frame.settings, mode, frame.centre, picked, frame.stock_slopes);
         frame.stale = true;
     }
 
-    /// The mean transmission of the few preview pixels around (`x`, `y`), 0..1.
+    /// The mean transmission (0 to 1) of the few preview pixels around (`x`, `y`).
     pub fn sample(frame: *const Frame, x: usize, y: usize) [3]f32 {
         const half = pick_size / 2;
         const x0 = x -| half;
@@ -181,7 +186,8 @@ pub const Frame = struct {
         return sum;
     }
 
-    /// Takes the film base from the point (`x`, `y`) of the preview, and works out the rest again.
+    /// Takes the film base from the point (`x`, `y`) on the preview, and works out the other
+    /// settings again.
     pub fn pickBase(frame: *Frame, x: usize, y: usize) void {
         const keep = frame.settings;
         frame.settings = develop.automatic(keep.kind, frame.sample(x, y), frame.centre, keep.curves());
@@ -190,13 +196,13 @@ pub const Frame = struct {
         frame.rebalance(if (keep.white_balance == .picked) .auto_neutral else keep.white_balance, null);
     }
 
-    /// Makes the point (`x`, `y`) of the preview neutral.
+    /// Makes the point (`x`, `y`) on the preview neutral.
     pub fn pickNeutral(frame: *Frame, x: usize, y: usize) void {
         frame.rebalance(.picked, frame.sample(x, y));
     }
 
-    /// Renders the viewer's copy with the current settings, in the look `catalog` has for the
-    /// frame's.
+    /// Renders the viewer's copy with the current settings and the frame's look, which it gets
+    /// from `catalog`.
     pub fn render(frame: *Frame, gpa: std.mem.Allocator, io: std.Io, catalog: *look.Catalog) !void {
         const started = std.Io.Clock.awake.now(io);
         defer std.log.scoped(.develop).debug("rendered {d} × {d} in {d} ms", .{ frame.preview.width, frame.preview.height, @divTrunc(started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds(), std.time.ns_per_ms) });
@@ -224,8 +230,9 @@ pub const Frame = struct {
     }
 };
 
-/// Carries the user's own choices over a fresh measurement: the tone, temperature and tint; and the
-/// roll's stock curves and the camera's colour, which belong to the film and the scan.
+/// Keeps the user's own choices through a fresh measurement: the tone, temperature and tint. It
+/// also keeps the roll's stock curves and the camera's colour, since those belong to the film and
+/// the scan.
 fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.tone = keep.tone;
     settings.temperature = keep.temperature;
@@ -234,9 +241,9 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.slide_colour = keep.slide_colour;
 }
 
-/// The longer side of the reduced copy of `scan` that a frame `crop` of it is cut from: enough for
-/// the frame to get `preview_longest`, when it's a frame of a strip, a whole number of times
-/// shorter than the scan.
+/// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.
+/// For a frame of a strip, it's `preview_longest` times the whole number of times the scan is
+/// longer than the frame, so the frame still gets `preview_longest` (up to `strip_longest`).
 fn reducedLongest(scan: image.Scan, crop: ?image.Area) usize {
     const area = crop orelse return preview_longest;
     const times = @max(scan.width, scan.height) / @max(1, area.width, area.height);

@@ -1,14 +1,14 @@
-//! Images in memory: scans as the scanner delivers them, linear 16-bit, and rendered images.
+//! Images in memory: scans as the scanner delivers them (linear, 16-bit), and rendered images.
 
 const std = @import("std");
 
 pub const Channel = enum { r, g, b };
 pub const channel_count = @typeInfo(Channel).@"enum".field_names.len;
 
-/// The largest 16-bit sample, full transmission for a scan.
+/// The largest 16-bit sample. In a scan it means full transmission.
 pub const full_scale = std.math.maxInt(u16);
-/// An 8-bit sample times this is the 16-bit sample of the same fraction of full scale: 255
-/// becomes 65535.
+/// Multiply an 8-bit sample by this to get the 16-bit sample at the same fraction of full scale:
+/// 255 becomes 65535.
 pub const widen_8_to_16 = full_scale / std.math.maxInt(u8);
 
 /// An image of `Pixel`s, row by row.
@@ -37,7 +37,7 @@ pub fn Image(comptime Pixel: type) type {
             return image.pixels[y * image.width ..][0..image.width];
         }
 
-        /// The image mirrored left to right, copied.
+        /// Returns a copy of the image, mirrored left to right.
         pub fn mirror(image: Self, gpa: std.mem.Allocator) !Self {
             var result: Self = try .init(gpa, image.width, image.height);
             for (0..image.height) |y| {
@@ -47,8 +47,8 @@ pub fn Image(comptime Pixel: type) type {
             return result;
         }
 
-        /// The image mirrored when `mirrored`, then turned `quarter_turns`: how a frame is shown
-        /// after its crop. A copy, always.
+        /// Returns a copy of the image, mirrored if `mirrored` is set, then turned
+        /// `quarter_turns`. That's how a frame is shown after its crop. It always makes a copy.
         pub fn orient(image: Self, gpa: std.mem.Allocator, quarter_turns: u2, mirrored: bool) !Self {
             if (!mirrored) return image.rotate(gpa, quarter_turns);
             var flipped = try image.mirror(gpa);
@@ -56,7 +56,7 @@ pub fn Image(comptime Pixel: type) type {
             return flipped.rotate(gpa, quarter_turns);
         }
 
-        /// The image turned clockwise by `quarter_turns` quarter turns (0 to 3), copied.
+        /// Returns a copy of the image, turned clockwise by `quarter_turns` quarter turns (0 to 3).
         pub fn rotate(image: Self, gpa: std.mem.Allocator, quarter_turns: u2) !Self {
             const turned = quarter_turns % 2 == 1;
             var result: Self = try .init(gpa, if (turned) image.height else image.width, if (turned) image.width else image.height);
@@ -74,7 +74,7 @@ pub fn Image(comptime Pixel: type) type {
             return result;
         }
 
-        /// The part of the image inside `area`, copied.
+        /// Returns a copy of the part of the image inside `area`.
         pub fn crop(image: Self, gpa: std.mem.Allocator, area: Area) !Self {
             std.debug.assert(area.x + area.width <= image.width and area.y + area.height <= image.height);
             var result: Self = try .init(gpa, area.width, area.height);
@@ -97,8 +97,8 @@ pub const Area = struct {
         return .{ .x = 0, .y = 0, .width = width, .height = height };
     }
 
-    /// `area` measured on an image `from` pixels wide, on one `to` pixels wide of the same
-    /// picture, clipped to `to_width` × `to_height`.
+    /// Moves `area`, measured on an image `from` pixels wide, onto a copy of the same picture
+    /// that's `to` pixels wide, clipped to `to_width` × `to_height`.
     pub fn rescale(area: Area, from: usize, to: usize, to_width: usize, to_height: usize) Area {
         const f = @as(f64, @floatFromInt(to)) / @as(f64, @floatFromInt(from));
         const x = @min(to_width -| 1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(area.x)) * f))));
@@ -108,7 +108,7 @@ pub const Area = struct {
         return .{ .x = x, .y = y, .width = w, .height = h };
     }
 
-    /// The middle of `area`, `fraction` of its width and height.
+    /// Returns the middle of `area`, `fraction` of its width and height.
     pub fn centre(area: Area, fraction: f32) Area {
         const w: usize = @intFromFloat(@as(f32, @floatFromInt(area.width)) * fraction);
         const h: usize = @intFromFloat(@as(f32, @floatFromInt(area.height)) * fraction);
@@ -116,13 +116,13 @@ pub const Area = struct {
     }
 };
 
-/// The whole factor that brings an image's longer side to `longest` or less.
+/// The whole-number factor that brings an image's longer side down to `longest` or less.
 pub fn reductionFactor(width: usize, height: usize, longest: usize) usize {
     return @max(1, (@max(width, height) + longest - 1) / longest);
 }
 
-/// `scan` reduced by a whole factor so that its longer side is at most `longest`, each pixel the
-/// mean of the block it covers.
+/// Reduces `scan` by a whole-number factor so that its longer side is at most `longest`. Each
+/// pixel is the mean of the block it covers.
 pub fn downscale(gpa: std.mem.Allocator, scan: Scan, longest: usize) !Scan {
     const factor = reductionFactor(scan.width, scan.height, longest);
     var result: Scan = try .init(gpa, scan.width / factor, scan.height / factor);

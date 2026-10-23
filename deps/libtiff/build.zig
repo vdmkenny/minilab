@@ -1,23 +1,23 @@
-//! Builds LibTIFF as the static library `tiff`, in plain C, with the codecs that need no library
-//! beyond zlib and libjpeg-turbo: none, PackBits, LZW, Deflate (zlib), PixarLog (zlib), JPEG and
-//! old-style JPEG (libjpeg-turbo, 8-bit and 12-bit), CCITT fax, ThunderScan, NeXT and LogLuv. LERC,
-//! LZMA, ZSTD, WebP and JBIG are left out. The options are the upstream's CMake defaults
-//! (`cmake/LibraryFeatures.cmake`).
+//! Builds LibTIFF as the static library `tiff`, in plain C, with the codecs that don't need any
+//! library beyond zlib and libjpeg-turbo: none, PackBits, LZW, Deflate (zlib), PixarLog (zlib),
+//! JPEG and old-style JPEG (libjpeg-turbo, 8-bit and 12-bit), CCITT fax, ThunderScan, NeXT and
+//! LogLuv. LERC, LZMA, ZSTD, WebP and JBIG are left out. The options are the upstream's CMake
+//! defaults (`cmake/LibraryFeatures.cmake`).
 //!
-//! File input and output go through `tif_unix.c` on every system, Windows included, rather than
-//! `tif_win32.c`: `tiffio.h` then needs no `windows.h`, and minilab opens TIFFs from memory through
-//! `TIFFClientOpen` anyway. LibTIFF is covered by its own BSD-like licence (the upstream's
-//! `LICENSE.md`), which the package exposes as a named lazy path.
+//! File input and output go through `tif_unix.c` on every system, Windows included, instead of
+//! `tif_win32.c`. That way `tiffio.h` doesn't need `windows.h`, and minilab opens TIFFs from
+//! memory through `TIFFClientOpen` anyway. LibTIFF is covered by its own BSD-like licence (see the
+//! upstream's `LICENSE.md`), which the package exposes as a named lazy path.
 
 const std = @import("std");
 
 const version: std.SemanticVersion = .{ .major = 4, .minor = 7, .patch = 2 };
 const version_string = std.fmt.comptimePrint("{f}", .{version});
-/// The release's date, from the upstream's `RELEASE-DATE`, which `tiffvers.h` gives as the version.
+/// The release date, from the upstream's `RELEASE-DATE`. `tiffvers.h` gives it as the version.
 const release_date = 20260627;
 /// The upstream's default size of a strip, in bytes, when strip chopping is on.
 const strip_size_default = 8192;
-/// The upstream's default limit on the directories a file can have.
+/// The upstream's default limit on how many directories a file can have.
 const max_directory_count = 1048576;
 
 pub fn build(b: *std.Build) void {
@@ -30,7 +30,7 @@ pub fn build(b: *std.Build) void {
     const zlib = b.dependency("zlib", .{ .target = target, .optimize = optimize }).artifact("z");
     const jpeg = b.dependency("libjpeg_turbo", .{ .target = target, .optimize = optimize }).artifact("jpeg");
 
-    // Each template's comments name a placeholder `@VAR@`, which CMake replaces with nothing.
+    // Each template's comments mention a placeholder `@VAR@`, which CMake replaces with nothing.
     const tiffconf = b.addConfigHeader(.{ .style = .{ .cmake = upstream.path("libtiff/tiffconf.h.cmake.in") }, .include_path = "tiffconf.h" }, .{
         .VAR = "",
         .TIFF_INT8_T = "int8_t",
@@ -81,7 +81,7 @@ pub fn build(b: *std.Build) void {
         .HAVE_STRINGS_H = true,
         .HAVE_SYS_TYPES_H = true,
         .HAVE_UNISTD_H = true,
-        // libjpeg-turbo 3 carries the 12-bit codec beside the 8-bit one, so both JPEG modes come
+        // libjpeg-turbo 3 has the 12-bit codec alongside the 8-bit one, so both JPEG modes come
         // from the one library.
         .JPEG_DUAL_MODE_8_12 = true,
         .HAVE_JPEGTURBO_DUAL_MODE_8_12 = true,
@@ -118,7 +118,7 @@ pub fn build(b: *std.Build) void {
     module.addConfigHeader(tiffvers);
     module.addIncludePath(upstream.path("libtiff"));
     // As in the upstream's build, the library allocates through the `_TIFF*Ext` functions, which
-    // honour a file's limits, except where the plain ones are defined.
+    // respect a file's limits, except where the plain ones are defined.
     module.addCSourceFiles(.{
         .root = upstream.path("libtiff"),
         .files = &sources,
@@ -140,8 +140,9 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("LICENSE-libtiff.md", upstream.path("LICENSE.md"));
 }
 
-/// The upstream's library sources (`libtiff/CMakeLists.txt`) but for `tif_open.c` and `tif_unix.c`,
-/// which allocate differently. The files of the codecs left out compile to nothing.
+/// The upstream's library sources (`libtiff/CMakeLists.txt`), except for `tif_open.c` and
+/// `tif_unix.c`, which allocate differently. The files for the codecs we leave out compile to
+/// nothing.
 const sources = [_][]const u8{
     "tif_aux.c",
     "tif_close.c",

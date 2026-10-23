@@ -1,5 +1,5 @@
-//! The app's window: SDL3 for the window and its events, SDL_GPU to draw, and Dear ImGui's own
-//! SDL3 and SDL_GPU backends to feed ImGui the events and draw what it makes.
+//! The app's window. SDL3 handles the window and its events, and SDL_GPU does the drawing. Dear
+//! ImGui's own SDL3 and SDL_GPU backends feed ImGui the events and draw what it produces.
 
 const std = @import("std");
 const c = @import("c");
@@ -7,7 +7,7 @@ const icon = @import("icon.zig");
 
 pub const Error = error{Sdl};
 
-/// SDL's last error, logged under the call `what` that failed, as an error.
+/// Logs SDL's last error against `what`, the call that failed, and returns it as an error.
 fn fail(what: []const u8) Error {
     logError(what);
     return error.Sdl;
@@ -17,36 +17,36 @@ fn logError(what: []const u8) void {
     std.log.scoped(.sdl).err("{s}: {s}", .{ what, c.SDL_GetError() });
 }
 
-/// How long the window waits for an event before it draws again when nothing happens, which keeps
-/// the text cursor blinking and timed messages going while the app is idle.
+/// How long the window waits for an event before drawing again anyway. That keeps the text cursor
+/// blinking and timed messages moving while the app is idle.
 const idle_wait_ms = 250;
 
-/// How many frames the window keeps drawing after the last event, which ImGui needs to settle
-/// what an event changed, such as a window that resizes to fit its contents.
+/// How many frames the window keeps drawing after the last event. ImGui needs them to settle what
+/// an event changed, such as a window that resizes to fit its contents.
 const settle_frames = 3;
-/// The smallest the window can be made, in points: room for the panels and a usable viewer.
+/// The smallest the window can get, in points: enough room for the panels and a usable viewer.
 const min_width = 960;
 const min_height = 600;
-/// The window icon's side, in pixels: what macOS's Dock and the taskbars scale from.
+/// The size of the window icon, in pixels. macOS's Dock and the taskbars scale it down from this.
 const icon_side = 256;
-/// The icon drawn for the window, kept out of the stack.
+/// The icon we draw for the window. It's a global so it doesn't sit on the stack.
 var icon_pixels: [icon_side * icon_side][4]u8 = undefined;
 
 pub const Window = struct {
     handle: *c.SDL_Window,
     gpu: *c.SDL_GPUDevice,
-    /// The display's scale, such as 1.5 at 150%, which the style and the fonts are sized by.
+    /// The display's scale, such as 1.5 at 150%. The style and the fonts are sized by it.
     scale: f32,
-    /// Whether the system asked the window to close, for the app to decide.
+    /// Whether the system asked the window to close. The app decides what to do about it.
     close_asked: bool = false,
     /// Frames left to draw before the window waits for the next event.
     busy_frames: u8 = settle_frames,
     /// The files dropped on the window since the last frame.
     dropped: Dropped = .{},
 
-    /// A window of `width` by `height` points at the display's scale, with ImGui set up to draw
-    /// in it. ImGui keeps its layout in `ini_path`, or nowhere when it's null. A hidden window
-    /// only draws into pictures (`capture`).
+    /// Opens a window of `width` by `height` points at the display's scale, with ImGui set up to
+    /// draw in it. ImGui saves its layout in `ini_path`, or nowhere when that's null. A hidden
+    /// window only draws into images (`capture`).
     pub fn open(title: [*:0]const u8, width: u32, height: u32, ini_path: ?[*:0]const u8, hidden: bool) Error!Window {
         if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return fail("SDL_Init");
         errdefer c.SDL_Quit();
@@ -57,14 +57,14 @@ pub const Window = struct {
         setIcon(handle);
         _ = c.SDL_SetWindowPosition(handle, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
         _ = c.SDL_SetWindowMinimumSize(handle, min_width, min_height);
-        // The shader formats ImGui's backend carries: Vulkan's, and Metal's on Apple's systems.
+        // The shader formats ImGui's backend comes with: Vulkan's, and Metal's on Apple systems.
         const gpu = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL | c.SDL_GPU_SHADERFORMAT_METALLIB, false, null) orelse return fail("SDL_CreateGPUDevice");
         errdefer c.SDL_DestroyGPUDevice(gpu);
         if (!c.SDL_ClaimWindowForGPUDevice(gpu, handle)) return fail("SDL_ClaimWindowForGPUDevice");
         errdefer c.SDL_ReleaseWindowFromGPUDevice(gpu, handle);
         _ = c.SDL_SetGPUSwapchainParameters(gpu, handle, c.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, c.SDL_GPU_PRESENTMODE_VSYNC);
-        // A text field takes text through the system's input methods only while one has the
-        // focus, which ImGui's backend tells SDL.
+        // Text input through the system's input methods is only on while a text field has the
+        // focus. ImGui's backend tells SDL when that is.
         _ = c.SDL_StopTextInput(handle);
 
         _ = c.ImGui_CreateContext(null);
@@ -72,8 +72,8 @@ pub const Window = struct {
         // No keyboard navigation (no `NavEnableKeyboard`): the arrow keys and Tab are the app's
         // shortcuts.
         io.*.IniFilename = ini_path;
-        // Windows move by their title bars and tabs only, so that dragging in
-        // a panel's contents never moves the panel.
+        // Windows only move when you drag their title bars and tabs, so dragging inside a panel
+        // never moves the panel.
         io.*.ConfigWindowsMoveFromTitleBarOnly = true;
         if (!c.cImGui_ImplSDL3_InitForSDLGPU(handle)) return fail("ImGui_ImplSDL3_InitForSDLGPU");
         var info: c.ImGui_ImplSDLGPU3_InitInfo = .{
@@ -99,9 +99,9 @@ pub const Window = struct {
         c.SDL_Quit();
     }
 
-    /// Hands the system's events to ImGui, waiting for one when nothing has happened for a few
-    /// frames, then starts ImGui's frame. False while the window is minimized, when there is
-    /// nothing to draw.
+    /// Hands the system's events to ImGui, then starts ImGui's frame. When nothing has happened
+    /// for a few frames, it waits for an event first. Returns false while the window is
+    /// minimised, since there's nothing to draw.
     pub fn beginFrame(window: *Window) bool {
         window.dropped.clear();
         var event: c.SDL_Event = undefined;
@@ -171,8 +171,8 @@ pub const Window = struct {
         _ = c.SDL_SubmitGPUCommandBuffer(commands);
     }
 
-    /// Draws ImGui's frame into a picture rather than on the screen, and saves it as a PNG file
-    /// at `path`: for checking the screens against the design without showing a window.
+    /// Draws ImGui's frame into an image instead of on the screen, and saves it as a PNG file at
+    /// `path`. It's for checking screens against the design without showing a window.
     pub fn capture(window: *Window, background: [4]f32, path: [*:0]const u8) Error!void {
         c.ImGui_Render();
         const draw_data = c.ImGui_GetDrawData();
@@ -227,9 +227,7 @@ pub const Window = struct {
     }
 };
 
-/// Files dropped on the window in one frame, with their paths copied from SDL's events, which
-/// SDL frees with the next one. A drop of several files sends one event per file.
-/// Gives the window minilab's icon: on macOS the Dock's too.
+/// Gives the window minilab's icon, which on macOS is also the Dock icon.
 fn setIcon(handle: *c.SDL_Window) void {
     icon.render(icon_side, &icon_pixels);
     const surface = c.SDL_CreateSurface(icon_side, icon_side, c.SDL_PIXELFORMAT_RGBA32) orelse return;
@@ -243,12 +241,14 @@ fn setIcon(handle: *c.SDL_Window) void {
     if (!c.SDL_SetWindowIcon(handle, surface)) std.log.warn("the window icon wasn't set: {s}", .{c.SDL_GetError()});
 }
 
+/// Files dropped on the window in one frame. Their paths are copied from SDL's events, because SDL
+/// frees them with the next event. A drop of several files sends one event per file.
 pub const Dropped = struct {
     paths: [max_files][]const u8 = undefined,
     count: usize = 0,
     bytes: [max_bytes]u8 = undefined,
     used: usize = 0,
-    /// Where the last file was dropped, in the window's points, as ImGui's mouse is.
+    /// Where the last file was dropped, in the window's points, like ImGui's mouse position.
     position: [2]f32 = .{ 0, 0 },
 
     const max_files = 256;
@@ -263,8 +263,8 @@ pub const Dropped = struct {
         dropped.used = 0;
     }
 
-    /// Adds `path`, or drops it when there's no room left, which only a drop of hundreds of
-    /// files reaches.
+    /// Adds `path`, or ignores it when there's no room left. Only a drop of hundreds of files gets
+    /// that far.
     fn add(dropped: *Dropped, path: []const u8, position: [2]f32) void {
         if (dropped.count == max_files or dropped.used + path.len > max_bytes) {
             std.log.warn("too many files dropped at once; skipped {s}", .{path});
@@ -279,7 +279,8 @@ pub const Dropped = struct {
     }
 };
 
-/// The primary display's content scale, such as 1.5 for a display at 150%, or 1 where it's unknown.
+/// Returns the primary display's content scale, such as 1.5 for a display at 150%, or 1 when it's
+/// unknown.
 fn displayScale() f32 {
     const scale = c.SDL_GetDisplayContentScale(c.SDL_GetPrimaryDisplay());
     return if (scale > 0) scale else 1;

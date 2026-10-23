@@ -1,7 +1,7 @@
-//! Reducing images by area, to any size: each output pixel is the mean of the input it covers,
-//! and an input pixel cut by an output pixel's edge counts by the share of it inside. This is
-//! what a scanner at the lower resolution would have seen, without the aliasing of picking every
-//! nth pixel and without `image.downscale`'s limit to whole factors.
+//! Reduces images by area, to any size. Each output pixel is the mean of the input it covers, and
+//! an input pixel cut by an output pixel's edge counts by the share of it that's inside. That's
+//! what a scanner at the lower resolution would have seen, without the aliasing you get from
+//! picking every nth pixel, and without `image.downscale`'s limit to whole factors.
 //!
 //! The work is done in two passes, across and then down, in `f32`.
 
@@ -13,9 +13,9 @@ pub const Size = struct {
     height: usize,
 };
 
-/// The size of a `width` × `height` image reduced so that its longer side is `long_edge`, with
-/// its proportions kept as closely as whole pixels allow. An image no longer than that keeps its
-/// size: this only reduces.
+/// The size of a `width` × `height` image reduced so that its longer side is `long_edge`, keeping
+/// its proportions as closely as whole pixels allow. An image that's already no longer than that
+/// keeps its size: this only ever reduces.
 pub fn fitted(width: usize, height: usize, long_edge: usize) Size {
     const longest = @max(width, height);
     if (longest <= long_edge or longest == 0) return .{ .width = width, .height = height };
@@ -30,8 +30,8 @@ fn side(length: usize, scale: f64) usize {
     return @max(1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(length)) * scale))));
 }
 
-/// How each output pixel along one axis takes from the input: the first input pixel it covers,
-/// and a weight for it and each of the next `taps - 1`, which add up to 1.
+/// How each output pixel along one axis draws on the input: the first input pixel it covers, and
+/// weights for that one and each of the next `taps - 1`, adding up to 1.
 const Axis = struct {
     first: []usize,
     weights: []f32,
@@ -77,8 +77,8 @@ const Axis = struct {
 
 const channels = image.channel_count;
 
-/// `source` reduced to `size` by area. Neither side may grow. Integer samples are rounded to the
-/// nearest; float samples are kept as they come out.
+/// Reduces `source` to `size` by area. Neither side may grow. Integer samples are rounded to the
+/// nearest value, and float samples are kept as they come out.
 pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image([channels]Sample), size: Size) !image.Image([channels]Sample) {
     std.debug.assert(size.width <= source.width and size.height <= source.height);
     var across: Axis = try .init(gpa, source.width, size.width);
@@ -86,7 +86,7 @@ pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image
     var down: Axis = try .init(gpa, source.height, size.height);
     defer down.deinit(gpa);
 
-    // Across: every input row to the output's width.
+    // Across: squeeze every input row to the output's width.
     var narrow: image.Image([channels]f32) = try .init(gpa, size.width, source.height);
     defer narrow.deinit(gpa);
     for (0..source.height) |y| {
@@ -102,7 +102,7 @@ pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image
         }
     }
 
-    // Down: every column to the output's height.
+    // Down: squeeze every column to the output's height.
     var result: image.Image([channels]Sample) = try .init(gpa, size.width, size.height);
     errdefer result.deinit(gpa);
     const sums = try gpa.alloc([channels]f32, size.width);

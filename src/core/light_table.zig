@@ -1,24 +1,25 @@
-//! Showing film on the screen as it looks on a light table: the scan's own colours, made brighter
-//! so that the clearest film, the base of a negative, shows nearly white through its mask. One
-//! gain for all three channels, so a colour negative's orange stays orange. Raw scans are linear
-//! and the base of a colour negative transmits less than half the light in its brightest channel,
-//! so shown as they are they look dim and brown.
+//! Shows film on the screen the way it looks on a light table: the scan's own colours, made
+//! brighter so that the clearest film (the base of a negative) shows nearly white through its
+//! mask. All three channels get the same gain, so a colour negative's orange stays orange. We need
+//! this because raw scans are linear, and the base of a colour negative lets through less than
+//! half the light even in its brightest channel, so shown as they are, they look dim and brown.
 
 const std = @import("std");
 const image = @import("image.zig");
 const encode = @import("encode.zig");
 
-/// Where the clearest film shows, as a share of full brightness.
+/// How bright the clearest film shows, as a share of full brightness.
 pub const clearest = 0.92;
-/// Brighter than this is light through a hole in the holder, not film.
+/// Anything brighter than this is light through a hole in the holder, not film.
 const open_light = 0.95;
-/// The share of the film that may be clearer than what's taken as its clearest: dust holes and
-/// scratches, in parts per thousand.
+/// The percentile we take as the clearest film, in parts per thousand. The 0.5% of the film that's
+/// clearer still is dust holes and scratches.
 const clearest_per_mille = 995;
-/// Below this the gain stops growing, so an empty or black scan isn't blown up to noise.
+/// Below this transmission the gain stops growing, so an empty or black scan isn't blown up into
+/// noise.
 const min_transmission = 0.02;
 const histogram_bins = 1024;
-/// The screen table's index bits: fine enough for 8 bits out.
+/// How many index bits the screen table has: fine enough for 8-bit output.
 const table_bits = 12;
 const table_entries = 1 << table_bits;
 
@@ -27,19 +28,20 @@ pub fn gainForBase(base: [3]f32) f32 {
     return clearest / @max(@max(base[0], base[1]), @max(base[2], min_transmission));
 }
 
-/// How far below the clearest film's brightest channel a pixel may be and still count as the base,
-/// for its colour.
+/// How far below the clearest film's brightest channel a pixel can be and still count as base,
+/// when we measure the base's colour.
 const base_band = 0.04;
 
-/// The gain for a scan from its own clearest film: on a strip, the base between the frames. Light
-/// through holes in the holder is left out.
+/// Works out the gain for a scan from its own clearest film, which on a strip is the base between
+/// the frames. Light through holes in the holder is left out.
 pub fn gainForScan(scan: image.Scan) f32 {
     const level = clearestLevel(scan) orelse return 1;
     return gainForBase(@splat(level));
 }
 
-/// The colour of a scan's clearest film, 0..1 per channel: on a strip, its base. The mean of the
-/// pixels whose brightest channel is near the clearest level; null for a scan with no film.
+/// Returns the colour of a scan's clearest film, 0..1 per channel (on a strip, that's its base).
+/// It's the mean of the pixels whose brightest channel is near the clearest level. Returns null
+/// for a scan with no film.
 pub fn baseOfScan(scan: image.Scan) ?[3]f32 {
     const level = clearestLevel(scan) orelse return null;
     const top = level + 1.0 / @as(f32, histogram_bins - 1);
@@ -57,8 +59,8 @@ pub fn baseOfScan(scan: image.Scan) ?[3]f32 {
     return base;
 }
 
-/// The brightest channel of a scan's clearest film, 0..1: what all but a few dust holes are darker
-/// than. Null for a scan with no film.
+/// Returns the brightest channel of a scan's clearest film, 0..1: the level that everything but a
+/// few dust holes is darker than. Returns null for a scan with no film.
 fn clearestLevel(scan: image.Scan) ?f32 {
     var bins: [histogram_bins]u32 = @splat(0);
     var counted: u64 = 0;
@@ -78,7 +80,7 @@ fn clearestLevel(scan: image.Scan) ?f32 {
     return null;
 }
 
-/// `pixels` for the screen, RGBA in `out`, brightened by `gain` and sRGB-encoded.
+/// Converts `pixels` for the screen into RGBA in `out`, brightened by `gain` and sRGB-encoded.
 pub fn toScreen(pixels: []const [3]u16, gain: f32, out: [][4]u8) void {
     std.debug.assert(pixels.len == out.len);
     var table: [table_entries]u8 = undefined;
@@ -103,9 +105,9 @@ test "a strip's base shows nearly white, and holes in the holder don't count" {
     try std.testing.expectApproxEqRel(clearest * 65535.0 / 27000.0, gain, 0.01);
     var out: [3][4]u8 = undefined;
     toScreen(scan.pixels[500..503], gain, &out);
-    // The base's brightest channel near the top, its orange kept.
+    // The base's brightest channel ends up near the top, and its orange is kept.
     try std.testing.expect(out[0][0] > 240 and out[0][1] < out[0][0] and out[0][2] < out[0][1]);
-    // Its colour, from the band of base alone.
+    // Its colour comes from the band of base alone.
     const base = baseOfScan(scan).?;
     for (base, [3]f32{ 27000, 13000, 8500 }) |b, expected| try std.testing.expectApproxEqAbs(expected / 65535, b, 1e-4);
 }

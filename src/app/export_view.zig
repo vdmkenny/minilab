@@ -1,7 +1,7 @@
-//! The Export workspace: the open roll's frames to choose from, and on the right how to write
-//! them: format, colour space, size, file names, folder and metadata. The export runs on a thread
-//! of its own with its progress at the bottom of the page, so the window keeps answering; the
-//! export itself is `minilab.export`.
+//! The Export workspace. You pick frames from the open roll, and on the right you choose how to
+//! write them: format, colour space, size, file names, folder and metadata. The export runs on its
+//! own thread, with its progress at the bottom of the page, so the window stays responsive. The
+//! export itself is in `minilab.export`.
 
 const std = @import("std");
 const c = @import("c");
@@ -23,7 +23,7 @@ const settings_width = 360;
 const page_padding_x = 20;
 const page_padding_y = 16;
 const panel_padding = 16;
-/// The space between the blocks of the page and of the panel.
+/// The space between blocks, on the page and in the panel.
 const block_gap = 14;
 const title_size = 18;
 const cell_min_width = 150;
@@ -40,13 +40,13 @@ const metadata_gap = 8;
 const metadata_check = 13;
 const export_height = 40;
 const section_padding = 12;
-/// Line heights: the design's text is 1.4 times its size.
+/// Line heights: the design sets lines at 1.4 times the text size.
 const line = 13 * 1.4;
 const small_line = 12 * 1.4;
 
 const path_field = 1024;
 
-/// The file choices, as the panel lists them.
+/// The file choices, in the order the panel lists them.
 const FileChoice = enum {
     tiff16,
     tiff8,
@@ -69,11 +69,11 @@ const sizes = [_]?usize{ null, 4000, 2048 };
 const size_names = [_][]const u8{ "Full resolution", "Long edge 4000 px", "Long edge 2048 px" };
 const default_pattern = "{roll}_{frame:02}";
 
-/// An export under way on its own thread.
+/// An export that's running on its own thread.
 const Running = struct {
     batch: *exporting.Batch,
     future: std.Io.Future(void),
-    /// What it writes, as the summary will say it.
+    /// What it's writing, in the words the summary will use.
     what: gui.Line(64) = .{},
 };
 
@@ -86,10 +86,10 @@ const Summary = struct {
 };
 
 pub const State = struct {
-    /// The roll the selection belongs to, by folder; it starts again for another roll.
+    /// The roll the selection belongs to, by folder. The selection starts over for another roll.
     roll_path: ?[]u8 = null,
     selected: std.ArrayList(bool) = .empty,
-    /// The frame clicked last, where a shift-click's range starts.
+    /// The frame clicked last, which is where a shift-click's range starts.
     anchor: ?usize = null,
     file: FileChoice = .tiff16,
     quality: f32 = 92,
@@ -97,20 +97,20 @@ pub const State = struct {
     space: usize = 0,
     size: usize = 0,
     pattern: [gui.text_capacity:0]u8 = gui.initText(gui.text_capacity, default_pattern),
-    /// Where the files go: from the library's folder, or absolute.
+    /// Where the files go: a path relative to the library's folder, or an absolute one.
     folder: [path_field:0]u8 = @splat(0),
     include: exporting.Include = .{},
     dialog: Dialog = .{ .kind = .folder },
     running: ?Running = null,
     last: ?Summary = null,
-    /// The Io the export runs on, kept for `deinit`, which isn't handed one.
+    /// The Io the export runs on, kept for `deinit`, which doesn't get one passed in.
     io_for_deinit: ?std.Io = null,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         _ = gpu;
         if (state.running) |*running| {
             running.batch.cancel.store(true, .release);
-            // Waits for the frame under way to reach its next check.
+            // Waits for the frame being exported to reach its next check.
             running.future.await(state.io_for_deinit orelse return);
             running.batch.destroy(gpa);
         }
@@ -119,7 +119,7 @@ pub const State = struct {
         if (state.roll_path) |p| gpa.free(p);
     }
 
-    /// Whether everything the page shows has loaded: for a screenshot, which waits for it.
+    /// Whether everything on the page has loaded. A screenshot waits for this.
     pub fn settled(state: *const State) bool {
         return state.running == null;
     }
@@ -145,8 +145,8 @@ pub const State = struct {
         state.anchor = null;
     }
 
-    /// Starts the selection over for roll `r` when it's another roll, and keeps it as long as the
-    /// roll's frames when frames were added.
+    /// Starts the selection over if `r` is a different roll, and keeps the selection as long as
+    /// the roll's list of frames when frames are added or removed. New frames start out chosen.
     fn follow(state: *State, gpa: std.mem.Allocator, library: *const Library, r: *const roll.Roll) void {
         const same = if (state.roll_path) |p| std.mem.eql(u8, p, r.path) else false;
         if (!same) {
@@ -167,8 +167,8 @@ pub const State = struct {
         gui.setText(&state.folder, value) catch std.log.err("the folder's path is too long: {s}", .{value});
     }
 
-    /// Takes in what finished since the last frame, the export and the folder dialog, and says
-    /// so. The app calls it every frame, so that an export's end shows on any page.
+    /// Picks up whatever finished since the last frame (the export and the folder dialog) and
+    /// reports it. The app calls this every frame, so an export finishing shows up on any page.
     pub fn poll(state: *State, ctx: context.Context) void {
         if (state.running) |*running| if (running.batch.done.load(.acquire)) {
             running.future.await(ctx.io);
@@ -194,19 +194,20 @@ pub const State = struct {
     }
 };
 
-/// The roll's exports folder, from the library's folder.
+/// The roll's exports folder, relative to the library's folder.
 fn defaultFolder(library: *const Library, r: *const roll.Roll) []const u8 {
     return gui.print("{s}/{s}", .{ relativeToLibrary(library, r.path), roll.exports_dir });
 }
 
-/// `path` from the library's folder when it's inside it, or else as it is.
+/// Returns `path` relative to the library's folder when it's inside it, or else unchanged.
 fn relativeToLibrary(library: *const Library, path: []const u8) []const u8 {
     const base = std.mem.trimEnd(u8, library.path, std.fs.path.sep_str);
     if (path.len > base.len and std.mem.startsWith(u8, path, base) and path[base.len] == std.fs.path.sep) return path[base.len + 1 ..];
     return path;
 }
 
-/// The folder the files go to, as a path: a relative one is from the library's folder.
+/// The folder the files go to, as a full path. A relative `folder` is taken from the library's
+/// folder.
 fn resolvedFolder(gpa: std.mem.Allocator, library: *const Library, folder: []const u8) ![]u8 {
     if (std.fs.path.isAbsolute(folder)) return gpa.dupe(u8, folder);
     return std.fs.path.join(gpa, &.{ library.path, folder });
@@ -316,7 +317,8 @@ fn drawPage(state: *State, ctx: context.Context, roll_index: usize) void {
     drawSection(state, gui.vec2(left, bottom - section_height), gui.vec2(right, bottom));
 }
 
-/// "Export Roll 014", how many frames are chosen, and Select all and Select none on the right.
+/// Draws the title row: "Export Roll 014", how many frames are chosen, and Select all and Select
+/// none on the right.
 fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: f32) void {
     const list = c.ImGui_GetWindowDrawList();
     const height = gui.px(control_height);
@@ -339,8 +341,8 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     shortcuts.tooltip("Clears the selection", .select_none);
 }
 
-/// A button with a border and no fill, its label in the secondary colour: the design's quieter
-/// button. `size` in screen pixels.
+/// A button with a border and no fill, and its label in the secondary colour: the design's
+/// quieter button. `size` is in screen pixels.
 fn outlineButton(label: [:0]const u8, size: gui.Vec2) bool {
     const corner = c.ImGui_GetCursorScreenPos();
     const clicked = c.ImGui_InvisibleButton(label, size, 0);
@@ -354,8 +356,8 @@ fn outlineButton(label: [:0]const u8, size: gui.Vec2) bool {
     return clicked;
 }
 
-/// The frames, as cards in as many columns of at least 150 pixels as fit. A click chooses or
-/// leaves a frame; a shift-click every frame from the one clicked before.
+/// Draws the frames as cards, in as many columns of at least 150 pixels as fit. A click picks or
+/// unpicks a frame, and a shift-click does the same for every frame from the one clicked before.
 fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
     const r = &ctx.library.rolls.items[roll_index];
     const total = r.frames.items.len;
@@ -418,7 +420,8 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         const box_min = gui.vec2(picture_max.x - gui.px(2 + check_size), label_top + (gui.px(small_line) - gui.px(check_size)) / 2);
         drawCheck(list, box_min, gui.px(check_size), on);
 
-        // Frames left out are dimmed: the page's colour over them, as the design's opacity.
+        // Frames left out are dimmed by drawing the page colour over them, standing in for the
+        // design's opacity.
         if (!on) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, 0.45)), radius, 0);
     }
     const rows = (total + columns - 1) / columns;
@@ -426,14 +429,15 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
     c.ImGui_Dummy(gui.vec2(0, 0));
 }
 
-/// A check box `size` pixels square at `min`: amber with a tick when `on`, an outline when not.
+/// Draws a check box, `size` pixels square, at `min`: amber with a tick when `on`, just an
+/// outline when not.
 fn drawCheck(list: *c.ImDrawList, min: gui.Vec2, size: f32, on: bool) void {
     if (on) return gui.tickedBox(list, min, size);
     c.ImDrawList_AddRectEx(list, min, gui.vec2(min.x + size, min.y + size), theme.imU32(theme.track), gui.px(3), 1, 0);
 }
 
-/// The bottom of the page: the export under way with its progress and Cancel, or what the last
-/// one wrote, with Show in folder.
+/// Draws the bottom of the page: the running export with its progress and Cancel, or what the
+/// last one wrote, with Show in folder.
 fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
     const list = c.ImGui_GetWindowDrawList();
     c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.panel), gui.px(6), 0);
@@ -455,7 +459,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         if (!cancelling and link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
         shortcuts.tooltip("Stops after the frame under way", .cancel);
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
-        // The progress bar, in the second line.
+        // The progress bar, on the second line.
         const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), theme.imU32(theme.border), gui.px(2), 0);
         const done = (right - x) * std.math.clamp(batch.progress(), 0, 1);
@@ -477,7 +481,8 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
     fonts.pop();
 }
 
-/// An underlined link whose text ends at `top_right`, as the design's links. True when clicked.
+/// An underlined link, styled like the design's links, whose text ends at `top_right`. Returns
+/// true when it's clicked.
 fn link(top_right: gui.Vec2, label: [:0]const u8) bool {
     const size = c.ImGui_CalcTextSize(label);
     const corner = gui.vec2(top_right.x - size.x, top_right.y);
@@ -518,7 +523,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     const list = c.ImGui_GetWindowDrawList();
     const window = c.ImGui_GetWindowPos();
     const height = c.ImGui_GetWindowHeight();
-    // The panel's top-left, moved with its scrolling.
+    // The panel's top-left corner, moved by its scrolling.
     const origin = gui.vec2(window.x, window.y - c.ImGui_GetScrollY());
     const x = origin.x + gui.px(panel_padding);
     const width = gui.px(settings_width - 2 * panel_padding);
@@ -563,20 +568,21 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     c.ImGui_Dummy(gui.vec2(0, 0));
 }
 
-/// A section heading at `at`, in the 12-pixel line the design gives it.
+/// Draws a section heading at `at`, on the 12-pixel line the design gives it.
 fn heading(list: *c.ImDrawList, at: gui.Vec2, label: [:0]const u8) void {
     fonts.pushSized(.semibold, 12);
     c.ImDrawList_AddText(list, gui.vec2(at.x, at.y + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
     fonts.pop();
 }
 
-/// `text` from `at`, wrapped at `width` in the design's lines. Returns its height.
+/// Draws `text` from `at`, wrapped at `width`, with the design's line height. Returns its height.
 fn wrapped(list: *c.ImDrawList, at: gui.Vec2, width: f32, colour: theme.Color, text: []const u8) f32 {
     var y = at.y;
     var rest = std.mem.trim(u8, text, " ");
     const offset = (gui.px(line) - c.ImGui_GetFontSize()) / 2;
     while (rest.len > 0) {
-        // The longest run of whole words that fits; a word longer than the line goes alone.
+        // The longest run of whole words that fits. A word longer than the line gets a line of
+        // its own.
         var end: usize = rest.len;
         if (c.ImGui_CalcTextSize(gui.print("{s}", .{rest})).x > width) {
             var fits: usize = 0;
@@ -594,7 +600,8 @@ fn wrapped(list: *c.ImDrawList, at: gui.Vec2, width: f32, colour: theme.Color, t
     return y - at.y;
 }
 
-/// TIFF 16-bit, TIFF 8-bit, JPEG and HEIC HDR, as pills that wrap. Returns the y under them.
+/// Draws the file choices (TIFF 16-bit, TIFF 8-bit, JPEG and HEIC HDR) as pills that wrap.
+/// Returns the y below them.
 fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
     var at = gui.vec2(x, top);
     const height = gui.px(pill_height);
@@ -618,7 +625,7 @@ fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
     return at.y + height;
 }
 
-/// A choice that can't be made: no fill, a dashed border, tertiary text.
+/// Draws a choice you can't pick: no fill, a dashed border and tertiary text.
 fn drawUnavailable(label: [:0]const u8, size: gui.Vec2) void {
     const corner = c.ImGui_GetCursorScreenPos();
     _ = c.ImGui_InvisibleButton(label, size, 0);
@@ -629,7 +636,7 @@ fn drawUnavailable(label: [:0]const u8, size: gui.Vec2) void {
     c.ImDrawList_AddText(list, gui.vec2(corner.x + (size.x - text_size.x) / 2, corner.y + (size.y - text_size.y) / 2), theme.imU32(theme.text_tertiary), label);
 }
 
-/// What the chosen file is, and what to know about it with these frames.
+/// A note on the chosen file type, and anything worth knowing about it for these frames.
 fn formatNote(state: *const State) []const u8 {
     const options = state.options();
     const base = switch (state.file) {
@@ -642,8 +649,8 @@ fn formatNote(state: *const State) []const u8 {
     return gui.print("{s}{s}", .{ base, banding });
 }
 
-/// Colour space, size, file names and folder, as the design's grid of rows: a label column, then
-/// the control. JPEG adds its quality first. Returns the y under the last row.
+/// Draws colour space, size, file names and folder as the design's grid of rows: a label column,
+/// then the control. JPEG adds its quality first. Returns the y below the last row.
 fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     const control_x = x + gui.px(label_width + grid_gap);
@@ -715,16 +722,16 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     return y;
 }
 
-/// A grid row's label, in the middle of the row's height.
+/// Draws a grid row's label, centred in the row's height.
 fn rowLabel(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8) void {
     c.ImDrawList_AddText(list, gui.vec2(x, y + (gui.px(control_height) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
 }
 
-/// Opens the system's folder dialog, at the folder chosen now.
+/// Opens the system's folder dialog, starting at the folder that's chosen now.
 fn chooseFolder(state: *State, ctx: context.Context) void {
     const folder = resolvedFolder(ctx.gpa, ctx.library, std.mem.sliceTo(&state.folder, 0)) catch return;
     defer ctx.gpa.free(folder);
-    // Where it starts: the folder when it's there, else the library.
+    // Start at the chosen folder if it exists, or else at the library.
     std.Io.Dir.cwd().access(ctx.io, folder, .{}) catch {
         state.dialog.showAt(ctx.gpa, ctx.io, gui.print("{s}", .{ctx.library.path}));
         return;
@@ -732,7 +739,7 @@ fn chooseFolder(state: *State, ctx: context.Context) void {
     state.dialog.showAt(ctx.gpa, ctx.io, gui.print("{s}", .{folder}));
 }
 
-/// The roll's details to include, each with what it holds. Returns the y under them.
+/// Draws the roll details you can include, each with what it holds. Returns the y below them.
 fn drawMetadata(state: *State, info: roll.Info, x: f32, top: f32, width: f32) f32 {
     const list = c.ImGui_GetWindowDrawList();
     const unset = "Not set";
@@ -769,7 +776,7 @@ fn drawMetadata(state: *State, info: roll.Info, x: f32, top: f32, width: f32) f3
     return y - gui.px(metadata_gap);
 }
 
-/// Starts exporting the chosen frames of `r` on a thread of their own.
+/// Starts exporting the chosen frames of `r` on a separate thread.
 fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
     var indices: std.ArrayList(usize) = .empty;
     defer indices.deinit(ctx.gpa);

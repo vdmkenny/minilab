@@ -1,21 +1,22 @@
-//! Builds libjpeg-turbo's libjpeg API as the static library `jpeg`, in plain C: without its SIMD
-//! extensions, so no NASM or other assembler is needed, and the same code builds for every target.
-//! The library reads and writes 8-bit and 12-bit lossy JPEG and 2- to 16-bit lossless JPEG, with
-//! arithmetic coding, and emulates the libjpeg v6b API, as libjpeg-turbo's own default build does.
-//! The TurboJPEG API and the command-line tools are left out.
+//! Builds libjpeg-turbo's libjpeg API as the static library `jpeg`, in plain C. We leave out the
+//! SIMD extensions, so you don't need NASM or any other assembler, and the same code builds for
+//! every target. The library reads and writes 8-bit and 12-bit lossy JPEG and 2- to 16-bit
+//! lossless JPEG, with arithmetic coding, and emulates the libjpeg v6b API, like libjpeg-turbo's
+//! own default build does. The TurboJPEG API and the command-line tools are left out.
 //!
 //! The sources and the generated headers follow the upstream's `CMakeLists.txt` for a build with
-//! `WITH_SIMD=0`. libjpeg-turbo is covered by the IJG licence, the Modified BSD licence and the zlib
-//! licence (the upstream's `LICENSE.md` and `README.ijg`), which the package exposes as named lazy
-//! paths so that a program can install them.
+//! `WITH_SIMD=0`. libjpeg-turbo is covered by the IJG licence, the Modified BSD licence and the
+//! zlib licence (see the upstream's `LICENSE.md` and `README.ijg`). The package exposes them as
+//! named lazy paths so a program can install them.
 
 const std = @import("std");
 
 const version: std.SemanticVersion = .{ .major = 3, .minor = 2, .patch = 0 };
 const version_string = std.fmt.comptimePrint("{f}", .{version});
-/// The upstream's own number for the version, major and three digits each for minor and patch.
+/// The upstream's own version number: the major version, then three digits each for the minor
+/// version and the patch.
 const version_number = std.fmt.comptimePrint("{d}{d:0>3}{d:0>3}", .{ version.major, version.minor, version.patch });
-/// The release's date, which the upstream's build stamps into `jconfigint.h` as its build string.
+/// The release date, which the upstream's build stamps into `jconfigint.h` as its build string.
 const release_date = "20260630";
 /// The libjpeg API and ABI the library emulates: v6b, the upstream's default.
 const jpeg_lib_version = 62;
@@ -25,8 +26,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const windows = target.result.os.tag == .windows;
-    // `__builtin_ctzl` serves the Huffman encoder when `unsigned long` is as wide as `size_t`, which
-    // it is not on 64-bit Windows.
+    // The Huffman encoder can use `__builtin_ctzl` when `unsigned long` is as wide as `size_t`. On
+    // 64-bit Windows it isn't.
     const long_is_size_t = target.result.cTypeBitSize(.ulong) == target.result.ptrBitWidth();
 
     const jconfig = b.addConfigHeader(.{ .style = .{ .cmake = upstream.path("src/jconfig.h.in") }, .include_path = "jconfig.h" }, .{
@@ -40,8 +41,8 @@ pub fn build(b: *std.Build) void {
     });
     const jconfigint = b.addConfigHeader(.{ .style = .{ .cmake = upstream.path("src/jconfigint.h.in") }, .include_path = "jconfigint.h" }, .{
         .BUILD = release_date,
-        // Symbols shared between the library's files stay out of its interface, except on
-        // Windows, where a static library has no such notion.
+        // Hide the symbols the library's files share with each other, so they stay out of its
+        // interface. Windows static libraries don't have hidden symbols, so skip it there.
         .HIDDEN = if (windows) "" else "__attribute__((visibility(\"hidden\")))",
         .INLINE = "__inline__ __attribute__((always_inline))",
         .THREAD_LOCAL = "__thread",
@@ -68,8 +69,8 @@ pub fn build(b: *std.Build) void {
     module.addCSourceFiles(.{
         .root = upstream.path("src"),
         .files = &sources,
-        // The codec shifts negative numbers, as C compilers have always done, which the undefined
-        // behaviour sanitiser would trap.
+        // The codec shifts negative numbers, which C compilers have always handled as expected,
+        // but the undefined behaviour sanitiser would trap it.
         .flags = &.{"-fno-sanitize=undefined"},
     });
 
@@ -84,8 +85,8 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("README-libjpeg-turbo.ijg", upstream.path("README.ijg"));
 }
 
-/// The upstream's `JPEG_SOURCES`, with arithmetic coding: each file under `wrapper/` compiles one of
-/// the codec's files for one sample precision.
+/// The upstream's `JPEG_SOURCES`, with arithmetic coding. Each file under `wrapper/` compiles one
+/// of the codec's files for one sample precision.
 const sources = [_][]const u8{
     "jcapimin.c",
     "wrapper/jcapistd-8.c",

@@ -2,8 +2,9 @@
 
 const std = @import("std");
 
-/// Solves `a` · x = `b` for x, in place: `a` is n × n row by row and is destroyed, and `b` becomes
-/// x. Gaussian elimination with partial pivoting, in f64. Fails on a singular system.
+/// Solves `a` · x = `b` for x, in place. `a` is n × n, stored row by row, and gets overwritten;
+/// `b` ends up holding x. It uses Gaussian elimination with partial pivoting, in f64, and fails on
+/// a singular system.
 pub fn solve(n: usize, a: []f64, b: []f64) error{Singular}!void {
     std.debug.assert(a.len == n * n and b.len == n);
     for (0..n) |column| {

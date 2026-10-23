@@ -1,23 +1,25 @@
-//! The version minilab reports: the release Release Please keeps in `build.zig.zon`, and for a
-//! build past it, how many commits past and which, from `git describe` (`build.zig`).
+//! The version minilab reports. That's the release Release Please keeps in `build.zig.zon`, plus,
+//! for a build after that release, how many commits after it and which commit, from
+//! `git describe` (see `build.zig`).
 
 const std = @import("std");
 const build_options = @import("build_options");
 
-/// Such as `0.0.1` at a release, and `0.0.1+12.gabc1234` twelve commits after it, with `.dirty`
-/// where the checkout has changes.
+/// For example `0.0.1` at a release, or `0.0.1+12.gabc1234` twelve commits after it, with `.dirty`
+/// on the end when the checkout has uncommitted changes.
 pub const string = named(build_options.version, build_options.describe);
 
-/// `release`, with where `describe` says the checkout is past it as SemVer build metadata. What
-/// isn't `git describe --long --dirty`'s leaves `release` as it is.
+/// Returns `release`, plus how far past it `describe` says the checkout is, as SemVer build
+/// metadata. If `describe` isn't output from `git describe --long --dirty`, `release` stays as it
+/// is.
 fn named(comptime release: []const u8, comptime describe: []const u8) []const u8 {
     const past = Past.parse(describe) orelse return release;
     if (std.mem.eql(u8, past.commits, "0") and !past.dirty) return release;
     return release ++ "+" ++ past.commits ++ "." ++ past.commit ++ if (past.dirty) ".dirty" else "";
 }
 
-/// Where `git describe --long --dirty` says the checkout is: how many commits past the tag, the
-/// commit with its `g`, and whether it has changes.
+/// What `git describe --long --dirty` says about the checkout: how many commits it is past the
+/// tag, the commit (with its `g` prefix), and whether it has uncommitted changes.
 const Past = struct {
     commits: []const u8,
     commit: []const u8,

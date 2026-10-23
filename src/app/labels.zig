@@ -1,4 +1,4 @@
-//! How formats, films and stocks read in the interface.
+//! How formats, films and stocks are written in the interface.
 
 const std = @import("std");
 const minilab = @import("minilab");
@@ -7,8 +7,8 @@ const gui = @import("../ui/gui.zig");
 const formats = minilab.formats;
 const develop = minilab.develop;
 
-/// "Full frame, 36 × 24": the format's name and its size along × across the film in mm. Sheet
-/// film names carry their size already.
+/// The format's name and its size in mm, along the film × across it, like "Full frame, 36 × 24".
+/// Sheet film names already include their size.
 pub fn format(id: formats.Standard) [:0]const u8 {
     const f = id.format();
     if (f.size == .sheet) return gui.print("{s}", .{f.name});
@@ -17,27 +17,27 @@ pub fn format(id: formats.Standard) [:0]const u8 {
     return gui.print("{s}, {d} × {d}", .{ name, f.width_mm, f.height_mm });
 }
 
-/// "135 · full frame, 36 × 24", as the roll cards show it.
+/// The film size and the format, like "135 · full frame, 36 × 24", for the roll cards.
 pub fn filmAndFormat(id: formats.Standard) [:0]const u8 {
     const f = id.format();
     if (f.size == .sheet) return gui.print("Sheet film · {s}", .{f.name});
     return gui.print("{s} · {s}, {d} × {d}", .{ f.size.label(), f.name, f.width_mm, f.height_mm });
 }
 
-/// "36 × 24 mm · 3:2", as the viewer's info line shows it.
+/// The size and the ratio, like "36 × 24 mm · 3:2", for the viewer's info line.
 pub fn sizeAndRatio(id: formats.Standard) [:0]const u8 {
     const f = id.format();
     return gui.print("{d} × {d} mm · {s}", .{ f.width_mm, f.height_mm, ratio(f.ratio()) });
 }
 
-/// A ratio as people say it: 3:2, 4:3, 1:1, or the number.
+/// A ratio the way people say it (3:2, 4:3, 1:1), or else just the number.
 fn ratio(r: f32) []const u8 {
     const known = [_]struct { f32, []const u8 }{ .{ 1.5, "3:2" }, .{ 1.0, "1:1" }, .{ 4.0 / 3.0, "4:3" }, .{ 0.75, "3:4" }, .{ 2.0 / 3.0, "2:3" }, .{ 1.25, "5:4" }, .{ 2.0, "2:1" }, .{ 3.0, "3:1" } };
     for (known) |k| if (@abs(r - k[0]) < 0.02) return k[1];
     return gui.print("{d:.2}:1", .{r});
 }
 
-/// "35mm full frame, 3:2, for the whole roll.", under the frames.
+/// The note under the frames, like "35mm full frame, 3:2, for the whole roll."
 pub fn rollFormatNote(id: formats.Standard) [:0]const u8 {
     const f = id.format();
     return gui.print("{s} {s}, {s}, for the whole roll.", .{ filmSize(f.size), f.name, ratio(f.ratio()) });
@@ -71,15 +71,16 @@ pub const film_kind_labels = blk: {
     break :blk names;
 };
 
-/// A stock to choose for a roll: its name and film type, and its preset when a maker publishes
-/// the numbers for one.
+/// A stock you can pick for a roll: its name, its film type and, if the maker publishes the
+/// numbers for one, its preset.
 pub const StockChoice = struct {
     name: []const u8,
     kind: develop.FilmKind,
     preset: ?*const minilab.stocks.Stock = null,
 };
 
-/// Common stocks whose makers publish no numbers for a preset: still names a roll can have.
+/// Common stocks whose makers don't publish the numbers for a preset. You can still name a roll
+/// after them.
 const unmeasured = [_]StockChoice{
     .{ .name = "Ilford HP5 Plus", .kind = .bw_negative },
     .{ .name = "Ilford FP4 Plus", .kind = .bw_negative },
@@ -103,8 +104,8 @@ const unmeasured = [_]StockChoice{
     .{ .name = "Fujichrome Velvia 50", .kind = .colour_positive },
 };
 
-/// Every stock to choose from: the presets first, then the rest. A name that has a preset by now
-/// is left out of the rest.
+/// Every stock you can pick: the presets first, then the rest. A name that has a preset now is
+/// left out of the rest.
 pub const stock_choices = blk: {
     @setEvalBranchQuota(1_000_000);
     const presets = minilab.stocks.stocks;
@@ -123,7 +124,8 @@ pub const stock_choices = blk: {
     break :blk final;
 };
 
-/// The names of the stocks of film type `kind`, then `last`, written into `buffer`.
+/// Writes the names of the stocks of film type `kind` into `buffer`, followed by `last`, and
+/// returns them.
 pub fn stockNames(kind: develop.FilmKind, last: []const u8, buffer: *[stock_choices.len + 1][]const u8) [][]const u8 {
     var n: usize = 0;
     for (stock_choices) |choice| {

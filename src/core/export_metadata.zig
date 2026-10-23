@@ -1,13 +1,13 @@
-//! What an exported file says about itself besides its pixels: the roll's camera, lens, film
-//! stock, date and copyright, how the frame was developed, its resolution and its colour space.
+//! The metadata an exported file carries besides its pixels: the roll's camera, lens, film stock,
+//! date and copyright, how the frame was developed, its resolution and its colour space.
 //!
-//! It is written two ways. XMP, an XML packet, goes in a sidecar file next to the export and
-//! inside it too: a TIFF holds it in tag 700, a JPEG in an APP1 segment. EXIF, a small TIFF
-//! directory of numbered tags, goes inside both: in a TIFF, its tags join the file's own
-//! directory; in a JPEG, it is another APP1 segment. The codecs write neither, so both are added
-//! to the bytes the codecs make.
+//! We write it two ways. XMP (an XML packet) goes in a sidecar file next to the export, and inside
+//! the export too: a TIFF holds it in tag 700, a JPEG in an APP1 segment. EXIF (a small TIFF
+//! directory of numbered tags) goes inside both. In a TIFF its tags join the file's own directory,
+//! and in a JPEG it's another APP1 segment. The codecs write neither, so we add both to the bytes
+//! the codecs produce.
 //!
-//! EXIF has no field for the film stock or the develop settings; those are in the XMP only, in
+//! EXIF has no fields for the film stock or the develop settings, so those only go in the XMP, in
 //! minilab's own namespace.
 
 const std = @import("std");
@@ -20,8 +20,8 @@ pub const Metadata = struct {
     camera: ?[]const u8 = null,
     lens: ?[]const u8 = null,
     stock: ?[]const u8 = null,
-    /// When the roll was shot, as the roll says it. Dates such as 2026, 2026-10 or 2026-10-22 are
-    /// written as dates; anything else as text in minilab's namespace.
+    /// When the roll was shot, as the roll gives it. Dates like 2026, 2026-10 or 2026-10-22 are
+    /// written as dates, and anything else as text in minilab's namespace.
     shot: ?[]const u8 = null,
     copyright: ?[]const u8 = null,
     /// How the frame was developed.
@@ -38,17 +38,17 @@ pub const Metadata = struct {
 pub const Develop = struct {
     look: look.Id,
     kind: develop.FilmKind,
-    /// The frame's saved settings, or null when it was never developed and the export worked out
+    /// The frame's saved settings, or null if it was never developed and the export worked out
     /// automatic ones.
     settings: ?develop.Settings = null,
     /// The scanner, as the roll names it.
     scanner: ?[]const u8 = null,
-    /// The part of the scan exported, in the scan's pixels; null for all of it.
+    /// The part of the scan that was exported, in the scan's pixels, or null for all of it.
     crop: ?image.Area = null,
     quarter_turns: u2 = 0,
 };
 
-/// The name LittleCMS's profiles give each space, which XMP repeats.
+/// The name LittleCMS's profiles give each space. The XMP repeats it.
 pub fn spaceName(space: icc.Space) []const u8 {
     return switch (space) {
         .srgb => "sRGB",
@@ -59,13 +59,13 @@ pub fn spaceName(space: icc.Space) []const u8 {
     };
 }
 
-/// minilab's XMP namespace, for what no standard schema has a property for.
+/// minilab's XMP namespace, for things no standard schema has a property for.
 pub const namespace = "urn:minilab:xmp:1.0/";
 
 // XMP ------------------------------------------------------------------------------------------
 
-/// The XMP packet for `metadata`, as a sidecar file holds it and as it is embedded. The caller
-/// owns the bytes.
+/// Returns the XMP packet for `metadata`. It's the same for the sidecar file and for embedding.
+/// The caller owns the bytes.
 pub fn xmp(gpa: std.mem.Allocator, metadata: Metadata) error{OutOfMemory}![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
@@ -74,8 +74,8 @@ pub fn xmp(gpa: std.mem.Allocator, metadata: Metadata) error{OutOfMemory}![]u8 {
 }
 
 fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
-    // The packet header's id is fixed by the XMP specification; the byte-order mark tells
-    // scanners the packet is UTF-8.
+    // The XMP specification fixes the packet header's id. The byte-order mark tells anything
+    // scanning for the packet that it's UTF-8.
     try w.writeAll("<?xpacket begin=\"\u{FEFF}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n");
     try w.writeAll("<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"minilab\">\n");
     try w.writeAll(" <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n");
@@ -141,7 +141,7 @@ fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
     try w.print("    minilab:Exposure=\"{d:.4}\"\n", .{s.exposure});
     try w.print("    minilab:HighlightBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.highlight_balance[0], s.highlight_balance[1], s.highlight_balance[2] });
     try w.print("    minilab:ShadowBalance=\"{d:.4} {d:.4} {d:.4}\"\n", .{ s.shadow_balance[0], s.shadow_balance[1], s.shadow_balance[2] });
-    // Highlights, midtones, shadows, as `develop.Range` orders them.
+    // Highlights, midtones and shadows, in `develop.Range`'s order.
     try w.print("    minilab:Temperature=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.temperature[0], s.temperature[1], s.temperature[2] });
     try w.print("    minilab:Tint=\"{d:.1} {d:.1} {d:.1}\"\n", .{ s.tint[0], s.tint[1], s.tint[2] });
     try w.writeAll("    minilab:Matrix=\"");
@@ -157,8 +157,8 @@ fn attribute(w: *std.Io.Writer, name: []const u8, value: []const u8) std.Io.Writ
     try w.writeAll("\"\n");
 }
 
-/// `text` as XML character data or an attribute value: markup characters escaped, and control
-/// characters, which XML 1.0 doesn't allow, as spaces.
+/// Writes `text` as XML character data or an attribute value. Markup characters are escaped, and
+/// control characters (which XML 1.0 doesn't allow) become spaces.
 fn escaped(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
     for (text) |ch| switch (ch) {
         '&' => try w.writeAll("&amp;"),
@@ -171,7 +171,7 @@ fn escaped(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
     };
 }
 
-/// A date of ISO 8601's three precisions, as found in `text`.
+/// A date in one of ISO 8601's three precisions (a year, a month or a day), as `isoDate` finds it.
 const Date = struct { year: u16, month: ?u8 = null, day: ?u8 = null };
 
 fn isoDate(text: []const u8) ?Date {
@@ -192,9 +192,9 @@ fn isoDate(text: []const u8) ?Date {
     return date;
 }
 
-/// `value` as a fraction: whole numbers over 1, else to a hundredth.
+/// Returns `value` as a fraction: whole numbers over 1, and anything else to a hundredth.
 fn rational(value: f32) [2]u32 {
-    // Far beyond any scanner, and within a u32 a hundred times over.
+    // Far beyond any scanner, and it still fits in a u32 a hundred times over.
     const v = std.math.clamp(value, 0, 1e7);
     if (@round(v) == v) return .{ @intFromFloat(v), 1 };
     return .{ @intFromFloat(@round(v * 100)), 100 };
@@ -202,7 +202,7 @@ fn rational(value: f32) [2]u32 {
 
 // EXIF -----------------------------------------------------------------------------------------
 
-/// TIFF's value types, as its directory entries number them.
+/// TIFF's value types, with the numbers its directory entries use for them.
 const Type = enum(u16) {
     byte = 1,
     ascii = 2,
@@ -217,15 +217,15 @@ const Entry = struct {
     tag: u16,
     type: u16,
     count: u32,
-    /// The value, little-endian. Up to four bytes go in the entry; longer values after the
-    /// directory, with the entry pointing at them.
+    /// The value, little-endian. Up to four bytes go in the entry itself. Longer values go after
+    /// the directory, and the entry points at them.
     value: []const u8,
-    /// Whether `value` is the four value bytes of an entry read from a file, which may be an
-    /// offset into that file: copied as they are.
+    /// Whether `value` is the four value bytes of an entry read from a file. Those may be an
+    /// offset into that file, so they're copied as they are.
     raw: bool = false,
 };
 
-/// The tags written, from TIFF 6.0 and EXIF 2.32.
+/// The tags we write, from TIFF 6.0 and EXIF 2.32.
 const Tag = struct {
     const model = 272;
     const x_resolution = 282;
@@ -244,12 +244,12 @@ const Tag = struct {
 };
 
 const resolution_in_inches = 2;
-/// EXIF's colour space values: sRGB, or anything else, which the ICC profile then says.
+/// EXIF's colour space values: sRGB, or anything else, in which case the ICC profile says which.
 const exif_srgb = 1;
 const exif_uncalibrated = 0xFFFF;
 const exif_version = "0232";
 
-/// Builds entries, their values kept in an arena.
+/// Builds entries, keeping their values in an arena.
 const Entries = struct {
     arena: std.mem.Allocator,
     list: std.ArrayList(Entry) = .empty,
@@ -287,7 +287,7 @@ const Entries = struct {
 fn exifEntries(e: *Entries, m: Metadata) !void {
     try e.add(Tag.exif_version, .undefined, exif_version.len, exif_version);
     if (m.shot) |text| if (isoDate(text)) |date| if (date.day) |day| {
-        // EXIF wants the time too, and allows unknown parts as spaces.
+        // EXIF wants the time too, and lets unknown parts be spaces.
         try e.ascii(Tag.date_time_original, try std.fmt.allocPrint(e.arena, "{d:0>4}:{d:0>2}:{d:0>2}   :  :  ", .{ date.year, date.month.?, day }));
     };
     try e.short(Tag.colour_space, if (m.space == .srgb) exif_srgb else exif_uncalibrated);
@@ -298,7 +298,7 @@ fn exifEntries(e: *Entries, m: Metadata) !void {
     if (m.lens) |text| try e.ascii(Tag.lens_model, text);
 }
 
-/// The main directory's entries that EXIF adds, with a placeholder for the EXIF pointer.
+/// The entries EXIF adds to the main directory, with a placeholder for the EXIF pointer.
 fn mainEntries(e: *Entries, m: Metadata, software: bool) !void {
     if (m.camera) |text| try e.ascii(Tag.model, text);
     if (m.dpi) |dpi| {
@@ -317,15 +317,15 @@ fn byTag(_: void, a: Entry, b: Entry) bool {
 
 pub const Error = error{
     OutOfMemory,
-    /// The file isn't what the codec writes: a little-endian classic TIFF, or a JPEG.
+    /// The file isn't what the codec writes (a little-endian classic TIFF, or a JPEG).
     UnexpectedFile,
-    /// The file has grown past what classic TIFF's 32-bit offsets reach.
+    /// The file has grown past what classic TIFF's 32-bit offsets can reach.
     TooLarge,
 };
 
-/// Appends a directory of `entries` to `out` at an even offset from `base`, with the values too
-/// long for their entries after it, and returns its offset from `base`. `entries` are sorted by
-/// tag, as TIFF requires.
+/// Appends a directory of `entries` to `out`, at an even offset from `base`, followed by the
+/// values too long to fit in their entries. Returns the directory's offset from `base`. It sorts
+/// `entries` by tag first, as TIFF requires.
 fn appendIfd(gpa: std.mem.Allocator, out: *std.ArrayList(u8), base: usize, entries: []Entry, next: u32) Error!u32 {
     std.mem.sort(Entry, entries, {}, byTag);
     if ((out.items.len - base) % 2 == 1) try out.append(gpa, 0);
@@ -361,7 +361,7 @@ fn appendIfd(gpa: std.mem.Allocator, out: *std.ArrayList(u8), base: usize, entri
     return std.math.cast(u32, at) orelse error.TooLarge;
 }
 
-/// Sets the four value bytes of the entry `tag` of the directory at `ifd` to `value`.
+/// Sets the four value bytes of entry `tag`, in the directory at `ifd`, to `value`.
 fn patchEntry(bytes: []u8, ifd: usize, tag: u16, value: u32) void {
     const count = std.mem.readInt(u16, bytes[ifd..][0..2], .little);
     for (0..count) |i| {
@@ -373,10 +373,10 @@ fn patchEntry(bytes: []u8, ifd: usize, tag: u16, value: u32) void {
     unreachable;
 }
 
-/// Adds `metadata` as EXIF and `packet` as XMP to `file`, a TIFF as `codecs.tiff.write` makes it:
-/// a new main directory with the file's own entries and the new ones, and an EXIF directory, all
-/// at the end of the file, and the header pointed at the new directory. The old one stays behind,
-/// unused. The caller owns the bytes.
+/// Adds `metadata` as EXIF and `packet` as XMP to `file`, a TIFF as `codecs.tiff.write` makes it.
+/// We append a new main directory (the file's own entries plus the new ones) and an EXIF
+/// directory, then point the header at the new main directory. The old one stays behind, unused.
+/// The caller owns the bytes.
 pub fn intoTiff(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, packet: ?[]const u8) Error![]u8 {
     const header = "II*\x00";
     if (file.len < 8 or !std.mem.eql(u8, file[0..4], header)) return error.UnexpectedFile;
@@ -392,7 +392,7 @@ pub fn intoTiff(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     try mainEntries(&added, metadata, false);
     if (packet) |p| try added.add(Tag.xmp, .byte, std.math.cast(u32, p.len) orelse return error.TooLarge, p);
 
-    // The file's own entries, unless a new one replaces them.
+    // The file's own entries, except where a new one replaces them.
     var entries: Entries = .{ .arena = arena_state.allocator() };
     for (0..count) |i| {
         const raw = file[first + 2 + i * 12 ..][0..12];
@@ -423,20 +423,21 @@ pub fn intoTiff(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     return out.toOwnedSlice(gpa);
 }
 
-/// The JPEG markers met.
+/// The JPEG markers we deal with.
 const soi = [2]u8{ 0xFF, 0xD8 };
 const app0 = 0xE0;
 const app1 = 0xE1;
 const exif_header = "Exif\x00\x00";
 const xmp_header = "http://ns.adobe.com/xap/1.0/\x00";
-/// A segment's length field counts itself, and holds at most this.
+/// A segment's length field counts its own two bytes too, and can hold at most this.
 const max_segment = std.math.maxInt(u16);
 /// JFIF's density units: dots per inch.
 const jfif_dots_per_inch = 1;
 
-/// Adds `metadata` as EXIF and `packet` as XMP to `file`, a JPEG as `codecs.jpeg.write` makes it:
-/// two APP1 segments after its JFIF segment, whose density becomes the resolution when it's
-/// known. An XMP packet too big for one segment is left out. The caller owns the bytes.
+/// Adds `metadata` as EXIF and `packet` as XMP to `file`, a JPEG as `codecs.jpeg.write` makes it.
+/// They go in two APP1 segments after the JFIF segment, and the JFIF density is set to the
+/// resolution when it's known. An XMP packet too big for one segment is left out. The caller owns
+/// the bytes.
 pub fn intoJpeg(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, packet: ?[]const u8) Error![]u8 {
     if (file.len < 4 or !std.mem.eql(u8, file[0..2], &soi)) return error.UnexpectedFile;
     var insert_at: usize = 2;
@@ -451,7 +452,7 @@ pub fn intoJpeg(gpa: std.mem.Allocator, file: []const u8, metadata: Metadata, pa
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    // The EXIF block: a TIFF of its own, its offsets counted from its header.
+    // The EXIF block is a TIFF of its own, with offsets counted from its own header.
     var tiff: std.ArrayList(u8) = .empty;
     try tiff.appendSlice(arena, "II*\x00\x00\x00\x00\x00");
     var main: Entries = .{ .arena = arena };
@@ -508,8 +509,8 @@ const example: Metadata = .{
     .height = 2,
 };
 
-/// The value of `tag` in the directory at `ifd` of the TIFF `bytes` starting at `base`: its type,
-/// count and value bytes.
+/// Finds `tag` in the directory at `ifd` of the TIFF in `bytes` that starts at `base`, and returns
+/// its type, count and value bytes.
 fn find(bytes: []const u8, base: usize, ifd: usize, tag: u16) ?struct { type: u16, count: u32, value: []const u8 } {
     const tiff = bytes[base..];
     const count = std.mem.readInt(u16, tiff[ifd..][0..2], .little);
@@ -598,7 +599,7 @@ test "a JPEG gains EXIF, XMP and its density, and still decodes" {
     const tagged = try intoJpeg(gpa, file, example, packet);
     defer gpa.free(tagged);
 
-    // JFIF first, its density now 2400 dots per inch, then the EXIF segment.
+    // JFIF comes first, with its density now 2400 dots per inch, then the EXIF segment.
     try std.testing.expectEqual(@as(u8, jfif_dots_per_inch), tagged[13]);
     try std.testing.expectEqual(@as(u16, 2400), std.mem.readInt(u16, tagged[14..16], .big));
     const exif_at = 4 + std.mem.readInt(u16, tagged[4..6], .big);

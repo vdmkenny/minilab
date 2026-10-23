@@ -1,17 +1,18 @@
-//! A check of frame detection on the V200 scans in `vendor/`, where they are present. It is not
-//! part of the test suite, because the scans are private and large; it prints what detection
-//! finds rather than asserting it. Zig only lets this file reach `../core/` from a root in
-//! `src/`, so run it through one, from the project root or from `minilab/`: a file in `src/`
-//! holding `test { _ = @import("frames/check_scans.zig"); }`, run with `zig test -O ReleaseFast`.
+//! Checks frame detection on the V200 scans in `vendor/`, when they're there. It isn't part of
+//! the test suite, because the scans are private and large, and it prints what detection finds
+//! instead of asserting anything. Zig only lets this file reach `../core/` from a root in `src/`,
+//! so run it through one: a file in `src/` that holds
+//! `test { _ = @import("frames/check_scans.zig"); }`, run with `zig test -O ReleaseFast` from the
+//! project root or from `minilab/`.
 //!
 //! The scans are a B&W negative strip and a colour negative frame:
 //!
-//! - `10-preview-negative`: the Epson stack's 300 dpi preview of the whole B&W strip, 8-bit at
-//!   gamma 1.8, six frames.
+//! - `10-preview-negative`: the 300 dpi preview Epson's software made of the whole B&W strip,
+//!   8-bit at gamma 1.8, with six frames.
 //! - `60-tpu-pos-c16-300`: 16-bit at gamma 1.8, 300 dpi, 40 mm around frame 2.
-//! - `hw-scans/2026-10-22`: 2400 dpi scans of one frame each with the holder's edges, the gaps
-//!   and part of the neighbouring frames. Each is checked at full resolution and reduced to 300
-//!   dpi, as a preview would be.
+//! - `hw-scans/2026-10-22`: 2400 dpi scans, each of one frame plus the holder's edges, the gaps
+//!   and part of the frames next to it. Each one is checked at full resolution, and again reduced
+//!   to 300 dpi the way a preview would be.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
@@ -28,7 +29,7 @@ const Source = struct {
 
 const preview_dpi = 300;
 const frame_dpi = 2400;
-/// The Epson stack's default gamma table.
+/// The gamma table Epson's software uses by default.
 const epson_gamma = 1.8;
 
 const sources = [_]Source{
@@ -40,7 +41,7 @@ const sources = [_]Source{
     .{ .path = "hw-scans/2026-10-22/mac-negative-c8-2400-warm.pnm", .dpi = frame_dpi, .gamma = epson_gamma },
 };
 
-/// Where `vendor/` is, seen from the project root and from `minilab/`.
+/// Where `vendor/` is, looking from the project root and from `minilab/`.
 const vendor_dirs = [_][]const u8{ "vendor", "../vendor" };
 const max_file_bytes = 256 << 20;
 
@@ -101,7 +102,7 @@ fn report(gpa: std.mem.Allocator, io: std.Io, name: []const u8, scan: image.Scan
     }
 }
 
-/// A PNM as a linear scan, with the scanner's gamma undone.
+/// Reads a PNM into a linear scan, undoing the scanner's gamma.
 fn decode(gpa: std.mem.Allocator, bytes: []const u8, gamma: f32) !image.Scan {
     const scan = try pnm.read(gpa, bytes);
     var table: [image.full_scale + 1]u16 = undefined;

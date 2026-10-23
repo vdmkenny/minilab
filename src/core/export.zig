@@ -1,12 +1,12 @@
-//! Exporting frames. Each frame's scan is cropped, turned, reduced if asked, developed with its
-//! saved settings (or automatic ones while it's undeveloped), converted to the colour space asked
-//! for, and encoded as TIFF or JPEG with that space's ICC profile and the roll's metadata, and an
-//! XMP sidecar is written beside it. A `Batch` exports frames of a roll on a thread of its own,
-//! with progress and cancel.
+//! Exports frames. For each frame we crop and turn its scan, reduce it if asked, and develop it
+//! with its saved settings (or automatic ones if it hasn't been developed yet). Then we convert it
+//! to the chosen colour space, encode it as TIFF or JPEG with that space's ICC profile and the
+//! roll's metadata, and write an XMP sidecar next to it. A `Batch` exports a roll's frames on a
+//! thread of its own, with progress and cancel.
 //!
-//! Colour: every look develops to linear light in the scanner's RGB, taken as Rec. 709's
-//! primaries. `icc.Transform` takes linear Rec. 2020, so the pixels go through BT.2087's matrix
-//! first.
+//! On colour: every look develops to linear light in the scanner's RGB, which we take as having
+//! Rec. 709's primaries. `icc.Transform` wants linear Rec. 2020, so the pixels go through
+//! BT.2087's matrix first.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -15,7 +15,7 @@ const encode = @import("encode.zig");
 const look = @import("look.zig");
 const roll = @import("roll.zig");
 const stock_curves = @import("stock_curves.zig");
-/// Reducing by area, to any size.
+/// Reduces pictures by area, to any size.
 pub const resample = @import("resample.zig");
 const pnm = @import("../io/pnm.zig");
 const tiff = @import("../io/codecs/tiff.zig");
@@ -55,12 +55,12 @@ pub const Options = struct {
     format: Format = .tiff,
     /// A TIFF's bits per sample. A JPEG always has 8.
     depth: Depth = .sixteen,
-    /// A JPEG's quality, on libjpeg's scale of 1 to 100. From 90 up the colour is kept at full
-    /// resolution (4:4:4); below, at half (4:2:0).
+    /// A JPEG's quality, on libjpeg's scale of 1 to 100. From 90 up, the colour is kept at full
+    /// resolution (4:4:4). Below that, it's kept at half (4:2:0).
     quality: jpeg.Quality = 92,
     space: icc.Space = .display_p3,
-    /// Reduce so that the longer side is this many pixels; null keeps full resolution. Frames
-    /// already smaller keep their size.
+    /// Reduce so that the longer side is this many pixels, or null to keep full resolution.
+    /// Frames that are already smaller keep their size.
     long_edge: ?usize = null,
 
     /// The bits per sample of the file.
@@ -88,12 +88,12 @@ fn check(cancel: ?*const Cancel) error{Canceled}!void {
     if (cancel) |flag| if (flag.load(.acquire)) return error.Canceled;
 }
 
-/// Rows converted between checks for cancel.
+/// How many rows we convert between checks for cancel.
 const band_rows = 64;
-/// Rows developed between checks for cancel: enough for every core to have work.
+/// How many rows we develop between checks for cancel: enough to give every core some work.
 const render_band_rows = 256;
 
-/// A frame developed, in the output space, before it's a file.
+/// A developed frame in the output space, before it becomes a file.
 pub const Picture = struct {
     pixels: Pixels,
     /// Output pixels per scan pixel: 1 at full resolution, less once reduced.
@@ -124,19 +124,20 @@ pub const Picture = struct {
     }
 };
 
-/// What converting a developed frame can fail with. Developing it can fail with more: whatever
-/// `look.developFrame` can, so `developPicture` leaves its error set to the compiler.
+/// The errors converting a developed frame can give. Developing can fail in more ways (anything
+/// `look.developFrame` can return), so `developPicture` lets the compiler infer its error set.
 pub const ConvertError = error{
     OutOfMemory,
     Canceled,
 } || icc.Error;
 
-/// `scan` as `frame` says: cropped, turned, reduced to `options.long_edge`, developed with its saved
-/// settings once it was developed or else automatic ones for its film, in `frame_look` (the look
-/// `frame` names), and converted to `options.space` at the file's depth. Develop's preview and the
-/// thumbnails take the same steps, so the file looks like the screen.
+/// Prepares `scan` the way `frame` says. It's cropped, turned and reduced to `options.long_edge`,
+/// then developed in `frame_look` (the look `frame` names), with its saved settings if it's been
+/// developed, or automatic ones for its film if not. Finally it's converted to `options.space` at
+/// the file's depth. Develop's preview and the thumbnails take the same steps, so the file looks
+/// like the screen.
 pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.FrameSettings, frame_look: look.Resolved, options: Options, cancel: ?*const Cancel) !Picture {
-    // Each step makes a copy; the last one is held here and the one before freed.
+    // Each step makes a copy. We hold on to the latest one here and free the one before.
     var owned: ?image.Scan = null;
     defer if (owned) |*s| s.deinit(gpa);
     var current = scan;
@@ -180,7 +181,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     return .{ .pixels = try convert(gpa, &developed, options, cancel), .scale = scale };
 }
 
-/// `look.render`, a band of rows at a time, stopping when cancelled.
+/// Runs `look.render` a band of rows at a time, and stops when cancelled.
 fn render(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.Settings, frame_look: look.Resolved, cancel: ?*const Cancel) error{ OutOfMemory, Canceled }!image.Rendered {
     var rendered: image.Rendered = try .init(gpa, scan.width, scan.height);
     errdefer rendered.deinit(gpa);
@@ -202,7 +203,7 @@ fn convert(gpa: std.mem.Allocator, linear: *image.Rendered, options: Options, ca
     };
 }
 
-/// Rec. 709's primaries to Rec. 2020's, both linear with a D65 white: ITU-R BT.2087's matrix.
+/// ITU-R BT.2087's matrix from Rec. 709's primaries to Rec. 2020's, both linear with a D65 white.
 pub const rec709_to_rec2020 = [3][3]f32{
     .{ 0.6274040, 0.3292820, 0.0433136 },
     .{ 0.0690970, 0.9195400, 0.0113612 },
@@ -215,8 +216,8 @@ fn toRec2020(p: [3]f32) [3]f32 {
     return out;
 }
 
-/// `linear`, in Rec. 709's primaries, encoded in `space` as `Sample`s. `linear` is left in
-/// Rec. 2020's primaries.
+/// Encodes `linear`, which is in Rec. 709's primaries, in `space` as `Sample`s. Afterwards
+/// `linear` itself is left in Rec. 2020's primaries.
 fn transformed(comptime Sample: type, gpa: std.mem.Allocator, linear: *image.Rendered, space: icc.Space, cancel: ?*const Cancel) ConvertError!image.Image([3]Sample) {
     var transform: icc.Transform(Sample) = try .init(space, .relative_colorimetric);
     defer transform.deinit();
@@ -234,19 +235,19 @@ fn transformed(comptime Sample: type, gpa: std.mem.Allocator, linear: *image.Ren
     return out;
 }
 
-/// What goes into a file besides its pixels: its metadata, and the same as an XMP packet.
+/// What goes into a file besides its pixels: its metadata, and the same again as an XMP packet.
 pub const Embedded = struct {
     metadata: metadata.Metadata,
     xmp: []const u8,
 };
 
 pub const EncodeError = tiff.WriteError || jpeg.WriteError || icc.Error || error{
-    /// A JPEG holds 8 bits per sample only.
+    /// A JPEG only holds 8 bits per sample.
     JpegIsEightBit,
 };
 
-/// `picture` as a file of `options.format` with its space's ICC profile, and `embedded` as EXIF
-/// and XMP when given. The caller owns the bytes.
+/// Encodes `picture` as a file of `options.format`, with its space's ICC profile, and `embedded`
+/// as EXIF and XMP if given. The caller owns the bytes.
 pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, embedded: ?Embedded) EncodeError![]u8 {
     const profile = try icc.profileBytes(gpa, options.space);
     defer gpa.free(profile);
@@ -273,8 +274,8 @@ pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, em
             gpa.free(plain);
             return error.OutOfMemory;
         },
-        // A TIFF too big for classic TIFF's offsets is a BigTIFF, which this doesn't add to; the
-        // sidecar still says it all.
+        // A TIFF too big for classic TIFF's offsets is a BigTIFF, and we don't add metadata to
+        // those. The sidecar still has all of it.
         error.UnexpectedFile, error.TooLarge => {
             std.log.warn("metadata not embedded: {t}; the sidecar has it", .{err});
             return plain;
@@ -284,7 +285,7 @@ pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, em
     return tagged;
 }
 
-/// What a file of frame `frame` from a roll described by `info` says about itself.
+/// Builds the metadata a file of `frame` carries, for the roll that `info` describes.
 pub fn describe(info: roll.Info, frame: roll.FrameSettings, include: Include, options: Options, picture: Picture) metadata.Metadata {
     const dpi = frame.dpi orelse info.dpi;
     return .{
@@ -313,12 +314,13 @@ pub fn readScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Sca
     return (try input.read(gpa, io, path)).scan;
 }
 
-/// The scan of the frame last exported, kept while the next is another frame of the same strip.
+/// The scan of the last exported frame, kept while the next frame comes from the same strip.
 const Kept = struct {
     path: []const u8 = "",
     scan: ?image.Scan = null,
 
-    /// The scan at `path`, read unless it's the one kept. `path` must outlive the next call.
+    /// Returns the scan at `path`, reading it unless it's the one we kept. `path` must outlive the
+    /// next call.
     fn get(kept: *Kept, gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Scan {
         if (kept.scan) |scan| if (std.mem.eql(u8, kept.path, path)) return scan;
         kept.drop(gpa);
@@ -340,8 +342,8 @@ const Kept = struct {
 ///     {roll}       the roll's name for a file: lower case, without spaces ("Roll 014" → roll014)
 ///     {name}       the roll's name as it is
 ///     {frame}      the frame's number; {frame:02} pads it with zeros to two digits
-///     {stock}      the film stock, as {roll} writes names
-///     {date}       when the roll was shot, or else made
+///     {stock}      the film stock, written the same way as {roll}
+///     {date}       when the roll was shot, or when it was made if that's not set
 ///
 /// Characters that can't be in a file name, such as / and :, become -.
 pub const fields = [_][]const u8{ "{roll}", "{name}", "{frame}", "{frame:02}", "{stock}", "{date}" };
@@ -349,9 +351,9 @@ pub const fields = [_][]const u8{ "{roll}", "{name}", "{frame}", "{frame:02}", "
 pub const NameError = error{
     /// A field in braces that isn't one of `fields`.
     UnknownField,
-    /// A brace opened and not closed.
+    /// A brace that's opened but never closed.
     UnclosedBrace,
-    /// No {frame}: every frame would write the same file.
+    /// There's no {frame}, so every frame would write to the same file.
     NoFrameNumber,
 };
 
@@ -364,7 +366,7 @@ pub const NameValues = struct {
     date: ?[]const u8 = null,
 };
 
-/// The file name, without its extension, that `pattern` gives a frame. The caller owns it.
+/// Returns the file name, without its extension, that `pattern` gives a frame. The caller owns it.
 pub fn fileStem(gpa: std.mem.Allocator, pattern: []const u8, values: NameValues) (NameError || error{OutOfMemory})![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
@@ -375,7 +377,8 @@ pub fn fileStem(gpa: std.mem.Allocator, pattern: []const u8, values: NameValues)
     return out.toOwnedSlice();
 }
 
-/// Whether `pattern` names files: its fields known and its braces closed, with a {frame}.
+/// Checks that `pattern` works for file names: every field known, every brace closed, and a
+/// {frame} in it.
 pub fn checkPattern(pattern: []const u8) NameError!void {
     var buffer: [64]u8 = undefined;
     var discard: std.Io.Writer.Discarding = .init(&buffer);
@@ -421,7 +424,7 @@ fn expand(w: *std.Io.Writer, pattern: []const u8, values: NameValues) (NameError
     if (!numbered) return error.NoFrameNumber;
 }
 
-/// `text` with what a file name can't hold as -.
+/// Writes `text`, with anything a file name can't hold turned into -.
 fn safe(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
     for (text) |ch| try w.writeByte(switch (ch) {
         '/', '\\', ':', '*', '?', '"', '<', '>', '|', 0...31, 127 => '-',
@@ -429,8 +432,8 @@ fn safe(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
     });
 }
 
-/// `text` for a file name: lower case, with letters, digits, - _ . and anything beyond ASCII kept,
-/// and spaces and other signs left out.
+/// Writes `text` for a file name, in lower case. Letters, digits, - _ . and anything beyond ASCII
+/// stay, and spaces and other signs are left out.
 fn slug(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
     for (text) |ch| switch (ch) {
         'A'...'Z' => try w.writeByte(std.ascii.toLower(ch)),
@@ -441,7 +444,7 @@ fn slug(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
 
 // Batches --------------------------------------------------------------------------------------
 
-/// Where a frame's export is.
+/// How far along a frame's export is.
 pub const Stage = enum(u8) {
     reading,
     developing,
@@ -468,9 +471,9 @@ pub const Stage = enum(u8) {
     }
 };
 
-/// Frames of a roll to export, and how far the export is. It copies what it needs from the roll,
-/// so the roll can change while it runs. `run` does the work, on any thread; the progress fields
-/// can be read from others meanwhile.
+/// A set of a roll's frames to export, and how far the export has got. It copies what it needs
+/// from the roll, so the roll can change while it runs. `run` does the work, on any thread, and
+/// other threads can read the progress fields in the meantime.
 pub const Batch = struct {
     arena_state: std.heap.ArenaAllocator,
     options: Options,
@@ -480,17 +483,17 @@ pub const Batch = struct {
     folder: []const u8,
     jobs: []Job,
 
-    /// Frames done, written or failed.
+    /// How many frames are done, whether written or failed.
     finished: std.atomic.Value(usize) = .init(0),
-    /// Files written.
+    /// How many files were written.
     written: std.atomic.Value(usize) = .init(0),
-    /// The frame under way, an index in `jobs`, and its stage.
+    /// The frame being exported (an index in `jobs`), and its stage.
     current: std.atomic.Value(usize) = .init(0),
     stage: std.atomic.Value(Stage) = .init(.reading),
     cancel: Cancel = .init(false),
     /// Set once `run` returns.
     done: std.atomic.Value(bool) = .init(false),
-    /// Read once `done`: how many frames failed, and the first failure.
+    /// Read these once `done` is set: how many frames failed, and the first failure.
     failed: usize = 0,
     failure: ?Failure = null,
 
@@ -499,7 +502,7 @@ pub const Batch = struct {
         number: usize,
         scan_path: []const u8,
         frame: roll.FrameSettings,
-        /// The look `frame` names, the batch's own copy.
+        /// The look `frame` names, as the batch's own copy.
         look: look.Resolved,
         /// The file's name without its extension.
         stem: []const u8,
@@ -518,13 +521,13 @@ pub const Batch = struct {
         /// The file names' pattern, as `fileStem` takes it.
         pattern: []const u8,
         folder: []const u8,
-        /// The roll's stock's curves, for the frames not developed yet, which are developed with
+        /// The curves of the roll's stock, for frames that haven't been developed yet and so get
         /// automatic settings.
         stock_curves: ?stock_curves.Curves = null,
     };
 
-    /// A batch of frames `indices` of `r`, in the looks `catalog` has for them. Destroy it with
-    /// `destroy`.
+    /// Makes a batch of the frames `indices` of `r`, in the looks `catalog` has for them. Free it
+    /// with `destroy`.
     pub fn create(gpa: std.mem.Allocator, io: std.Io, catalog: *look.Catalog, r: *const roll.Roll, indices: []const usize, request: Request) !*Batch {
         try checkPattern(request.pattern);
         const batch = try gpa.create(Batch);
@@ -568,7 +571,7 @@ pub const Batch = struct {
         gpa.destroy(batch);
     }
 
-    /// The file of `job`, as `{stem}.{extension}`. The caller owns it.
+    /// Returns the file name for `job`, as `{stem}.{extension}`. The caller owns it.
     pub fn fileName(batch: *const Batch, gpa: std.mem.Allocator, job: Job) error{OutOfMemory}![]u8 {
         return std.fmt.allocPrint(gpa, "{s}.{s}", .{ job.stem, batch.options.format.extension() });
     }
@@ -581,8 +584,8 @@ pub const Batch = struct {
         return (@as(f32, @floatFromInt(finished)) + under_way) / @as(f32, @floatFromInt(batch.jobs.len));
     }
 
-    /// Exports every frame, a frame at a time, until done or cancelled. A frame that fails is
-    /// counted and skipped.
+    /// Exports the frames one at a time, until they're all done or the export is cancelled. A
+    /// frame that fails is counted and skipped.
     pub fn run(batch: *Batch, gpa: std.mem.Allocator, io: std.Io) void {
         defer batch.done.store(true, .release);
         std.Io.Dir.cwd().createDirPath(io, batch.folder) catch |err| {

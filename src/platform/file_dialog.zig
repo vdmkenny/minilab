@@ -3,20 +3,20 @@
 const std = @import("std");
 const c = @import("c");
 
-/// What "Import .cube" offers, in Develop and Looks.
+/// The file types "Import .cube" offers, in Develop and Looks.
 pub const cube_files = [_]c.SDL_DialogFileFilter{
     .{ .name = "LUTs (.cube)", .pattern = "cube" },
 };
 
-/// The system's dialog, which answers on its own time, maybe on another thread.
+/// The system's dialog. It answers in its own time, possibly on another thread.
 pub const Dialog = struct {
     kind: Kind = .file,
-    /// The kinds of file offered, for a file dialog. SDL keeps the pointer while the dialog is up.
+    /// The file types a file dialog offers. SDL holds on to the pointer while the dialog is open.
     filters: []const c.SDL_DialogFileFilter = &.{},
-    /// Whether more than one can be chosen.
+    /// Whether you can choose more than one.
     many: bool = false,
     mutex: std.Io.Mutex = .init,
-    /// The paths chosen, waiting to be taken on the page's thread.
+    /// The chosen paths, waiting for the page's thread to take them.
     chosen: std.ArrayList([]u8) = .empty,
     gpa: std.mem.Allocator = undefined,
     io: std.Io = undefined,
@@ -28,7 +28,8 @@ pub const Dialog = struct {
         dialog.showAt(gpa, io, null);
     }
 
-    /// Shows the dialog starting at `start`, a folder or a file. SDL copies it.
+    /// Shows the dialog, starting at `start` (a folder or a file). SDL makes its own copy of
+    /// `start`.
     pub fn showAt(dialog: *Dialog, gpa: std.mem.Allocator, io: std.Io, start: ?[:0]const u8) void {
         if (dialog.isShowing()) return;
         dialog.gpa = gpa;
@@ -50,7 +51,7 @@ pub const Dialog = struct {
         _ = filter;
         const dialog: *Dialog = @ptrCast(@alignCast(userdata));
         defer dialog.showing.store(false, .release);
-        // A null list is an error, an empty one a cancel.
+        // A null list means an error, and an empty one means the user cancelled.
         if (list == null) {
             std.log.err("the file dialog failed: {s}", .{c.SDL_GetError()});
             return;
@@ -64,7 +65,7 @@ pub const Dialog = struct {
         }
     }
 
-    /// The paths chosen since the last time, which the caller frees with `free`.
+    /// Returns the paths chosen since the last call. The caller frees them with `free`.
     pub fn take(dialog: *Dialog, gpa: std.mem.Allocator, io: std.Io) [][]u8 {
         dialog.mutex.lockUncancelable(io);
         defer dialog.mutex.unlock(io);

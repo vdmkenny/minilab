@@ -1,6 +1,6 @@
-//! The Develop workspace: the frames of the open roll, the viewer, and the develop settings.
-//! Settings are saved to the roll as they change. Without a roll open, it develops scans opened
-//! on their own, and saves nothing.
+//! The Develop workspace: the open roll's frames, the viewer and the develop settings. Settings
+//! are saved to the roll as they change. Without a roll open, it develops scans opened outside any
+//! roll, and saves nothing.
 
 const std = @import("std");
 const c = @import("c");
@@ -16,7 +16,6 @@ const shortcuts = @import("shortcuts.zig");
 const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
-/// What "Import .cube…" opens.
 const develop = minilab.develop;
 const look = minilab.look;
 const roll = minilab.roll;
@@ -29,9 +28,9 @@ const frame_columns = 2;
 const frame_gap = 8;
 const thumb_height = 58;
 const bottom_bar_height = 36;
-/// The temperature slider's steps, K.
+/// The temperature slider's step size, in K.
 const kelvin_step = 50;
-/// The tallest a collection's look menu grows before it scrolls.
+/// How tall a collection's look menu can get before it scrolls.
 const pack_menu_height = 480;
 
 /// What the viewer shows.
@@ -41,7 +40,7 @@ const Zoom = enum { fit, actual };
 /// What a click on the frame does.
 const Picking = enum { none, base, neutral };
 
-/// A frame's look and settings at one time: what undo goes back to, and what copying copies.
+/// A frame's look and settings at one moment: what undo goes back to, and what Copy copies.
 const Snapshot = struct {
     look: look.Id,
     settings: develop.Settings,
@@ -51,25 +50,25 @@ const Snapshot = struct {
     }
 };
 
-/// A crop being drawn: the box, in the pixels of the frame's whole reduced scan.
+/// A crop being drawn. The box is in the pixels of the frame's whole reduced scan.
 const CropEdit = struct {
     min: [2]f32,
     max: [2]f32,
-    /// The crop the frame had, for Cancel, and the turns and mirroring to apply after.
+    /// The crop the frame had before, for Cancel, and the turns and mirroring to apply afterwards.
     before: ?minilab.image.Area,
     turns: u2,
     mirrored: bool,
-    /// What a drag moves, and the box's width over height while a corner moves.
+    /// What a drag moves, and the box's width-to-height ratio while a corner moves.
     grip: ?Grip = null,
     aspect: f32 = 1,
 
     const Grip = enum { box, top_left, top_right, bottom_right, bottom_left };
 };
 
-/// The most changes undo goes back through.
+/// How many changes undo can go back through.
 const history_depth = 100;
 
-/// Snapshots, newest last; the oldest drops out when it's full.
+/// Snapshots, newest last. The oldest drops out when it's full.
 const History = struct {
     items: [history_depth]Snapshot = undefined,
     len: usize = 0,
@@ -93,35 +92,36 @@ const History = struct {
 pub const State = struct {
     /// The folder of the roll being developed, or null for loose scans.
     roll_path: ?[]u8 = null,
-    /// Scans opened on their own, outside any roll, while no roll is open.
+    /// Scans opened outside any roll, while no roll is open.
     loose: std.ArrayList([]u8) = .empty,
     selected: ?usize = null,
-    /// The selected frame, loaded, or null until it is.
+    /// The selected frame once it's loaded, or null until then.
     frame: ?Frame = null,
-    /// The frame that failed to load, so that it isn't tried again every frame.
+    /// The frame that failed to load, so it isn't retried on every redraw.
     failed: ?usize = null,
-    /// The positive as shown, with clipping marked if asked, and on the GPU.
+    /// The positive as it's shown, with clipping marked if that's on, and its textures on the GPU.
     shown: std.ArrayList([4]u8) = .empty,
     positive: ?Texture = null,
     negative: ?Texture = null,
     /// Whether `shown` and the textures are out of date.
     shown_stale: bool = true,
     negative_stale: bool = true,
-    /// Whether the frame's settings changed since the last finished change.
+    /// Whether the frame's settings have changed since the last finished change.
     dirty: bool = false,
     /// The settings after the last finished change, and the ones before it, for undo.
     committed: ?Snapshot = null,
     undo: History = .{},
     redo: History = .{},
-    /// Settings copied to paste on other frames.
+    /// Settings that were copied, ready to paste onto other frames.
     clipboard: ?Snapshot = null,
-    /// The Sync confirmation asked for from the keyboard.
+    /// Whether the keyboard asked for the Sync confirmation.
     ask_sync: bool = false,
     /// What Sync copies.
     sync: SyncGroups = .{},
     /// Whether the crop tool starts once the selected frame has loaded.
     crop_on_open: bool = false,
-    /// Whether the settings had a scrollbar last time: the histogram over them keeps their width.
+    /// Whether the settings had a scrollbar last time, so the histogram above them can match their
+    /// width.
     settings_scroll: bool = false,
     /// What the last calibration found, for the line under its button.
     calibration_note: gui.Line(160) = .{},
@@ -132,16 +132,16 @@ pub const State = struct {
     /// Where the split is, as a share of the frame's width.
     split: f32 = 0.5,
     zoom: Zoom = .fit,
-    /// How far the frame is moved at 100%, in screen pixels from centred.
+    /// How far the frame is panned at 100%, in screen pixels from the centre.
     pan: gui.Vec2 = .{ .x = 0, .y = 0 },
     clipping: bool = true,
     picking: Picking = .none,
     range: develop.Range = .midtones,
-    /// The looks the drop-down lists, read when it opens.
+    /// The looks the drop-down lists, read each time it opens.
     look_choices: std.ArrayList(look.Catalog.Choice) = .empty,
     /// The dialog for importing a .cube file as a look.
     cube_dialog: Dialog = .{ .filters = &file_dialog.cube_files },
-    /// Why the last .cube didn't import, until another look is chosen.
+    /// Why the last .cube didn't import. It's cleared when another look is chosen.
     import_failed: ?anyerror = null,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
@@ -161,7 +161,7 @@ pub const State = struct {
         return library.find(state.roll_path orelse return null);
     }
 
-    /// Opens the roll at `path`, after saving the frame open now, and selects its first frame.
+    /// Saves the open frame, then opens the roll at `path` and selects its first frame.
     pub fn openRoll(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, path: []const u8) !void {
         state.save(io, library);
         state.closeFrame(gpa);
@@ -173,7 +173,7 @@ pub const State = struct {
         state.selected = if (library.rolls.items[index].frames.items.len > 0) 0 else null;
     }
 
-    /// Opens the scan at `path` on its own, closing the open roll, if any.
+    /// Opens the scan at `path` outside any roll, closing the open roll if there is one.
     pub fn openLoose(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, path: []const u8) !void {
         if (state.roll_path) |p| {
             state.save(io, library);
@@ -185,16 +185,17 @@ pub const State = struct {
         state.selected = state.loose.items.len - 1;
     }
 
-    /// Selects frame `index`, after saving the frame open now.
     /// Selects frame `index` and starts the crop tool on it once it has loaded.
     pub fn openForCrop(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, index: usize) void {
         state.select(gpa, io, library, index);
         state.crop_on_open = true;
     }
 
+    /// Saves the open frame, then selects frame `index`.
     pub fn select(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, index: usize) void {
         if (state.selected == index and state.frame != null) return;
-        // Another frame ends the crop tool, keeping its crop, before this frame's settings go.
+        // Switching frames ends the crop tool (keeping its crop) before this frame's settings are
+        // dropped.
         if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
         state.save(io, library);
         state.closeFrame(gpa);
@@ -225,7 +226,7 @@ pub const State = struct {
         state.loose.clearRetainingCapacity();
     }
 
-    /// Finishes the change under way: undo can go back over it, and the roll keeps it.
+    /// Finishes the current change, so undo can go back over it and the roll keeps it.
     pub fn save(state: *State, io: std.Io, library: *Library) void {
         if (!state.dirty) return;
         state.dirty = false;
@@ -250,8 +251,9 @@ pub const State = struct {
         state.write(io, library);
     }
 
-    /// Gives the frame `snapshot`'s settings, as its own: its own film base unless the copied
-    /// one was picked, and the automatic balances worked out again for this frame.
+    /// Gives the frame the settings in `snapshot`, adapted to this frame: it keeps its own film
+    /// base unless the copied one was picked by hand, and automatic balances are worked out again
+    /// for it.
     fn paste(state: *State, snapshot: Snapshot) void {
         const frame = if (state.frame) |*f| f else return;
         var settings = snapshot.settings;
@@ -271,7 +273,7 @@ pub const State = struct {
         state.changed();
     }
 
-    /// Writes the frame's settings to its roll, and marks it developed.
+    /// Writes the frame's settings to its roll, and marks it as developed.
     fn write(state: *State, io: std.Io, library: *Library) void {
         const frame = state.frame orelse return;
         const r = state.rollIndex(library) orelse return;
@@ -280,7 +282,8 @@ pub const State = struct {
         saved.look = frame.look;
         saved.settings = frame.settings;
         saved.developed = true;
-        // The crop tool shows the whole scan; the frame's crop is still the one it started with.
+        // The crop tool shows the whole scan, but the frame's crop is still the one it started
+        // with.
         if (state.cropping) |edit| {
             saved.crop = edit.before;
             saved.quarter_turns = edit.turns;
@@ -294,13 +297,14 @@ pub const State = struct {
         library.invalidate(.{ .roll = r, .frame = index });
     }
 
-    /// Writes the frame's crop and turns to its roll, without marking it developed.
+    /// Writes the frame's crop and turns to its roll, without marking it as developed.
     fn writeGeometry(state: *State, io: std.Io, library: *Library) void {
         const frame = state.frame orelse return;
         const r = state.rollIndex(library) orelse return;
         const index = state.selected orelse return;
         const saved = &library.rolls.items[r].frames.items[index];
-        // The crop tool shows the whole scan; the frame's crop is still the one it started with.
+        // The crop tool shows the whole scan, but the frame's crop is still the one it started
+        // with.
         if (state.cropping) |edit| {
             saved.crop = edit.before;
             saved.quarter_turns = edit.turns;
@@ -314,13 +318,13 @@ pub const State = struct {
         library.invalidate(.{ .roll = r, .frame = index });
     }
 
-    /// The roll's format, or 135 full frame for a scan opened on its own.
+    /// The roll's format, or 135 full frame for a scan opened outside any roll.
     fn format(state: *const State, library: *const Library) minilab.formats.Format {
         const r = state.rollIndex(library) orelse return minilab.formats.Standard.default.format();
         return library.rolls.items[r].info.format.format();
     }
 
-    /// The resolution the frame was scanned at, when known.
+    /// The resolution the frame was scanned at, if we know it.
     fn dpi(state: *const State, library: *const Library) ?f32 {
         const r = state.rollIndex(library) orelse return null;
         const index = state.selected orelse return null;
@@ -328,8 +332,8 @@ pub const State = struct {
         return rl.frames.items[index].dpi orelse rl.info.dpi;
     }
 
-    /// Starts the crop tool: the whole scan shows, with the crop on it, or the detected frame
-    /// when there's no crop yet.
+    /// Starts the crop tool. It shows the whole scan with the crop on it, or with the detected
+    /// frame if there's no crop yet.
     fn startCrop(state: *State, gpa: std.mem.Allocator, library: *const Library) !void {
         const frame = if (state.frame) |*f| f else return;
         const area = frame.crop orelse frame.detect(gpa, state.format(library), state.dpi(library)) catch fallbackCrop(frame, state.format(library));
@@ -350,7 +354,7 @@ pub const State = struct {
         state.picking = .none;
     }
 
-    /// Ends the crop tool, keeping the crop when `keep`, else going back to the one before.
+    /// Ends the crop tool. Keeps the new crop if `keep` is set, or else goes back to the old one.
     fn endCrop(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, keep: bool) !void {
         const edit = state.cropping orelse return;
         state.cropping = null;
@@ -371,7 +375,8 @@ pub const State = struct {
         state.afterGeometry(io, library);
     }
 
-    /// Turns the frame a quarter turn: 1 clockwise, 3 anticlockwise.
+    /// Turns the frame by `quarter_turns`: 1 is a quarter turn clockwise, and 3 a quarter turn
+    /// anticlockwise.
     fn turn(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, quarter_turns: u2) !void {
         if (state.cropping) |*edit| {
             edit.turns +%= quarter_turns;
@@ -386,9 +391,9 @@ pub const State = struct {
 
     /// Mirrors the frame left to right.
     fn mirror(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) !void {
-        // Mirroring comes before the turns, and mirroring a turned picture equals turning the
-        // mirrored one the other way: so an odd number of turns flips to its opposite, and the
-        // frame mirrors left to right as the user sees it.
+        // Mirroring is applied before the turns. Mirroring a turned picture is the same as turning
+        // the mirrored one the other way, so an odd number of turns flips to its opposite. That
+        // way the frame mirrors left to right as the user sees it.
         if (state.cropping) |*edit| {
             edit.mirrored = !edit.mirrored;
             edit.turns = oppositeTurns(edit.turns);
@@ -402,26 +407,27 @@ pub const State = struct {
         state.afterGeometry(io, library);
     }
 
-    /// After the crop or turns changed: an undeveloped frame's automatic settings are measured
-    /// on its new area; then the roll keeps the geometry.
+    /// Runs after the crop or turns change. An undeveloped frame gets its automatic settings
+    /// measured again on its new area, and then the roll saves the geometry.
     fn afterGeometry(state: *State, io: std.Io, library: *Library) void {
         const frame = if (state.frame) |*f| f else return;
         const developed = if (state.rollIndex(library)) |r| library.rolls.items[r].frames.items[state.selected.?].developed else false;
         if (!developed) {
             frame.measure(frame.settings.kind);
-            // Measured afresh for the new crop: undo goes back from here, not to the old values.
+            // The settings were just measured for the new crop, so undo goes back from here, not
+            // to the old values.
             state.committed = .of(frame);
         }
         state.writeGeometry(io, library);
     }
 
-    /// Loads the selected frame if it isn't yet, for another workspace that shows it.
+    /// Loads the selected frame if it isn't loaded yet, for another workspace that shows it.
     pub fn ensureFrame(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         state.load(gpa, io, library) catch |err| std.log.err("can't load frame {d}: {t}", .{ (state.selected orelse 0) + 1, err });
     }
 
-    /// Loads the selected frame if it isn't yet: with its saved settings when it was developed,
-    /// or automatic ones.
+    /// Loads the selected frame if it isn't loaded yet, with its saved settings if it was
+    /// developed, or else automatic ones.
     fn load(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) !void {
         if (state.frame != null) return;
         const index = state.selected orelse return;
@@ -438,13 +444,13 @@ pub const State = struct {
             defer gpa.free(scan_path);
             var frame: Frame = try .load(gpa, io, scan_path, gui.print("Frame {d}", .{index + 1}), saved.crop, saved.quarter_turns, saved.mirrored);
             if (saved.width == 0) {
-                // Rolls from before the size was recorded: the thumbnails need it for crops.
+                // Rolls made before we recorded the scan size: the thumbnails need it for crops.
                 rl.frames.items[index].width = frame.scan_width;
                 rl.frames.items[index].height = frame.scan_height;
                 rl.saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
             }
             if (saved.crop == null) {
-                // A frame not cropped yet gets the detected one, when detection is sure of it.
+                // An uncropped frame gets the detected crop, if detection is sure of it.
                 if (frame.detect(gpa, rl.info.format.format(), saved.dpi orelse rl.info.dpi)) |area| {
                     try frame.setGeometry(gpa, area, saved.quarter_turns, saved.mirrored);
                     rl.frames.items[index].crop = area;
@@ -455,7 +461,7 @@ pub const State = struct {
             frame.gap_base = rl.baseFor(index);
             frame.base_from_roll = frame.gap_base != null and (saved.film_base == null or !std.meta.eql(frame.gap_base.?, saved.film_base.?));
             frame.fillNegative();
-            // The look holds for undeveloped frames too, as Export takes it.
+            // Undeveloped frames keep their look too, since Export uses it.
             frame.look = saved.look;
             if (saved.developed) {
                 frame.settings = saved.settings;
@@ -506,17 +512,16 @@ pub const State = struct {
         }
     }
 
-    /// Whether the selected frame is loaded and drawn, or failed to load: for a screenshot,
-    /// which waits for it.
+    /// Whether the selected frame is loaded and drawn, or failed to load. A screenshot waits for
+    /// this.
     pub fn settled(state: *const State) bool {
         if (state.selected == null or state.failed != null) return true;
         const frame = state.frame orelse return false;
         return !frame.stale and !state.shown_stale;
     }
 
-    /// The settings changed: render again, and save once the control is let go.
-    /// The look drop-down: the built-in looks, then imported LUTs and fitted looks, and a way to
-    /// import another .cube.
+    /// Draws the look drop-down: the built-in looks, then imported LUTs and fitted looks, and a
+    /// way to import another .cube.
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
         c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
@@ -552,7 +557,7 @@ pub const State = struct {
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("A 3D or 1D LUT that expects sRGB or Rec. 709 input. It's copied into the library's Looks folder.");
     }
 
-    /// A menu for each collection of bundled looks, its looks grouped by film.
+    /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
     fn drawPacks(state: *State, frame: *Frame) void {
         const bundled = minilab.bundled_looks;
         for (std.enums.values(bundled.Pack)) |pack| {
@@ -572,8 +577,8 @@ pub const State = struct {
         }
     }
 
-    /// Gives the open frame the look `id` and saves it, as choosing it in the Look menu does: for
-    /// the Looks workspace.
+    /// Gives the open frame the look `id` and saves it, just like picking it in the Look menu.
+    /// The Looks workspace uses this.
     pub fn useLook(state: *State, io: std.Io, library: *Library, id: look.Id) void {
         const frame = if (state.frame) |*f| f else return;
         state.setLook(frame, id);
@@ -586,8 +591,9 @@ pub const State = struct {
         state.changed();
     }
 
-    /// The calibration of the roll's scanner for Stock balance: how far along it is, and a button
-    /// that measures this roll. Only for colour negatives of a stock with a preset.
+    /// Draws the calibration of the roll's scanner for Stock balance: how far along it is, and a
+    /// button that measures this roll. It only shows for colour negatives of a stock with a
+    /// preset.
     fn drawCalibration(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
         const rl = &library.rolls.items[r];
         if (rl.info.kind != .colour_negative or labels.stockGamma(rl.info.stock) == null) return;
@@ -642,10 +648,10 @@ pub const State = struct {
         state.applyStock(gpa, io, library, r);
     }
 
-    /// After the roll's stock or its scanner's calibration changed: each developed frame gets the
-    /// stock's curves and is measured again with them, keeping the user's other choices, and on a
-    /// calibrated scanner Auto neutral becomes the stock's balance (`develop.restocked`). Frames
-    /// not developed yet get it when they're opened.
+    /// Runs after the roll's stock or its scanner's calibration changes. Each developed frame
+    /// gets the stock's curves and is measured again with them, keeping the user's other choices.
+    /// On a calibrated scanner, Auto neutral becomes the stock's balance (`develop.restocked`).
+    /// Frames that aren't developed yet get all this when they're opened.
     fn applyStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize) void {
         const rl = &library.rolls.items[r];
         const slopes = library.stockSlopes(rl);
@@ -683,12 +689,13 @@ pub const State = struct {
         }
     }
 
+    /// The settings changed: render again, and save once the control is let go.
     fn changed(state: *State) void {
         if (state.frame) |*f| f.stale = true;
         state.dirty = true;
     }
 
-    /// Back to the automatic settings; in a roll, the frame counts as undeveloped again.
+    /// Goes back to the automatic settings. In a roll, the frame counts as undeveloped again.
     fn reset(state: *State, io: std.Io, library: *Library) void {
         state.save(io, library);
         const frame = if (state.frame) |*f| f else return;
@@ -711,7 +718,7 @@ pub const State = struct {
         library.invalidate(.{ .roll = r, .frame = index });
     }
 
-    /// Does what the keyboard asked. Returns a message for the header, when there's one.
+    /// Does what the keyboard asked for. Returns a message for the header, if there is one.
     pub fn handle(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, keys: std.EnumSet(shortcuts.Command)) ?[]const u8 {
         const total = state.count(library);
         if (state.selected) |current| {
@@ -743,7 +750,7 @@ pub const State = struct {
         if (keys.contains(.mirror)) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
 
         const frame = if (state.frame) |*f| f else return null;
-        // The crop tool has the frame: its settings wait until the crop is done.
+        // While the crop tool is on, the frame's settings have to wait until the crop is done.
         if (state.cropping != null) return null;
         if (keys.contains(.white_balance)) state.picking = if (state.picking == .neutral) .none else .neutral;
         if (keys.contains(.base)) state.picking = if (state.picking == .base) .none else .base;
@@ -775,13 +782,13 @@ pub const State = struct {
     }
 };
 
-/// The same turns the other way round: 1 and 3 swap, 0 and 2 stay.
+/// The same turns in the other direction: 1 and 3 swap, and 0 and 2 stay as they are.
 fn oppositeTurns(quarter_turns: u2) u2 {
     return 0 -% quarter_turns;
 }
 
-/// The crop when detection finds no frame: the format's shape at the full extent across the
-/// film, which runs along the scan's longer side, in the middle.
+/// The crop to use when detection finds no frame: the format's shape at the scan's full extent
+/// across the film (the film runs along the scan's longer side), centred.
 fn fallbackCrop(frame: *const Frame, format: minilab.formats.Format) minilab.image.Area {
     const w = frame.scan_width;
     const h = frame.scan_height;
@@ -803,7 +810,7 @@ fn upload(texture: *?Texture, gpu: *c.SDL_GPUDevice, width: u32, height: u32, pi
     texture.* = try .upload(gpu, width, height, pixels);
 }
 
-/// Draws the workspace; without `sides`, the viewer alone.
+/// Draws the workspace. Without `sides`, it draws just the viewer.
 pub fn draw(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, sides: bool) void {
     state.ensureFrame(gpa, io, library);
     if (state.crop_on_open and state.frame != null) {
@@ -847,7 +854,7 @@ pub fn draw(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library
     if (state.dirty and !c.ImGui_IsAnyItemActive()) state.save(io, library);
 }
 
-/// The frames to choose from. Returns the one clicked.
+/// Draws the frames to choose from. Returns the one that was clicked.
 fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_index: ?usize) ?usize {
     var clicked: ?usize = null;
     const total = state.count(library);
@@ -998,8 +1005,8 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         shortcuts.tooltip("Keeps the crop", .confirm);
     }
     const pipeline = if (state.frame) |*f| (if (f.look.isNeutral()) "Scanner RGB, linear → sRGB" else gui.print("Scanner RGB, linear → {s} → sRGB", .{f.look.label()})) else "";
-    // The toolbar's last control: the pipeline shows only where it doesn't run under the controls,
-    // which the crop tool's buttons often do.
+    // This is the toolbar's last control. The pipeline only shows where it won't run under the
+    // controls, which the crop tool's buttons often reach.
     const controls_end = c.ImGui_GetItemRectMax().x;
     fonts.pushSized(.mono, 12);
     const pipeline_size = c.ImGui_CalcTextSize(pipeline);
@@ -1132,12 +1139,12 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     }
 }
 
-/// The crop box over the frame drawn at `origin`, `scale` screen pixels to the image's: darkened
-/// outside, in thirds inside, with handles at the corners. A drag inside moves it; a drag at a
-/// corner sizes it, keeping the format's shape (`ratio`) the way up it already is.
 /// The smallest crop box, in preview pixels.
 const min_crop = 16;
 
+/// Draws the crop box over the frame drawn at `origin`, at `scale` screen pixels per image pixel:
+/// darkened outside, in thirds inside, with handles at the corners. Dragging inside moves it, and
+/// dragging a corner resizes it, keeping the format's shape (`ratio`) the way up it already is.
 fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, size: [2]f32, hovered: bool, active: bool, ratio: f32) void {
     const mouse = c.ImGui_GetMousePos();
     const p = [2]f32{ (mouse.x - origin.x) / scale, (mouse.y - origin.y) / scale };
@@ -1172,7 +1179,8 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
             }
         },
         else => {
-            // The opposite corner stays; the dragged one follows the mouse within the shape.
+            // The opposite corner stays put, and the dragged one follows the mouse, keeping the
+            // shape.
             const index = std.mem.indexOfScalar(CropEdit.Grip, &grips, grip).?;
             const fixed = corners[(index + 2) % 4];
             const to = [2]f32{ std.math.clamp(p[0], 0, size[0]), std.math.clamp(p[1], 0, size[1]) };
@@ -1180,8 +1188,8 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
             var w = @max(@abs(to[0] - fixed[0]), min_crop);
             var h = @max(@abs(to[1] - fixed[1]), min_crop);
             if (w / h > aspect) w = h * aspect else h = w / aspect;
-            // Toward the mouse, unless the fixed corner is against that edge of the image: then
-            // the box grows the other way, so that it never shrinks to nothing.
+            // Grow towards the mouse, unless the fixed corner is against that edge of the image.
+            // Then the box grows the other way instead, so it never shrinks to nothing.
             const right = if (to[0] >= fixed[0]) size[0] - fixed[0] >= min_crop else fixed[0] < min_crop;
             const down = if (to[1] >= fixed[1]) size[1] - fixed[1] >= min_crop else fixed[1] < min_crop;
             // Keep the box on the image.
@@ -1224,7 +1232,7 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     }
 }
 
-/// The crop tool's icon, 14 pixels square at `corner`: two overlapping corners.
+/// Draws the crop tool's icon, 14 pixels square, at `corner`: two overlapping corners.
 fn drawCropIcon(list: *c.ImDrawList, corner: gui.Vec2) void {
     const ink = theme.imU32(theme.text_tertiary);
     const t = gui.px(1.4);
@@ -1239,7 +1247,7 @@ fn drawCropIcon(list: *c.ImDrawList, corner: gui.Vec2) void {
     c.ImDrawList_AddLineEx(list, p(corner, 11, 3), p(corner, 11, 13), ink, t);
 }
 
-/// A square button with a turn arrow on it. True when clicked.
+/// A square button with a turn arrow on it. Returns true when it's clicked.
 fn turnButton(list: *c.ImDrawList, id: [:0]const u8, clockwise: bool) bool {
     const side = c.ImGui_GetFrameHeight();
     const corner = c.ImGui_GetCursorScreenPos();
@@ -1248,8 +1256,7 @@ fn turnButton(list: *c.ImDrawList, id: [:0]const u8, clockwise: bool) bool {
     return clicked;
 }
 
-/// Three quarters of a circle with an arrowhead at the top, pointing the way of the turn.
-/// A label over the picture, on a dark ground, from `at` to its `side`.
+/// Draws a label over the picture, on a dark background, running from `at` towards `side`.
 fn tag(list: *c.ImDrawList, at: gui.Vec2, label: [:0]const u8, side: enum { left, right }) void {
     const size = c.ImGui_CalcTextSize(label);
     const box = gui.vec2(size.x + gui.px(12), size.y + gui.px(4));
@@ -1359,7 +1366,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(6)));
         defer c.ImGui_PopStyleVar();
-        // Each slider resets to what the frame's automatic settings have, on its film base.
+        // Each slider resets to the frame's automatic setting, on its current film base.
         const auto = frame.automaticSettings();
         if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}", .{ .default = auto.density_range })) state.changed();
         if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}", .{ .default = auto.offset })) state.changed();
@@ -1405,8 +1412,8 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     gui.endSection(false);
 }
 
-/// The temperature slider: the light's, in K. It moves evenly in mired (a million over K), so that a
-/// step changes the colour as much at 3000 K as at 8000 K. True when it moved.
+/// The temperature slider for the light, in K. It moves in even steps of mired (a million over
+/// K), so a step changes the colour as much at 3000 K as at 8000 K. Returns true when it moved.
 fn temperatureRow(kelvin: *f32) bool {
     c.ImGui_PushID("Temperature");
     defer c.ImGui_PopID();
@@ -1426,7 +1433,8 @@ fn temperatureRow(kelvin: *f32) bool {
     return changed;
 }
 
-/// The stock: the roll's, for the whole roll, from the stocks of the frame's film type.
+/// Draws the stock picker. The stock belongs to the whole roll, and the list has the stocks of the
+/// frame's film type.
 fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
     const r = roll_index orelse {
         c.ImGui_BeginDisabled(true);
@@ -1453,7 +1461,8 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     if (choice.preset) |preset| {
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
     } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No preset: the maker publishes no numbers for this stock.");
-    // With a preset there's something to correct by; off, the stock is only the roll's metadata.
+    // Only a stock with a preset has something to correct by. With corrections off, the stock
+    // is just the roll's metadata.
     if (choice.preset == null) return;
     gui.rowLabel("");
     if (gui.checkbox("Datasheet corrections", &info.stock_corrections)) {
@@ -1463,7 +1472,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Straightens each layer by the stock's datasheet curve, and on a calibrated scanner balances by the stock. Off, the stock is only the roll's metadata.");
 }
 
-/// The film base: its colour, where it comes from, and picking it.
+/// Draws the film base section: its colour, where it comes from, and the picker.
 fn drawBase(state: *State, library: *Library) void {
     const frame = &state.frame.?;
     gui.beginSection("base");
@@ -1499,7 +1508,7 @@ fn drawBase(state: *State, library: *Library) void {
     gui.endSection(true);
 }
 
-/// The density matrix row, and its editor.
+/// Draws the density matrix row and its editor.
 fn drawMatrix(state: *State) void {
     const s = &state.frame.?.settings;
     gui.rowLabel("Matrix");
@@ -1587,21 +1596,22 @@ const SyncGroups = struct {
     geometry: bool = false,
 };
 
-/// Frame `index` of `rl` with the groups of `source`'s settings in `groups`; `source_scan` is
-/// `source`'s scan file. What isn't synced the frame keeps: its saved settings, or automatic ones
-/// measured on its thumbnail when it was never developed. An automatic white balance is the
-/// frame's own, worked out again.
+/// Returns the settings for frame `index` of `rl`, with the groups in `groups` taken from
+/// `source`. `source_scan` is `source`'s scan file. Whatever isn't synced, the frame keeps: its
+/// saved settings, or automatic ones measured on its thumbnail if it was never developed. An
+/// automatic white balance is always worked out again for the frame itself.
 fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, source: *const Frame, source_scan: []const u8, groups: SyncGroups) !roll.FrameSettings {
     var target = rl.frames.items[index];
     if (groups.geometry) {
-        // A crop is in its scan's pixels, so it only carries to another scan of the same size:
-        // frames of one strip share a scan, and each has its own place on it.
+        // A crop is in its scan's pixels, so it only carries over to a different scan of the
+        // same size. Frames of one strip share a scan, and each has its own place on it.
         const shared = std.mem.eql(u8, target.scan, source_scan);
         if (!shared and target.width == source.scan_width and target.height == source.scan_height) target.crop = source.crop;
         target.quarter_turns = source.quarter_turns;
         target.mirrored = source.mirrored;
     }
-    // Measured on its thumbnail, as the frame will be cut and turned: close enough to the scan's.
+    // Measure it on its thumbnail, cut and turned the way the frame will be. That's close enough
+    // to measuring the scan.
     var thumbnail = try rl.thumbnailAs(gpa, io, index, target);
     defer thumbnail.deinit(gpa);
     const stats = try develop.FrameStatistics.measure(gpa, thumbnail);
@@ -1648,7 +1658,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
     return target;
 }
 
-/// The histogram and how much is clipped, over the settings.
+/// Draws the histogram and how much is clipped, above the settings.
 fn drawHistogramSection(frame: *Frame) void {
     gui.beginSection("histogram");
     drawHistogram(frame);
@@ -1663,7 +1673,7 @@ fn drawHistogramSection(frame: *Frame) void {
     gui.endSection(true);
 }
 
-/// The histogram of the rendering: each channel as a filled area.
+/// Draws the rendering's histogram, with each channel as a filled area.
 fn drawHistogram(frame: *Frame) void {
     const width = c.ImGui_GetContentRegionAvail().x;
     const height = gui.px(histogram_height);
@@ -1671,7 +1681,8 @@ fn drawHistogram(frame: *Frame) void {
     const list = c.ImGui_GetWindowDrawList();
     c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + width, origin.y + height), theme.imU32(theme.histogram_ground), gui.px(4), 0);
     var peak: u32 = 1;
-    // The ends hold clipped pixels; they would flatten everything else.
+    // Leave the end bins out of the peak: they hold the clipped pixels, which would flatten
+    // everything else.
     for (frame.histogram[1 .. frame.histogram.len - 1]) |bin| {
         for (bin) |v| peak = @max(peak, v);
     }
@@ -1690,7 +1701,7 @@ fn drawHistogram(frame: *Frame) void {
     c.ImGui_Dummy(gui.vec2(width, height));
 }
 
-/// Why a .cube file didn't import, for people.
+/// Why a .cube file didn't import, in words for the user.
 fn importError(err: anyerror) []const u8 {
     return switch (err) {
         error.NotACube => "it isn't a .cube LUT",
@@ -1739,7 +1750,7 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
     try std.testing.expect(other.look.eql(&look.Id.frontier));
     try std.testing.expectEqual(develop.Tone.hard, other.settings.tone);
     try std.testing.expectEqual(@as(f32, 1.3), other.settings.saturation);
-    // Its own density range: its negative is thinner.
+    // It keeps its own density range, since its negative is thinner.
     try std.testing.expect(@abs(other.settings.density_range - source.settings.density_range) > 0.05);
 
     const all = try synced(gpa, io, &rl, 1, &source, rl.frames.items[0].scan, .{ .density = true, .base = true });
@@ -1747,9 +1758,8 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
     try std.testing.expectEqual(source.settings.base, all.settings.base);
 }
 
-/// The name a roll's calibration goes by: its scanner's, or for camera scans its camera's.
-/// Gives `frame`, about to be measured as film `kind`, the roll's stock: its curves, and on a
-/// calibrated scanner its balance in place of Auto neutral.
+/// Gives `frame`, which is about to be measured as film `kind`, the roll's stock: its curves and,
+/// on a calibrated scanner, its balance in place of Auto neutral.
 fn prepareStock(library: *const Library, rl: *const roll.Roll, frame: *Frame, kind: develop.FilmKind) void {
     frame.settings.stock_curves = library.stockCurves(rl, kind);
     frame.stock_slopes = library.stockSlopes(rl);

@@ -1,9 +1,9 @@
-//! Keyboard shortcuts, as Lightroom Classic and Bridge have them where they have one for the same
-//! thing, so that hands that know those know these.
+//! Keyboard shortcuts. Where Lightroom Classic or Bridge has a shortcut for the same thing, we use
+//! the same key, so if you know those apps you already know these.
 //!
-//! "Command" is ⌘ on macOS and Ctrl elsewhere. ImGui swaps the two keys on macOS, so its Ctrl
-//! modifier is the Command key there, and the table needs no second set for the Mac. Only the
-//! labels differ: ⌘⌥⇧ on macOS, Ctrl+Alt+Shift+ elsewhere.
+//! "Command" means ⌘ on macOS and Ctrl elsewhere. ImGui swaps the two keys on macOS, so its Ctrl
+//! modifier is the Command key there, and the table doesn't need a second set of keys for the Mac.
+//! Only the labels differ: ⌘⌥⇧ on macOS, Ctrl+Alt+Shift+ elsewhere.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -139,14 +139,15 @@ pub const bindings = [_]Binding{
     bind(.clipping, c.ImGuiKey_J),
     bind(.before, c.ImGuiKey_Backslash),
     bind(.split, c.ImGuiKey_Y),
-    // Tools: W for the white balance picker and R for crop, as in Lightroom; B for the film base.
+    // Tools: W for the white balance picker and R for crop, as in Lightroom, and B for the film
+    // base.
     bind(.white_balance, c.ImGuiKey_W),
     bind(.base, c.ImGuiKey_B),
     bind(.crop, c.ImGuiKey_R),
     // Turning: ⌘[ and ⌘], as in Lightroom and Bridge.
     bind(.turn_left, command_key | c.ImGuiKey_LeftBracket),
     bind(.turn_right, command_key | c.ImGuiKey_RightBracket),
-    // Mirroring: Lightroom's Flip Horizontal has no key of its own; ⇧⌘M is free in both.
+    // Mirroring: Lightroom's Flip Horizontal has no key of its own, and ⇧⌘M is free in both apps.
     bind(.mirror, command_key | shift | c.ImGuiKey_M),
     bind(.confirm, c.ImGuiKey_Enter),
     // Settings.
@@ -176,7 +177,7 @@ pub const bindings = [_]Binding{
     bind(.cancel, c.ImGuiKey_Escape),
 };
 
-/// Keys that repeat while held.
+/// Whether `command` repeats while its keys are held down.
 fn repeats(command: Command) bool {
     return switch (command) {
         .previous, .next, .undo, .redo => true,
@@ -186,8 +187,8 @@ fn repeats(command: Command) bool {
 
 const mods_mask = c.ImGuiMod_Ctrl | c.ImGuiMod_Shift | c.ImGuiMod_Alt | c.ImGuiMod_Super;
 
-/// The commands whose keys were pressed this frame. While a text field has the keyboard, only
-/// shortcuts with the Command key count, and Escape, so typing never triggers a tool.
+/// Returns the commands whose keys were pressed this frame. While a text field has the keyboard,
+/// only Escape and shortcuts with the Command key count, so typing never triggers a tool.
 pub fn poll() std.EnumSet(Command) {
     var pressed: std.EnumSet(Command) = .empty;
     const io = c.ImGui_GetIO();
@@ -197,7 +198,7 @@ pub fn poll() std.EnumSet(Command) {
         const wanted = b.chord & mods_mask;
         const key: c.ImGuiKey = @intCast(b.chord & ~@as(c_int, mods_mask));
         if (typing and wanted & command_key == 0 and key != c.ImGuiKey_Escape) continue;
-        // In a text field, ⌘C, ⌘V, ⌘A and ⌘Z are the field's.
+        // In a text field, ⌘C, ⌘V, ⌘A and ⌘Z belong to the field.
         if (typing and wanted == command_key) continue;
         if (mods != wanted) continue;
         if (c.ImGui_IsKeyPressedEx(key, repeats(b.command))) pressed.insert(b.command);
@@ -205,7 +206,7 @@ pub fn poll() std.EnumSet(Command) {
     return pressed;
 }
 
-/// The keys of `command`, as the platform writes them: ⌘⇧E on macOS, Ctrl+Shift+E elsewhere.
+/// The keys for `command`, written the platform's way: ⌘⇧E on macOS, Ctrl+Shift+E elsewhere.
 pub fn label(command: Command) [:0]const u8 {
     for (bindings) |b| {
         if (b.command == command) return chordLabel(b.chord);
@@ -251,7 +252,8 @@ fn keyName(key: c.ImGuiKey) []const u8 {
     };
 }
 
-/// A tooltip for the item just drawn: `text`, and the shortcut of `command`, when hovered.
+/// Shows a tooltip for the item just drawn while it's hovered: `text`, then the shortcut for
+/// `command`.
 pub fn tooltip(text: []const u8, command: Command) void {
     if (!c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) return;
     if (!c.ImGui_BeginTooltip()) return;
@@ -263,7 +265,7 @@ pub fn tooltip(text: []const u8, command: Command) void {
     fonts.pop();
 }
 
-/// The list of every shortcut, grouped, for the help panel.
+/// Every shortcut, in groups, for the help panel.
 const groups = [_]struct { []const u8, []const Command }{
     .{ "WORKSPACES", &.{ .rolls, .scan, .develop, .@"export", .looks } },
     .{ "FRAMES", &.{ .previous, .next, .first, .last, .select_all, .select_none } },
@@ -274,7 +276,7 @@ const groups = [_]struct { []const u8, []const Command }{
     .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .help, .quit, .cancel } },
 };
 
-/// The help panel over the window: every shortcut. Returns false once it's closed.
+/// Draws the help panel over the window, listing every shortcut. Returns false once it's closed.
 pub fn drawHelp() bool {
     var open = true;
     const viewport = c.ImGui_GetMainViewport();

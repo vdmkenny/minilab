@@ -1,4 +1,5 @@
-//! The frame on a scan of one frame: frame detection's best box, trimmed to the format's size.
+//! Finds the frame on a scan of one frame: frame detection's best box, trimmed to the format's
+//! size.
 
 const std = @import("std");
 const image = @import("image.zig");
@@ -8,47 +9,48 @@ const frames = @import("../frames/root.zig");
 /// Reduced copies for detection are at most this many pixels along the longer side.
 pub const detection_longest = 1600;
 
-/// The frame on a scan, and the clear film in the gaps either side of it along the strip, all in
-/// the full scan's pixels.
+/// The frame on a scan, and the clear film in the gaps on either side of it along the strip, all
+/// in the full scan's pixels.
 pub const Found = struct {
     frame: image.Area,
-    /// Bands inside the gaps before and after the frame, where the film is base and nothing else;
-    /// null where the gap is off the scan.
+    /// Bands inside the gaps before and after the frame, where there's nothing but film base. Null
+    /// where the gap is off the scan.
     gaps: [2]?image.Area,
 };
 
-/// Where in a gap the base is read: from this far past the frame's edge to this far, in mm, so
-/// that neither the frame's edge nor the next frame's is included. 135's gaps are about 2 mm.
+/// Where in a gap we read the base: from this far past the frame's edge to this far, in mm, so
+/// that neither this frame's edge nor the next one's is included. 135's gaps are about 2 mm.
 const gap_from_mm = 0.4;
 const gap_to_mm = 1.2;
-/// Of the frame's extent across the film, the middle share is read, away from the rebate.
+/// The share of the frame's extent across the film that we read, in the middle, away from the
+/// rebate.
 const gap_across_share = 0.8;
 
-/// Of the frames detection finds, one at least this share of the format's length along the strip
-/// is whole; a shorter one is cut off by the edge of the scan.
+/// A frame detection finds counts as whole if it's at least this share of the format's length
+/// along the strip. A shorter one is cut off by the edge of the scan.
 const whole_share = 0.9;
 /// A scan with at least this many whole frames on it is a strip.
 const strip_least_frames = 2;
 
-/// The frame on `scan` in the full scan's pixels; see `findWithGaps`.
+/// Finds the frame on `scan`, in the full scan's pixels. See `findWithGaps`.
 pub fn find(gpa: std.mem.Allocator, scan: image.Scan, scan_width: usize, scan_height: usize, dpi: ?f32, format: frames.Format, kind: develop.FilmKind) !image.Area {
     return (try findWithGaps(gpa, scan, scan_width, scan_height, dpi, format, kind)).frame;
 }
 
-/// The frame on `scan` (any size: a reduced copy of a scan `scan_width` pixels wide), and the gaps
-/// beside it, in the full scan's pixels, `scan_width` × `scan_height`. `dpi` is the full scan's
-/// resolution; null guesses it from the film's width. Of the frames found, the one nearest the
-/// middle wins, and a sure one over one to check.
+/// Finds the frame on `scan` and the gaps beside it, in the full scan's pixels (`scan_width` ×
+/// `scan_height`). `scan` can be any size, such as a reduced copy of the full scan. `dpi` is the
+/// full scan's resolution, and null means guess it from the film's width. Of the frames found, the
+/// one nearest the middle wins, and a sure one beats one marked for checking.
 pub fn findWithGaps(gpa: std.mem.Allocator, scan: image.Scan, scan_width: usize, scan_height: usize, dpi: ?f32, format: frames.Format, kind: develop.FilmKind) !Found {
     var search: Search = try .run(gpa, scan, scan_width, scan_height, dpi, format, kind);
     defer search.deinit(gpa);
     return search.place(search.nearestMiddle() orelse return error.NoFrame);
 }
 
-/// Every frame on `scan`, as `findWithGaps` takes it, in order along the film. A strip, with
-/// `strip_least_frames` or more whole frames on it, gives each of its whole frames; frames cut off
-/// by the scan's edge are left out. Any other scan gives the one frame `findWithGaps` finds. The
-/// caller frees the slice.
+/// Finds every frame on `scan` (with the same arguments as `findWithGaps`), in order along the
+/// film. A strip, with `strip_least_frames` or more whole frames on it, gives each of its whole
+/// frames, and frames cut off by the scan's edge are left out. Any other scan gives the one frame
+/// `findWithGaps` finds. The caller frees the slice.
 pub fn findAll(gpa: std.mem.Allocator, scan: image.Scan, scan_width: usize, scan_height: usize, dpi: ?f32, format: frames.Format, kind: develop.FilmKind) ![]Found {
     var search: Search = try .run(gpa, scan, scan_width, scan_height, dpi, format, kind);
     defer search.deinit(gpa);
@@ -72,7 +74,7 @@ pub fn findAll(gpa: std.mem.Allocator, scan: image.Scan, scan_width: usize, scan
     return found;
 }
 
-/// Frame detection on a reduced scan, with what's needed to put its frames on the full scan.
+/// Frame detection on a reduced scan, plus what we need to map its frames onto the full scan.
 const Search = struct {
     detection: frames.Detection,
     /// The reduced scan detection ran on, and the full scan's size.
@@ -105,7 +107,8 @@ const Search = struct {
         return search.detection.axis == .x;
     }
 
-    /// The frame nearest the middle of the scan, a sure one over one to check.
+    /// Returns the frame nearest the middle of the scan, preferring a sure one over one marked
+    /// for checking.
     fn nearestMiddle(search: Search) ?frames.Frame {
         var best: ?frames.Frame = null;
         var best_distance: f32 = std.math.inf(f32);
@@ -123,16 +126,17 @@ const Search = struct {
         return best;
     }
 
-    /// Whether `area`, a frame detection found, is all on the scan.
+    /// Whether `area`, a frame detection found, is entirely on the scan.
     fn isWhole(search: Search, area: image.Area) bool {
         const along: f32 = @floatFromInt(if (search.alongX()) area.width else area.height);
         return along >= whole_share * search.format.width_mm * search.px_per_mm;
     }
 
-    /// `chosen` trimmed to the format's size, and the gaps either side of it, on the full scan.
+    /// Trims `chosen` to the format's size and finds the gaps on either side of it, on the full
+    /// scan.
     fn place(search: Search, chosen: frames.Frame) Found {
         // Detection sizes frames from the holder's opening, which shows a little rebate on every
-        // side; the format's own size is the picture.
+        // side. The picture is the format's own size.
         const along_x = search.alongX();
         const format = search.format;
         const px_per_mm = search.px_per_mm;
@@ -173,10 +177,10 @@ const Search = struct {
     }
 };
 
-/// The film base's transmission per channel, 0..1, from the gaps beside a frame on `scan`, whose
-/// pixels the areas are in: the median of the thinner gap. At either end of a strip one "gap" is
-/// the leader, fogged when the film was loaded, or the holder; the clear base is the thinnest film
-/// there is. Null when no gap is on the scan.
+/// Measures the film base's transmission per channel, 0..1, from the gaps beside a frame on `scan`
+/// (the areas are in `scan`'s pixels). It's the median of the thinner gap. At either end of a
+/// strip, one "gap" is really the leader (fogged when the film was loaded) or the holder, and the
+/// clear base is always the thinnest film there is. Returns null when no gap is on the scan.
 pub fn measureBase(gpa: std.mem.Allocator, scan: image.Scan, gaps: [2]?image.Area) !?[3]f32 {
     var best: ?[3]f32 = null;
     for (gaps) |gap| {
@@ -204,15 +208,16 @@ fn medianOf(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area) ![3]f32 
     return median;
 }
 
-/// The resolution of a scan of one frame whose shorter side spans the film's width less the
-/// holder's lips, when the scanner didn't say: good to a few per cent for a frame in a holder.
+/// Guesses the resolution of a scan of one frame when the scanner didn't say, assuming its
+/// shorter side spans the film's width minus the holder's lips. It's good to a few per cent for a
+/// frame in a holder.
 pub fn guessDpi(width: usize, height: usize, format: frames.Format) f32 {
     const across_mm = (format.size.filmWidthMm() orelse format.height_mm) - 2;
     return @as(f32, @floatFromInt(@min(width, height))) / across_mm * frames.formats.mm_per_inch;
 }
 
 const synthetic = @import("../frames/synthetic.zig");
-/// How far from where it is on the film a found frame's centre may be.
+/// How far a found frame's centre can be from where it really is on the film.
 const test_tolerance_mm = 2;
 
 test "every whole frame of a strip, in order, each with the base in its gaps" {
@@ -238,7 +243,7 @@ test "a scan of one frame with the edges of its neighbours is one frame" {
     const gpa = std.testing.allocator;
     var on_film: [3]synthetic.Frame = undefined;
     const strip = synthetic.strip135(&on_film);
-    // The middle frame and 2 mm either side, as the scanner scans a frame with its margin.
+    // The middle frame and 2 mm on either side, the way the scanner scans a frame with its margin.
     const margin_mm = 2;
     var one = try strip.render(gpa);
     defer one.deinit(gpa);

@@ -1,15 +1,16 @@
-//! A pair's two images, read and made ready: our raw scan developed the way a look expects it,
-//! and the reference. Then what registering, fitting and the page need from them.
+//! A pair's two images, read and made ready: our raw scan, developed the way a look expects, and
+//! the reference. After that, everything registering, fitting and the page need from them.
 //!
-//! Ours is developed the way the command line develops a scan: the frame found on it by frame
-//! detection, the film base measured in the gaps beside it (or the thinnest film in the frame),
-//! and Develop's automatic settings for the rest. The Log tone gives the density a look starts
-//! from; the Standard tone, the Neutral rendering the page shows. The reference is taken as sRGB;
-//! an embedded profile isn't applied.
+//! Ours is developed the way the command line develops a scan: frame detection finds the frame,
+//! the film base is measured in the gaps beside it (or taken from the thinnest film in the frame),
+//! and Develop's automatic settings do the rest. A frame of a roll uses the roll's crop and film
+//! base instead. The Log tone gives the density a look starts from, and the Standard tone gives
+//! the Neutral rendering the page shows. The reference is taken as sRGB; we don't apply an
+//! embedded profile.
 //!
-//! An alignment is kept relative to the whole raw scan, so that it holds however the frame is
-//! found; the working images are of the frame alone, and `Prepared.onFrame` moves an alignment
-//! onto them.
+//! Alignments are kept relative to the whole raw scan, so they stay valid however the frame is
+//! found. The working images show only the frame, and `Prepared.onFrame` moves an alignment onto
+//! them.
 
 const std = @import("std");
 const minilab = @import("../root.zig");
@@ -22,13 +23,13 @@ const draft = @import("draft.zig");
 const image = minilab.image;
 const develop = minilab.develop;
 
-/// The working copies' longer sides, in pixels.
+/// The longer side of the working copies, in pixels.
 pub const working_longest = 768;
-/// Samples taken from each pair, about.
+/// Roughly how many samples we take from each pair.
 pub const samples_per_pair = 4096;
-/// The largest file read.
+/// The largest file we'll read.
 const max_file_bytes = 2 << 30;
-/// The darkest luminance the grey images tell apart, as a floor for the log.
+/// The darkest luminance the grey images tell apart. It's the floor for the log.
 const darkest = 1e-3;
 
 /// An image reduced by a whole factor, with the size it was reduced from.
@@ -37,11 +38,12 @@ pub fn Reduced(comptime Pixel: type) type {
         width: usize,
         height: usize,
         pixels: []Pixel,
-        /// Full-size pixels per pixel here.
+        /// How many full-size pixels each pixel of this image covers, across.
         factor: f32,
         full: [2]f32,
 
-        /// Bilinear between pixel centres at (x, y) in full-size pixels; null outside.
+        /// Samples the image at (x, y), in full-size pixels, interpolating bilinearly between
+        /// pixel centres. Returns null outside the image.
         pub fn sample(r: *const @This(), x: f32, y: f32) ?Pixel {
             const fx = x / r.factor - 0.5;
             const fy = y / r.factor - 0.5;
@@ -84,7 +86,7 @@ fn fromFloat(comptime T: type, v: f32) T {
     };
 }
 
-/// A pair's images, ready.
+/// A pair's images, ready to use.
 pub const Prepared = struct {
     /// Our density, 0..1 per channel.
     density: Reduced([3]f32),
@@ -95,7 +97,7 @@ pub const Prepared = struct {
     /// Grey images for registering.
     ours_gray: register.Gray,
     reference_gray: register.Gray,
-    /// The frame on our raw scan, which the working images show, and the scan's size.
+    /// The frame on our raw scan (the part the working images show), and the size of the scan.
     frame: image.Area,
     scan_size: [2]f32,
 
@@ -108,10 +110,11 @@ pub const Prepared = struct {
         p.* = undefined;
     }
 
-    /// Where the reference lies on our raw scan.
+    /// Works out where the reference lies on our raw scan.
     pub fn locate(p: *const Prepared, gpa: std.mem.Allocator) !register.Alignment {
         const on_frame = try register.register(gpa, p.ours_gray, p.reference_gray);
-        // From units of the frame's width, from its corner, to the scan's.
+        // Convert from units of the frame's width, measured from its corner, to units of the
+        // scan's width, measured from the scan's corner.
         const width: f32 = @floatFromInt(p.frame.width);
         var a = on_frame;
         a.scale = on_frame.scale * width / p.scan_size[0];
@@ -120,7 +123,7 @@ pub const Prepared = struct {
         return a;
     }
 
-    /// `a`, an alignment on our raw scan, on the frame the working images show.
+    /// Moves `a`, an alignment on our raw scan, onto the frame the working images show.
     pub fn onFrame(p: *const Prepared, a: register.Alignment) register.Alignment {
         const width: f32 = @floatFromInt(p.frame.width);
         var out = a;
@@ -151,12 +154,12 @@ pub fn prepare(gpa: std.mem.Allocator, io: std.Io, ours: []const u8, placement: 
     };
 }
 
-/// Our scan developed: its density, its Neutral rendering and its grey.
+/// Our scan, developed: its density, its Neutral rendering and its grey image.
 pub const Developed = struct {
     density: Reduced([3]f32),
     neutral: Reduced([4]u8),
     gray: register.Gray,
-    /// The frame developed, on the raw scan, and the scan's size.
+    /// The frame we developed, on the raw scan, and the size of the scan.
     frame: image.Area,
     scan_size: [2]f32,
 
@@ -167,19 +170,20 @@ pub const Developed = struct {
     }
 };
 
-/// Reads the raw scan at `path` and develops it reduced to `longest` pixels: the frame on it,
-/// when `find_frame` and frame detection finds one, or all of it.
+/// Reads the raw scan at `path` and develops it, reduced to `longest` pixels. With a `placement`,
+/// it develops the frame where the roll has it. Without one, it develops the frame that frame
+/// detection finds, or the whole scan when it finds none.
 pub fn developScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8, longest: usize, placement: ?draft.Placement) !Developed {
     var raw = (try minilab.input.read(gpa, io, path)).scan;
     defer raw.deinit(gpa);
-    // A frame of a roll: where the roll has it.
+    // A frame of a roll: use the roll's placement.
     if (placement) |p| {
         var placed = try p.apply(gpa, raw);
         defer placed.deinit(gpa);
         return developPlaced(gpa, placed, longest, p.film_base);
     }
 
-    // A scan on its own: the frame and the base, as the command line finds them.
+    // A scan on its own: find the frame and the base the way the command line does.
     var frame: image.Area = .whole(raw.width, raw.height);
     var gap_base: ?[3]f32 = null;
     {
@@ -199,18 +203,19 @@ pub fn developScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8, longest
     return developed;
 }
 
-/// `scan`, already the frame, developed as Develop develops an undeveloped frame, on the film base
-/// `gap_base` when it's known.
+/// Develops `scan`, which is already cut to the frame, the way Develop develops an undeveloped
+/// frame. It uses the film base `gap_base` when that's known.
 fn developPlaced(gpa: std.mem.Allocator, scan: image.Scan, longest: usize, gap_base: ?[3]f32) !Developed {
     const factor = image.reductionFactor(scan.width, scan.height, longest);
     var work = try image.downscale(gpa, scan, longest);
     defer work.deinit(gpa);
     const full: [2]f32 = .{ @floatFromInt(scan.width), @floatFromInt(scan.height) };
 
-    // The automatic settings, measured as Develop measures an undeveloped frame.
+    // The automatic settings, measured the way Develop measures an undeveloped frame.
     const stats = try develop.FrameStatistics.measure(gpa, work);
     var settings = develop.automatic(.colour_negative, gap_base orelse stats.whole.thinnest, stats.centre, null);
-    // A channel clipped at full scale in the base and the shadows has nothing to balance by.
+    // A channel that's clipped at full scale in the base and the shadows has nothing to balance
+    // by.
     for (&settings.highlight_balance, &settings.shadow_balance) |*high, *low| {
         if (!std.math.isFinite(high.*) or high.* <= 0) high.* = 1;
         if (!std.math.isFinite(low.*) or low.* <= 0) low.* = 1;
@@ -247,8 +252,7 @@ fn developPlaced(gpa: std.mem.Allocator, scan: image.Scan, longest: usize, gap_b
     };
 }
 
-/// The whole factor `image.downscale` reduces by.
-/// Reads a reference: JPEG, TIFF or PPM, by its extension, reduced to the working size.
+/// Reads a reference (JPEG, TIFF or PPM, going by its extension), reduced to the working size.
 pub fn readReference(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Reduced([3]f32) {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
     defer gpa.free(bytes);
@@ -267,12 +271,12 @@ pub fn readReference(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Redu
     return reduce(u16, gpa, scan.pixels, scan.width, scan.height);
 }
 
-/// `pixels` reduced by a whole factor to the working size, as encoded values 0..1.
+/// Reduces `pixels` by a whole factor to the working size, as encoded values 0..1.
 fn reduce(comptime Sample: type, gpa: std.mem.Allocator, pixels: []const [3]Sample, width: usize, height: usize) !Reduced([3]f32) {
     const factor = image.reductionFactor(width, height, working_longest);
     const w = width / factor;
     const h = height / factor;
-    // A side shorter than the factor has no whole block to average.
+    // If a side is shorter than the factor, there's no whole block to average.
     if (w == 0 or h == 0) return error.ImageTooSmall;
     const out = try gpa.alloc([3]f32, w * h);
     const scale = 1.0 / @as(f32, @floatFromInt(std.math.maxInt(Sample))) / @as(f32, @floatFromInt(factor * factor));
@@ -290,7 +294,7 @@ fn reduce(comptime Sample: type, gpa: std.mem.Allocator, pixels: []const [3]Samp
     return .{ .width = w, .height = h, .pixels = out, .factor = @floatFromInt(factor), .full = .{ @floatFromInt(width), @floatFromInt(height) } };
 }
 
-/// The log of an encoded image's luminance, for registering.
+/// Returns the log of an encoded image's luminance, for registering.
 fn grayOfEncoded(gpa: std.mem.Allocator, encoded: Reduced([3]f32)) !register.Gray {
     var gray: register.Gray = try .init(gpa, encoded.width, encoded.height);
     gray.factor = encoded.factor;
@@ -304,8 +308,8 @@ fn grayOfEncoded(gpa: std.mem.Allocator, encoded: Reduced([3]f32)) !register.Gra
     return gray;
 }
 
-/// The part of ours the reference covers, in our working pixels, kept inside ours: x0, y0, x1, y1.
-/// `a` is on the frame.
+/// Returns the part of ours the reference covers, in our working pixels and kept inside ours, as
+/// x0, y0, x1, y1. `a` is an alignment on the frame.
 fn overlap(p: *const Prepared, a: register.Alignment) [4]usize {
     const box = a.extent(p.density.full[0], p.reference.full);
     const f = p.density.factor;
@@ -319,7 +323,7 @@ fn overlap(p: *const Prepared, a: register.Alignment) [4]usize {
     };
 }
 
-/// The reference's colour at our working pixel (x, y), or null outside it.
+/// Returns the reference's colour at our working pixel (x, y), or null outside the reference.
 fn referenceAt(p: *const Prepared, a: register.Alignment, x: f32, y: f32) ?[3]f32 {
     const fx = (x + 0.5) * p.density.factor;
     const fy = (y + 0.5) * p.density.factor;
@@ -327,10 +331,11 @@ fn referenceAt(p: *const Prepared, a: register.Alignment, x: f32, y: f32) ?[3]f3
     return p.reference.sample(at[0], at[1]);
 }
 
-/// Samples of pair number `pair` for a fit, appended to `out`: blocks on an even grid over the
-/// part both images show, a little in from its edges. Each holds our mean density and the
-/// reference's mean colour there. Blocks with clipped values are left out, and busy ones, where a
-/// small misalignment would show, count for less. `alignment` is on our raw scan.
+/// Takes samples of pair number `pair` for a fit and appends them to `out`. The samples are blocks
+/// on an even grid over the part both images show, a little in from its edges. Each one holds our
+/// mean density and the reference's mean colour there. Blocks with clipped values are left out,
+/// and busy blocks, where a small misalignment would show, count for less. `alignment` is on our
+/// raw scan.
 pub fn sample(gpa: std.mem.Allocator, p: *const Prepared, alignment: register.Alignment, pair: u16, out: *std.ArrayList(fit.Sample)) !void {
     const a = p.onFrame(alignment);
     const box = overlap(p, a);
@@ -391,8 +396,8 @@ pub fn sample(gpa: std.mem.Allocator, p: *const Prepared, alignment: register.Al
     }
 }
 
-/// The two images over the part both show, side by side at one size, for the page, and what the
-/// difference map needs.
+/// The two images over the part both show, at the same size, for the page to show side by side.
+/// It also holds what the difference map needs.
 pub const View = struct {
     width: usize,
     height: usize,
@@ -411,9 +416,9 @@ pub const View = struct {
         v.* = undefined;
     }
 
-    /// The ΔE2000 between the look and the reference at every pixel, into `out`: each image
-    /// averaged over a few pixels around first, as the fit's samples are, so that the map shows
-    /// the colour that differs rather than the grain and the edges a pixel's misalignment shows.
+    /// Writes the ΔE2000 between the look and the reference at every pixel into `out`. Each image
+    /// is first averaged over a few pixels around each one, like the fit's samples are, so the map
+    /// shows colours that differ rather than grain, or edges where the images are a pixel apart.
     pub fn difference(v: *const View, gpa: std.mem.Allocator, m: *const model.Model, balance: [3]f32, out: []f32) !void {
         const density = try blurred(gpa, v.density, v.width, v.height);
         defer gpa.free(density);
@@ -425,7 +430,7 @@ pub const View = struct {
     }
 };
 
-/// `pixels` averaged over the square of 5 × 5 around each, kept inside the image.
+/// Returns `pixels`, each averaged over the 5 × 5 square around it, staying inside the image.
 fn blurred(gpa: std.mem.Allocator, pixels: []const [3]f32, width: usize, height: usize) ![][3]f32 {
     const radius = 2;
     const across = try gpa.alloc([3]f32, pixels.len);
@@ -456,8 +461,8 @@ fn blurred(gpa: std.mem.Allocator, pixels: []const [3]f32, width: usize, height:
     return out;
 }
 
-/// The view of a pair at most `longest` pixels across: over the overlap when `on_scan`, the
-/// alignment on our raw scan, is known, or over the whole of each image when it isn't.
+/// Makes the view of a pair, at most `longest` pixels across. When we know `on_scan`, the
+/// alignment on our raw scan, it covers the overlap. Otherwise it covers the whole of each image.
 pub fn view(gpa: std.mem.Allocator, p: *const Prepared, on_scan: ?register.Alignment, longest: usize) !View {
     const alignment = if (on_scan) |a| p.onFrame(a) else null;
     const box: [4]usize = if (alignment) |a| overlap(p, a) else .{ 0, 0, p.density.width, p.density.height };
@@ -484,7 +489,7 @@ pub fn view(gpa: std.mem.Allocator, p: *const Prepared, on_scan: ?register.Align
     for (0..height) |j| {
         for (0..width) |i| {
             const k = j * width + i;
-            // A point of ours, in working pixels, then full-size.
+            // A point of ours, in working pixels, and then in full-size pixels.
             const x = @as(f32, @floatFromInt(box[0])) + (@as(f32, @floatFromInt(i)) + 0.5) * step;
             const y = @as(f32, @floatFromInt(box[1])) + (@as(f32, @floatFromInt(j)) + 0.5) * step;
             const fx = x * p.density.factor;
@@ -508,7 +513,8 @@ pub fn view(gpa: std.mem.Allocator, p: *const Prepared, on_scan: ?register.Align
     return v;
 }
 
-/// The grey of the raw scan at `path`, small, for finding which frame a reference shows.
+/// Returns a small grey image of the raw scan at `path`, for finding which frame a reference
+/// shows.
 pub fn thumbnailGray(gpa: std.mem.Allocator, io: std.Io, path: []const u8, placement: draft.Placement) !register.Gray {
     const developed = try developScan(gpa, io, path, 256, placement);
     gpa.free(developed.density.pixels);
@@ -516,7 +522,7 @@ pub fn thumbnailGray(gpa: std.mem.Allocator, io: std.Io, path: []const u8, place
     return developed.gray;
 }
 
-/// The grey of the reference at `path`, for the same.
+/// Returns the grey image of the reference at `path`, for the same job.
 pub fn referenceGray(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !register.Gray {
     const reference = try readReference(gpa, io, path);
     defer gpa.free(reference.pixels);
@@ -525,8 +531,8 @@ pub fn referenceGray(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !regi
 
 test "a reference made from our own scan lines up and samples match" {
     const gpa = std.testing.allocator;
-    // A made-up scan: a gradient of densities, with a dark square off centre so that turns are
-    // told apart.
+    // A made-up scan: a gradient of densities, with a dark square off centre so we can tell the
+    // turns apart.
     var scan: image.Scan = try .init(gpa, 300, 200);
     defer scan.deinit(gpa);
     for (0..scan.height) |y| {
@@ -565,7 +571,7 @@ test "a reference made from our own scan lines up and samples match" {
     var prepared = try prepare(gpa, io, ours_path, null, theirs_path);
     defer prepared.deinit(gpa);
     const alignment = try prepared.locate(gpa);
-    // It lies on the frame, wherever frame detection put it on the scan.
+    // It lies on the frame, wherever frame detection put the frame on the scan.
     const frame = developed.frame;
     try std.testing.expectEqual(register.Orientation.upright, alignment.orientation);
     try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(frame.width)) / 300, alignment.scale, 0.01);

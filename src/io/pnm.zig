@@ -1,5 +1,5 @@
-//! Binary PNM: what SANE's scanimage writes. Reads colour (PPM) and greyscale (PGM), 8- and
-//! 16-bit; writes colour, 8- or 16-bit.
+//! Binary PNM files, the format SANE's scanimage writes. We read colour (PPM) and greyscale
+//! (PGM) files at 8 or 16 bits, and write colour files at 8 or 16 bits.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
@@ -13,20 +13,20 @@ pub const Error = error{ NotAPpm, UnsupportedDepth, Truncated, InvalidHeader };
 /// Bits per sample in the file.
 pub const Depth = enum { eight, sixteen };
 
-/// A PNM read into a scan.
+/// A PNM file after reading it into a scan.
 pub const Decoded = struct {
-    /// The pixels. 8-bit samples are scaled to 16 bits; a greyscale file has its value in all
-    /// three channels.
+    /// The pixels. 8-bit samples are scaled up to 16 bits, and a greyscale file gets its value
+    /// copied into all three channels.
     scan: image.Scan,
     depth: Depth,
 };
 
-/// A colour or greyscale PNM as a scan; see `decode`.
+/// Reads a colour or greyscale PNM into a scan; see `decode`.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocator.Error)!image.Scan {
     return (try decode(gpa, bytes)).scan;
 }
 
-/// A colour or greyscale PNM as a scan, with the file's depth.
+/// Reads a colour or greyscale PNM into a scan, and says what depth the file had.
 pub fn decode(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Allocator.Error)!Decoded {
     var reader: Header = .{ .bytes = bytes };
     const kind = try reader.field();
@@ -40,7 +40,7 @@ pub fn decode(gpa: std.mem.Allocator, bytes: []const u8) (Error || std.mem.Alloc
     const height = std.fmt.parseInt(usize, try reader.field(), 10) catch return error.InvalidHeader;
     const max_value = std.fmt.parseInt(u16, try reader.field(), 10) catch return error.InvalidHeader;
     if (width == 0 or height == 0) return error.InvalidHeader;
-    // One whitespace character ends the header; the samples follow it.
+    // The header ends with a single whitespace character, and the samples start right after it.
     if (reader.position >= bytes.len) return error.Truncated;
     const data = bytes[reader.position + 1 ..];
 
@@ -74,7 +74,7 @@ const Header = struct {
     bytes: []const u8,
     position: usize = 0,
 
-    /// The next whitespace-separated field, skipping comments.
+    /// Returns the next field (fields are separated by whitespace), skipping comments.
     fn field(header: *Header) Error![]const u8 {
         const b = header.bytes;
         while (header.position < b.len) {
@@ -91,7 +91,7 @@ const Header = struct {
     }
 };
 
-/// An encoded image as a binary PPM, 8 or 16 bits per sample.
+/// Writes an encoded image as a binary PPM, with 8 or 16 bits per sample.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample)) ![]u8 {
     const header = try std.fmt.allocPrint(gpa, "{s}\n{d} {d}\n{d}\n", .{ magic, encoded.width, encoded.height, std.math.maxInt(Sample) });
     defer gpa.free(header);

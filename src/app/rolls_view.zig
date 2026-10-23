@@ -1,5 +1,5 @@
-//! The Rolls workspace: a contact sheet per roll, each with its card and filmstrip, and the panel
-//! for a new roll.
+//! The Rolls workspace: a contact sheet for each roll, with its card and filmstrip, and the panel
+//! for making a new roll.
 
 const std = @import("std");
 const c = @import("c");
@@ -28,21 +28,21 @@ const sprocket_band = 8;
 const row_gap = 12;
 const form_width = 340;
 const search_width = 240;
-/// The longest path the form keeps.
+/// The longest path the form can hold.
 const path_field = 1024;
 
-/// What the flat field's button opens.
+/// The file types the flat field's button lets you pick.
 const flat_files = [_]c.SDL_DialogFileFilter{
     .{ .name = "Camera RAW and TIFF", .pattern = minilab.input.extensions },
 };
 
 pub const State = struct {
     search: [gui.text_capacity:0]u8 = @splat(0),
-    /// 0 for all film sizes, else the size's index in `film_sizes` plus one.
+    /// 0 for all film sizes, otherwise the size's index in `film_sizes` plus one.
     size_filter: usize = 0,
     show_form: bool = false,
     form: Form = .{},
-    /// Put the keyboard in the search field on the next frame.
+    /// Move the keyboard focus to the search field on the next frame.
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
     flat_dialog: Dialog = .{ .filters = &flat_files },
@@ -52,7 +52,7 @@ pub const State = struct {
     }
 };
 
-/// The new roll's fields.
+/// The fields for the new roll.
 const Form = struct {
     name: [gui.text_capacity:0]u8 = @splat(0),
     kind: usize = 0,
@@ -64,11 +64,11 @@ const Form = struct {
     copyright: [gui.text_capacity:0]u8 = @splat(0),
     notes: [gui.text_capacity * 4:0]u8 = @splat(0),
     input: usize = 0,
-    /// A camera roll's flat field: the file of a shot of the light source with no film.
+    /// The flat field for a camera roll: a file with a shot of the light source and no film.
     flat: [path_field:0]u8 = @splat(0),
-    /// Whether the name was filled in for this showing of the form.
+    /// Whether the default name has been filled in since the form was last opened.
     named: bool = false,
-    /// Why the last Create didn't make the roll.
+    /// Why the last click on Create didn't make the roll.
     problem: ?[]const u8 = null,
 };
 
@@ -82,14 +82,14 @@ pub const Action = union(enum) {
     dropped_on: usize,
 };
 
-/// The film sizes a roll can have, and how the form lists them.
+/// The film sizes a roll can have, in the order the form lists them.
 const film_sizes = [_]formats.FilmSize{ .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet };
 const film_size_names = [_][]const u8{ "135 (35mm)", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
 const filter_names = [_][]const u8{ "All film sizes", "135", "120 / 220", "127", "110", "126", "APS", "Minox", "Sheet film" };
 const inputs = [_]roll.Input{ .scanner, .camera_raw, .tiff_files };
 const input_names = [_][]const u8{ "Scanner", "Camera RAW", "TIFF files" };
 
-/// The standard formats of film size `size`.
+/// The standard formats for film size `size`.
 fn formatsOf(size: formats.FilmSize, buffer: []formats.Standard) []formats.Standard {
     var n: usize = 0;
     for (std.enums.values(formats.Standard)) |id| {
@@ -100,7 +100,7 @@ fn formatsOf(size: formats.FilmSize, buffer: []formats.Standard) []formats.Stand
     return buffer[0..n];
 }
 
-/// Draws the sheet. `drop` is where files were dropped this frame, if they were.
+/// Draws the sheet. `drop` is where files were dropped this frame, if any were.
 pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, drop: ?gui.Vec2) Action {
     var action: Action = .none;
     const available = c.ImGui_GetContentRegionAvail();
@@ -156,7 +156,8 @@ fn matches(state: *const State, info: roll.Info) bool {
     return false;
 }
 
-/// "Rolls", where the library is, then search, the film-size filter and New roll on the right.
+/// Draws the title row: "Rolls" and where the library is, then search, the film-size filter and
+/// New roll on the right.
 fn drawTitleRow(state: *State, library: *Library) void {
     const row_top = c.ImGui_GetCursorPosY();
     const height = c.ImGui_GetFrameHeight();
@@ -194,8 +195,8 @@ fn drawTitleRow(state: *State, library: *Library) void {
         state.form = .{};
     }
     shortcuts.tooltip("A new roll in the library", .new_roll);
-    // The plus sign, then the label, as the design has them: 12 pixels in, a 14-pixel icon, a
-    // 6-pixel gap.
+    // The plus sign, then the label, laid out as in the design: 12 pixels in, a 14-pixel icon,
+    // then a 6-pixel gap.
     const list = c.ImGui_GetWindowDrawList();
     const ink = theme.imU32(theme.on_accent);
     const plus = gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2);
@@ -206,7 +207,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
     fonts.pop();
 }
 
-/// One roll: its card, then its filmstrip.
+/// Draws one roll: its card, then its filmstrip.
 fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
     var action: ?Action = null;
     const origin = c.ImGui_GetCursorScreenPos();
@@ -244,7 +245,7 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
     }
 
-    // The filmstrip, in the middle of the row's height.
+    // The filmstrip, centred in the row's height.
     const number_height = gui.px(15);
     const strip_height = gui.px(sprocket_band * 2 + thumb_gap * 2 + thumb_height + 3) + number_height;
     const strip_x = origin.x + gui.px(card_width + 12);
@@ -320,7 +321,7 @@ fn drawRow(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usiz
     return action;
 }
 
-/// The new-roll panel. Returns the new roll's index once it's made.
+/// Draws the new-roll panel. Returns the new roll's index once it's made.
 fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?usize {
     const form = &state.form;
     if (!form.named) {
@@ -442,7 +443,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     return library.find(path);
 }
 
-/// Gives `r` the shot in the file at `path` as its flat field.
+/// Sets the shot in the file at `path` as the flat field of roll `r`.
 fn setFlatField(gpa: std.mem.Allocator, io: std.Io, r: *roll.Roll, path: []const u8) !void {
     var shot = try minilab.input.read(gpa, io, path);
     defer shot.deinit(gpa);

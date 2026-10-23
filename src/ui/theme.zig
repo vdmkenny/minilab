@@ -1,5 +1,5 @@
-//! The look of the interface: a neutral dark grey, so that it doesn't tint how an image is judged,
-//! with one amber accent for selection and focus. Values follow the design canvas.
+//! The look of the interface: a neutral dark grey, so it doesn't skew how you judge an image's
+//! colour, with one amber accent for selection and focus. The values come from the design canvas.
 
 const std = @import("std");
 const c = @import("c");
@@ -31,25 +31,25 @@ pub const accent_fill = hex(0x3A3127);
 pub const on_accent = hex(0x1A1206);
 pub const ready = hex(0x7FB77E);
 pub const histogram_ground = hex(0x1A1A1B);
-/// A selected card or row, a step above the panel.
+/// A selected card or row, one step lighter than the panel.
 pub const raised = hex(0x2A2A2D);
 pub const sprocket = hex(0x4A4A4E);
 /// The scanner's film holder, where it covers the film's edges.
 pub const holder = hex(0x121213);
 /// The track of a slider to the right of its thumb.
 pub const track = hex(0x5A5A5F);
-/// Behind labels drawn over an image.
+/// The background behind labels drawn over an image.
 pub const overlay: Color = .{ .x = 22.0 / 255.0, .y = 22.0 / 255.0, .z = 23.0 / 255.0, .w = 0.8 };
 pub const red = hex(0xD9534F);
 pub const green = hex(0x5CB85C);
 pub const blue = hex(0x4A90D9);
 
-/// `color` with its alpha set to `alpha`.
+/// Returns `color` with its alpha set to `alpha`.
 pub fn withAlpha(color: Color, alpha: f32) Color {
     return .{ .x = color.x, .y = color.y, .z = color.z, .w = alpha };
 }
 
-/// `color` as 8-bit RGBA, for pixels.
+/// Returns `color` as 8-bit RGBA, for pixels.
 pub fn rgba8(color: Color) [4]u8 {
     return .{ channel8(color.x), channel8(color.y), channel8(color.z), channel8(color.w) };
 }

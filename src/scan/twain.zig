@@ -1,25 +1,27 @@
-//! TWAIN, the scanner interface of Windows, through the TWAIN 2 data source manager
-//! (`TWAINDSM.dll`), loaded at run time like the rest of the platform's scanner libraries. Every
-//! call goes through the manager's one entry point, `DSM_Entry`.
+//! TWAIN, the scanner interface on Windows. We go through the TWAIN 2 data source manager
+//! (`TWAINDSM.dll`), which is loaded at run time like the scanner libraries on the other
+//! platforms. Every call goes through the manager's single entry point, `DSM_Entry`.
 //!
 //! **Untested.** This file was written from the TWAIN 2.4 specification without a Windows machine
-//! or a TWAIN source to try it on. It compiles for x86_64-windows-gnu and its structures' sizes
-//! are checked against the specification's packing below, but nothing here has run. In
+//! or a TWAIN source to try it on. It compiles for x86_64-windows-gnu, and the sizes of its
+//! structures are checked against the specification's packing below, but none of it has run. In
 //! particular:
 //!
-//! - which capabilities Epson's V200 source (Epson Scan) supports without its own window, and
-//!   whether it gives linear 48-bit data, is unknown (design section 5);
-//! - the wait for the source's "transfer ready" goes through both a registered callback and a
-//!   message loop on a hidden window, since sources differ in which they use; neither is tried;
-//! - 16-bit samples are taken to be little-endian and the data chunky (RGBRGB…), which the
-//!   specification leaves to the source. Planar data is refused;
-//! - areas and resolutions use inches; sources that ignore `ICAP_UNITS` would scan the wrong area.
+//! - we don't know which capabilities Epson's V200 source (Epson Scan) supports without showing
+//!   its own window, or whether it gives linear 48-bit data (design section 5);
+//! - we wait for the source's "transfer ready" through both a registered callback and a message
+//!   loop on a hidden window, because sources differ in which one they use. Neither has been
+//!   tried;
+//! - we assume 16-bit samples are little-endian and the data is chunky (RGBRGB…), which the
+//!   specification leaves up to the source. Planar data is refused;
+//! - areas and resolutions are in inches, so a source that ignores `ICAP_UNITS` would scan the
+//!   wrong area.
 //!
-//! The declarations are written from the specification, since `twain.h` carries no licence. On
-//! Windows TWAIN packs its structures to 2 bytes, which the `align(2)` fields reproduce.
+//! The declarations are written from the specification, because `twain.h` comes with no licence.
+//! On Windows, TWAIN packs its structures to 2 bytes, and the `align(2)` fields reproduce that.
 //!
-//! TWAIN ties a session to the thread that opened it: load the library, and make every call, on
-//! the scan thread.
+//! TWAIN ties a session to the thread that opened it, so load the library, and make every call,
+//! on the scan thread.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -31,7 +33,7 @@ const Error = interface.Error;
 
 pub const supported = builtin.os.tag == .windows;
 
-/// The data source manager. TWAIN 2's is the same name for 32 and 64-bit programs.
+/// The data source manager. TWAIN 2 uses the same name for 32-bit and 64-bit programs.
 pub const manager_name = "TWAINDSM.dll";
 
 const callconv_twain: std.builtin.CallingConvention = if (supported) .winapi else .c;
@@ -172,7 +174,7 @@ const EntryPoint = extern struct {
 };
 
 comptime {
-    // The sizes the specification's 2-byte packing gives on 64-bit Windows.
+    // The sizes that the specification's 2-byte packing gives on 64-bit Windows.
     if (supported and @sizeOf(usize) == 8) {
         std.debug.assert(@sizeOf(Identity) == 156);
         std.debug.assert(@sizeOf(UserInterface) == 12);
@@ -187,7 +189,8 @@ comptime {
 }
 
 // Data groups, data types, messages and return codes.
-/// The largest memory transfer buffer taken from a source: far more than any row band needs.
+/// The largest memory transfer buffer we accept from a source. That's far more than any band of
+/// rows needs.
 const max_transfer_bytes = 256 << 20;
 
 const dg_control = 0x0001;
@@ -261,8 +264,8 @@ const ty_uint32 = 5;
 const ty_bool = 6;
 const ty_fix32 = 7;
 
-// Where the containers' fields lie, in bytes from the start. Each container starts with its item
-// type, and a field that holds a value, a count or an index takes 4 bytes whatever the item type.
+// Where the containers' fields are, in bytes from the start. Each container starts with its item
+// type, and a field holding a value, a count or an index takes 4 bytes, whatever the item type.
 const item_type_at = 0;
 const field_bytes = 4;
 const one_value_at = 2;
@@ -305,8 +308,8 @@ const mf_pointer = 0x0008;
 const lg_usa = 13;
 const cy_usa = 1;
 
-/// How long a source may take to say its image is ready: lamps warm up, and a source that shows
-/// its own window waits for the user.
+/// How long a source can take to say its image is ready. Lamps need to warm up, and a source that
+/// shows its own window waits for the user.
 const ready_timeout_ms = 10 * 60 * 1000;
 const poll_ms = 10;
 
@@ -344,7 +347,7 @@ const win = struct {
 };
 
 /// What the source last told us through the callback: 0, or a message such as `msg_xferready`.
-/// One scan thread holds one session, so one value serves.
+/// One scan thread holds one session, so a single value is enough.
 var callback_message: std.atomic.Value(u16) = .init(0);
 
 fn sourceCallback(origin: ?*Identity, destination: ?*Identity, group: u32, data_type: u16, message: u16, data: ?*anyopaque) callconv(callconv_twain) u16 {
@@ -364,15 +367,16 @@ fn span32(value: *const Str32) []const u8 {
     return std.mem.sliceTo(value, 0);
 }
 
-/// The data source manager, open.
+/// The open data source manager.
 pub const Library = struct {
     module: Handle,
     entry: EntryFn,
-    /// A hidden window: the manager wants a parent, and sources post their messages to its thread.
+    /// A hidden window. The manager wants a parent window, and sources post their messages to its
+    /// thread.
     window: Handle,
     app: Identity,
-    /// TWAIN 2's memory functions, which sources expect for containers; Windows' global memory
-    /// for a TWAIN 1 manager.
+    /// TWAIN 2's memory functions, which sources expect us to use for containers. With a TWAIN 1
+    /// manager we use Windows' global memory instead.
     memory: EntryPoint,
 
     pub fn load(gpa: std.mem.Allocator) Error!Library {
@@ -417,10 +421,11 @@ pub const Library = struct {
         library.* = undefined;
     }
 
-    /// The sources the manager knows: every TWAIN driver installed, attached or not.
+    /// Lists the sources the manager knows: every TWAIN driver that's installed, whether its
+    /// scanner is attached or not.
     pub fn devices(library: *Library, gpa: std.mem.Allocator) Error![]interface.Device {
         if (comptime !supported) return error.Unavailable;
-        // Each source's identity is read into the same `identity`, so its strings are copied.
+        // Each source's identity is read into the same `identity`, so we copy its strings.
         var found: interface.DeviceList = .empty;
         errdefer found.deinit(gpa);
         var identity: Identity = std.mem.zeroes(Identity);
@@ -454,7 +459,8 @@ pub const Library = struct {
         return scanner;
     }
 
-    /// The error behind the last failure, from the manager's or source's condition code.
+    /// Returns the error behind the last failure, from the condition code of the manager or the
+    /// source.
     fn failure(library: *Library, source: ?*Identity) Error {
         var status: Status = .{ .condition = 0, .data = 0 };
         if (library.entry(&library.app, source, dg_control, dat_status, msg_get, @ptrCast(&status)) != rc_success) return error.Failed;
@@ -494,7 +500,7 @@ pub const Library = struct {
 const Values = struct {
     items: std.ArrayList(f64) = .empty,
     current: ?f64 = null,
-    /// For a range: its ends and step.
+    /// For a range: its two ends and its step.
     range: ?[3]f64 = null,
 
     fn deinit(values: *Values, gpa: std.mem.Allocator) void {
@@ -517,7 +523,7 @@ fn itemSize(item_type: u16) ?usize {
     };
 }
 
-/// The number in a 4-byte container slot or a list item of `item_type`.
+/// Reads the number in a 4-byte container slot, or in a list item, of type `item_type`.
 fn itemValue(item_type: u16, bytes: []const u8) f64 {
     return switch (item_type) {
         ty_int8 => @floatFromInt(@as(i8, @bitCast(bytes[0]))),
@@ -531,12 +537,12 @@ fn itemValue(item_type: u16, bytes: []const u8) f64 {
     };
 }
 
-/// The 4-byte field of a container at `at`.
+/// Returns the container's 4-byte field at `at`.
 fn field(bytes: [*]u8, at: usize) *[field_bytes]u8 {
     return bytes[at..][0..field_bytes];
 }
 
-/// A TWAIN data source, open.
+/// An open TWAIN data source.
 pub const Scanner = struct {
     library: *Library,
     source: Identity,
@@ -557,7 +563,7 @@ pub const Scanner = struct {
         scanner.* = undefined;
     }
 
-    /// Reads capability `cap`, or null when the source doesn't have it.
+    /// Reads capability `cap`. Returns null when the source doesn't have it.
     fn get(scanner: *Scanner, gpa: std.mem.Allocator, cap: u16) Error!?Values {
         var capability: Capability = .{ .cap = cap, .container_type = on_dontcare, .container = null };
         if (scanner.call(dg_control, dat_capability, msg_get, @ptrCast(&capability)) != rc_success) return null;
@@ -594,7 +600,7 @@ pub const Scanner = struct {
         return values;
     }
 
-    /// Sets capability `cap` to one value of `item_type`; `raw` holds its bits.
+    /// Sets capability `cap` to a single value of type `item_type`, whose bits are in `raw`.
     fn set(scanner: *Scanner, cap: u16, item_type: u16, raw: u32) Error!void {
         const handle = scanner.library.allocate(one_value_bytes) orelse return error.OutOfMemory;
         defer scanner.library.free(handle);
@@ -789,7 +795,8 @@ pub const Scanner = struct {
         var setup: SetupMemXfer = undefined;
         try scanner.check(scanner.call(dg_control, dat_setupmemxfer, msg_get, @ptrCast(&setup)));
         const row_bytes = width * channels * sample_bytes;
-        // A source may say "don't care" (all ones) for its preferred size; that isn't a size.
+        // A source may say "don't care" (all ones) for its preferred size, and that isn't a real
+        // size.
         const preferred = if (setup.preferred == std.math.maxInt(u32)) 0 else setup.preferred;
         const size: u32 = @max(preferred, setup.min_buffer, @as(u32, @intCast(row_bytes)));
         if (size > max_transfer_bytes) return error.Failed;
@@ -818,7 +825,7 @@ pub const Scanner = struct {
                 else => return scanner.library.failure(&scanner.source),
             }
             if (strip.x_offset != 0 or strip.columns != width) return error.Unsupported;
-            // The strip must fit the buffer it was written to, row by row.
+            // The strip has to fit in the buffer it was written to, row by row.
             if (strip.bytes_per_row < row_bytes or @as(u64, strip.rows) * strip.bytes_per_row > size) return error.Failed;
             for (0..strip.rows) |r| {
                 const y = strip.y_offset + r;

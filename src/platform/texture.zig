@@ -13,7 +13,7 @@ pub const Texture = struct {
     width: u32,
     height: u32,
 
-    /// A texture holding `pixels`, `width` × `height`, row by row.
+    /// Uploads `pixels` (`width` × `height`, row by row) into a new texture.
     pub fn upload(gpu: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const Pixel) Error!Texture {
         std.debug.assert(pixels.len == @as(usize, width) * height);
         const handle = c.SDL_CreateGPUTexture(gpu, &.{
@@ -58,7 +58,7 @@ pub const Texture = struct {
         texture.* = undefined;
     }
 
-    /// The texture as ImGui refers to it.
+    /// Returns the texture the way ImGui refers to it.
     pub fn ref(texture: Texture) c.ImTextureRef {
         return .{ ._TexData = null, ._TexID = @intFromPtr(texture.handle) };
     }
