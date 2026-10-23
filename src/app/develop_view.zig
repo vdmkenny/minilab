@@ -28,6 +28,10 @@ const frame_columns = 2;
 const frame_gap = 8;
 const thumb_height = 58;
 const bottom_bar_height = 36;
+/// The rating's stars and reject button in the info line, and the space between them.
+const rating_icon = 14;
+const rating_gap = 4;
+const rating_space = 12;
 /// The temperature slider's step size, in K.
 const kelvin_step = 50;
 /// How tall a collection's look menu can get before it scrolls.
@@ -159,6 +163,26 @@ pub const State = struct {
     /// The open roll's index in `library`, or null for loose scans.
     pub fn rollIndex(state: *const State, library: *const Library) ?usize {
         return library.find(state.roll_path orelse return null);
+    }
+
+    /// The open frame's rating, or null for a scan opened on its own, which has nowhere to keep
+    /// one.
+    fn openRating(state: *const State, library: *const Library) ?roll.Rating {
+        const r = state.rollIndex(library) orelse return null;
+        const index = state.selected orelse return null;
+        const frames = library.rolls.items[r].frames.items;
+        return if (index < frames.len) frames[index].rating else null;
+    }
+
+    /// Gives the open frame `given` and saves it straight away. A rating isn't a develop setting:
+    /// it stays out of undo and doesn't count the frame as developed.
+    fn rate(state: *State, io: std.Io, library: *Library, given: roll.Rating) void {
+        const r = state.rollIndex(library) orelse return;
+        const index = state.selected orelse return;
+        const rl = &library.rolls.items[r];
+        if (index >= rl.frames.items.len) return;
+        rl.frames.items[index].rating = given;
+        rl.saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
     }
 
     /// Saves the open frame, then opens the roll at `path` and selects its first frame.
@@ -748,6 +772,15 @@ pub const State = struct {
         if (keys.contains(.turn_right)) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
         if (keys.contains(.turn_left)) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
         if (keys.contains(.mirror)) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
+        if (state.openRating(library)) |current| {
+            var next = current;
+            for (0..roll.Rating.max_stars + 1) |n| {
+                if (keys.contains(.stars(n))) next.stars = @intCast(n);
+            }
+            if (keys.contains(.reject)) next.rejected = true;
+            if (keys.contains(.unreject)) next.rejected = false;
+            if (!std.meta.eql(next, current)) state.rate(io, library, next);
+        }
 
         const frame = if (state.frame) |*f| f else return null;
         // While the crop tool is on, the frame's settings have to wait until the crop is done.
@@ -898,6 +931,9 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             } else {
                 c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(3), 0);
             }
+            const rating = library.rolls.items[r].frames.items[i].rating;
+            // A rejected frame is dimmed, by drawing the page colour over it.
+            if (rating.rejected) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.withAlpha(theme.page, 0.6)), gui.px(3), 0);
             const selected = state.selected == i;
             gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(3), if (selected) gui.px(2) else 1);
             fonts.pushSized(.mono, 10);
@@ -907,6 +943,17 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(6), far.y - gui.px(3)), theme.imU32(theme.withAlpha(theme.header, 0.75)), gui.px(2), 0);
             c.ImDrawList_AddText(list, gui.vec2(label_min.x + gui.px(3), label_min.y), theme.imU32(theme.text), number);
             fonts.pop();
+            // Its stars, small, beside the number.
+            if (rating.stars > 0 and !rating.rejected) {
+                const radius = gui.px(3.5);
+                const label_right = label_min.x + size.x + gui.px(6);
+                const badge_far = gui.vec2(label_right + gui.px(4) + @as(f32, @floatFromInt(rating.stars)) * (2 * radius + gui.px(1)) + gui.px(3), far.y - gui.px(3));
+                c.ImDrawList_AddRectFilledEx(list, gui.vec2(label_right + gui.px(2), label_min.y), badge_far, theme.imU32(theme.withAlpha(theme.header, 0.75)), gui.px(2), 0);
+                for (0..rating.stars) |k| {
+                    const centre = gui.vec2(label_right + gui.px(5) + radius + @as(f32, @floatFromInt(k)) * (2 * radius + gui.px(1)), (label_min.y + far.y - gui.px(3)) / 2);
+                    gui.star(list, centre, radius, true, theme.accent);
+                }
+            }
         }
     }
 
@@ -1019,6 +1066,8 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, origin.y + size.y), theme.imU32(theme.page));
     c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + size.x, info_top), theme.imU32(theme.divider));
     if (state.frame) |frame| {
+        // The rating on the right, and the frame's details from the left up to it.
+        const limit = drawRating(state, io, library, list, origin.x + size.x - gui.px(12), info_top + info_height / 2);
         fonts.pushSized(.mono, 12);
         var x = origin.x + gui.px(12);
         const y = info_top + (info_height - c.ImGui_GetTextLineHeight()) / 2;
@@ -1038,8 +1087,10 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
             n += 1;
         }
         for (items[0..n]) |item| {
+            const width = c.ImGui_CalcTextSize(item).x;
+            if (x + width > limit) break;
             c.ImDrawList_AddText(list, gui.vec2(x, y), theme.imU32(theme.text_tertiary), item);
-            x += c.ImGui_CalcTextSize(item).x + gui.px(20);
+            x += width + gui.px(20);
         }
         fonts.pop();
     }
@@ -1048,6 +1099,53 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
     const area_max = gui.vec2(origin.x + size.x, info_top);
     drawPicture(state, library, area_min, area_max);
+}
+
+/// Draws the open frame's stars and its reject button, ending at `right` and centred on `middle`.
+/// Click a star to give the frame that many, or the same star again for none. Returns where they
+/// start, or `right` for a scan opened on its own, which can't be rated.
+fn drawRating(state: *State, io: std.Io, library: *Library, list: *c.ImDrawList, right: f32, middle: f32) f32 {
+    const current = state.openRating(library) orelse return right;
+    const size = gui.px(rating_icon);
+    const top = middle - size / 2;
+    var next = current;
+    c.ImGui_PushID("rating");
+    defer c.ImGui_PopID();
+
+    // Reject, on the right: a cross, red while the frame is rejected.
+    const reject_x = right - size;
+    c.ImGui_SetCursorScreenPos(gui.vec2(reject_x, top));
+    if (c.ImGui_InvisibleButton("reject", gui.vec2(size, size), 0)) next.rejected = !current.rejected;
+    const reject_hovered = c.ImGui_IsItemHovered(0);
+    if (current.rejected) shortcuts.tooltip("Clear reject", .unreject) else shortcuts.tooltip("Reject", .reject);
+    const cross = if (current.rejected) theme.red else if (reject_hovered) theme.text else theme.text_tertiary;
+    const inset = size * 0.2;
+    const thickness = gui.px(1.6);
+    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + inset, top + inset), gui.vec2(reject_x + size - inset, top + size - inset), theme.imU32(cross), thickness);
+    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + size - inset, top + inset), gui.vec2(reject_x + inset, top + size - inset), theme.imU32(cross), thickness);
+
+    // The stars, left to right. Hovering one shows what a click would give.
+    const step = size + gui.px(rating_gap);
+    const first = reject_x - gui.px(rating_space) - @as(f32, roll.Rating.max_stars) * step + gui.px(rating_gap);
+    var shown: usize = current.stars;
+    for (0..roll.Rating.max_stars) |i| {
+        const n = i + 1;
+        c.ImGui_SetCursorScreenPos(gui.vec2(first + @as(f32, @floatFromInt(i)) * step, top));
+        c.ImGui_PushIDInt(@intCast(n));
+        if (c.ImGui_InvisibleButton("star", gui.vec2(size, size), 0)) next.stars = if (current.stars == n) 0 else @intCast(n);
+        c.ImGui_PopID();
+        if (c.ImGui_IsItemHovered(0)) shown = n;
+        shortcuts.tooltip(shortcuts.Command.stars(n).describe(), .stars(n));
+    }
+    const lit = if (current.rejected) theme.text_tertiary else theme.accent;
+    for (0..roll.Rating.max_stars) |i| {
+        const centre = gui.vec2(first + @as(f32, @floatFromInt(i)) * step + size / 2, middle);
+        const on = i < shown;
+        gui.star(list, centre, size / 2, on, if (on) lit else theme.text_tertiary);
+    }
+
+    if (!std.meta.eql(next, current)) state.rate(io, library, next);
+    return first - gui.px(20);
 }
 
 fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_max: gui.Vec2) void {

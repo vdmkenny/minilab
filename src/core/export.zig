@@ -79,6 +79,8 @@ pub const Include = struct {
     copyright: bool = true,
     /// The look, the develop settings, the film base, the crop and the scanner.
     settings: bool = true,
+    /// The frame's stars, or that it's rejected.
+    rating: bool = true,
 };
 
 /// Set from another thread to stop an export at its next check.
@@ -306,6 +308,7 @@ pub fn describe(info: roll.Info, frame: roll.FrameSettings, include: Include, op
         .space = options.space,
         .width = picture.width(),
         .height = picture.height(),
+        .rating = if (include.rating and (frame.rating.rejected or frame.rating.stars > 0)) frame.rating.xmp() else null,
     };
 }
 
@@ -725,6 +728,15 @@ test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" 
     const info: roll.Info = .{ .name = "Roll 001", .camera = "Pentax MX", .dpi = 2400 };
     const described = describe(info, frame, .{}, options, picture);
     try std.testing.expectEqual(@as(?f32, 960), described.dpi);
+    // An unrated frame has no rating to give, a rated one gives its stars, and a rejected one -1,
+    // unless the rating is left out.
+    try std.testing.expectEqual(@as(?i8, null), described.rating);
+    var rated = frame;
+    rated.rating = .{ .stars = 3 };
+    try std.testing.expectEqual(@as(?i8, 3), describe(info, rated, .{}, options, picture).rating);
+    rated.rating.rejected = true;
+    try std.testing.expectEqual(@as(?i8, -1), describe(info, rated, .{}, options, picture).rating);
+    try std.testing.expectEqual(@as(?i8, null), describe(info, rated, .{ .rating = false }, options, picture).rating);
     const packet = try metadata.xmp(gpa, described);
     defer gpa.free(packet);
     const file = try encodeFile(gpa, picture, options, .{ .metadata = described, .xmp = packet });

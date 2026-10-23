@@ -445,6 +445,13 @@ Every frame has a settings file of its own. It holds the crop, the turns, the fi
 by name and every develop setting, fully worked out. So a frame you open again later renders the
 same, even if a default changed in between.
 
+The same file holds the frame's rating: 0 to 5 stars, and whether it's rejected. Rejecting keeps
+the stars, as Lightroom does, so they come back if you take the reject back. A rating isn't a
+develop setting, so it saves straight away, stays out of undo, doesn't count the frame as developed
+and never syncs. Export uses it: a star filter chooses the frames with at least that many stars,
+and rejected frames start out unchosen. A frame whose rating changes in Develop is chosen again by
+the filter; frames you pick by hand otherwise stay picked.
+
 Sync copies some of one frame's settings to the roll's other frames. You choose the groups: the
 look (with tone and saturation) and the white balance are on by default; density, film base, and
 crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
@@ -609,15 +616,16 @@ Rolls/
     flat.ppm             camera rolls only: the flat field, as shot
     scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import and
                          never changed; the frames of a strip share one
-    frames/01.json ...   crop, turns, film base, look and develop settings (worked out)
+    frames/01.json ...   crop, turns, film base, look, develop settings (worked out), rating
     thumbs/01.ppm ...    reduced copies of the scans, for quick previews
     preview.ppm          the last preview of the film holder, from Scan
     preview.json         the frames' boxes on that preview, hand edits included
     exports/
 ```
 
-Exports carry the roll's metadata (camera, lens, film stock, date, copyright, and how the frame
-was developed). EXIF goes inside the file. XMP goes inside the file and in a sidecar next to it,
+Exports carry the roll's metadata (camera, lens, film stock, date, copyright, how the frame was
+developed, and its rating as `xmp:Rating`: 1 to 5 stars, or -1 for rejected, the way Lightroom and
+Bridge read it). EXIF goes inside the file. XMP goes inside the file and in a sidecar next to it,
 and that's where the film stock and develop settings go, since EXIF has no fields for them. We
 write both in Zig: we only need a handful of tags, and exiv2, the usual library for this, is C++.
 

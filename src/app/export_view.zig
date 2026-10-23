@@ -65,8 +65,17 @@ const FileChoice = enum {
 };
 
 const space_names = [_][]const u8{ "Display P3", "sRGB", "Adobe RGB", "ProPhoto RGB" };
+/// The sizes Size offers, by long edge, with null for full resolution. The last choice is
+/// Custom, which takes its long edge from `State.custom_edge`.
 const sizes = [_]?usize{ null, 4000, 2048 };
-const size_names = [_][]const u8{ "Full resolution", "Long edge 4000 px", "Long edge 2048 px" };
+const size_names = [_][]const u8{ "Full resolution", "Long edge 4000 px", "Long edge 2048 px", "Custom long edge" };
+const custom_size = sizes.len;
+/// The range a custom long edge can take, in pixels.
+const min_custom_edge = 64;
+const max_custom_edge = 65535;
+/// The star filter's choices: any rating, then at least 1 to 5 stars.
+const star_filters = [_][]const u8{ "Any rating", "1+ stars", "2+ stars", "3+ stars", "4+ stars", "5 stars" };
+const star_filter_width = 120;
 const default_pattern = "{roll}_{frame:02}";
 
 /// An export that's running on its own thread.
@@ -89,6 +98,11 @@ pub const State = struct {
     /// The roll the selection belongs to, by folder. The selection starts over for another roll.
     roll_path: ?[]u8 = null,
     selected: std.ArrayList(bool) = .empty,
+    /// Each frame's rating when the selection last took it into account, to spot ratings changed
+    /// in Develop since.
+    seen: std.ArrayList(roll.Rating) = .empty,
+    /// The star filter: the fewest stars a frame needs to be chosen, 0 for any.
+    min_stars: usize = 0,
     /// The frame clicked last, which is where a shift-click's range starts.
     anchor: ?usize = null,
     file: FileChoice = .tiff16,
@@ -96,6 +110,8 @@ pub const State = struct {
     /// Indices in `minilab.export.spaces` and `sizes`.
     space: usize = 0,
     size: usize = 0,
+    /// The long edge for Custom, in pixels, as typed.
+    custom_edge: [8:0]u8 = gui.initText(8, "3000"),
     pattern: [gui.text_capacity:0]u8 = gui.initText(gui.text_capacity, default_pattern),
     /// Where the files go: a path relative to the library's folder, or an absolute one.
     folder: [path_field:0]u8 = @splat(0),
@@ -115,6 +131,7 @@ pub const State = struct {
             running.batch.destroy(gpa);
         }
         state.selected.deinit(gpa);
+        state.seen.deinit(gpa);
         state.dialog.deinit(gpa);
         if (state.roll_path) |p| gpa.free(p);
     }
@@ -130,8 +147,27 @@ pub const State = struct {
             .depth = if (state.file == .tiff8) .eight else .sixteen,
             .quality = @intFromFloat(std.math.clamp(@round(state.quality), 1, 100)),
             .space = exporting.spaces[state.space],
-            .long_edge = sizes[state.size],
+            .long_edge = if (state.size == custom_size) state.customEdge() else sizes[state.size],
         };
+    }
+
+    /// The custom long edge typed in, kept within range. Null when there's no number, which
+    /// exports at full resolution.
+    fn customEdge(state: *const State) ?usize {
+        const typed = std.mem.trim(u8, std.mem.sliceTo(&state.custom_edge, 0), " ");
+        const edge = std.fmt.parseInt(usize, typed, 10) catch return null;
+        return std.math.clamp(edge, min_custom_edge, max_custom_edge);
+    }
+
+    /// Whether a frame with `rating` passes the star filter. Rejected frames never do.
+    fn passes(state: *const State, rating: roll.Rating) bool {
+        return !rating.rejected and rating.stars >= state.min_stars;
+    }
+
+    /// Chooses exactly the frames of `r` that pass the star filter.
+    fn applyFilter(state: *State, r: *const roll.Roll) void {
+        for (state.selected.items, r.frames.items) |*on, frame| on.* = state.passes(frame.rating);
+        state.anchor = null;
     }
 
     fn selectedCount(state: *const State) usize {
@@ -145,8 +181,10 @@ pub const State = struct {
         state.anchor = null;
     }
 
-    /// Starts the selection over if `r` is a different roll, and keeps the selection as long as
-    /// the roll's list of frames when frames are added or removed. New frames start out chosen.
+    /// Starts the selection over if `r` is a different roll, and keeps it in step with the roll's
+    /// frames. A new frame, or one whose rating changed in Develop, is chosen if it passes the star
+    /// filter, so rejected frames start out unchosen. Frames picked by hand otherwise stay as they
+    /// are.
     fn follow(state: *State, gpa: std.mem.Allocator, library: *const Library, r: *const roll.Roll) void {
         const same = if (state.roll_path) |p| std.mem.eql(u8, p, r.path) else false;
         if (!same) {
@@ -154,13 +192,23 @@ pub const State = struct {
             if (state.roll_path) |p| gpa.free(p);
             state.roll_path = copy;
             state.selected.clearRetainingCapacity();
+            state.seen.clearRetainingCapacity();
             state.anchor = null;
             state.last = null;
             state.setFolder(defaultFolder(library, r));
         }
         const count = r.frames.items.len;
-        if (state.selected.items.len > count) state.selected.shrinkRetainingCapacity(count);
-        while (state.selected.items.len < count) state.selected.append(gpa, true) catch return;
+        const known = @min(state.seen.items.len, count);
+        state.selected.resize(gpa, count) catch return;
+        state.seen.resize(gpa, count) catch {
+            state.selected.shrinkRetainingCapacity(known);
+            return;
+        };
+        for (r.frames.items, 0..) |frame, i| {
+            if (i < known and std.meta.eql(state.seen.items[i], frame.rating)) continue;
+            state.seen.items[i] = frame.rating;
+            state.selected.items[i] = state.passes(frame.rating);
+        }
     }
 
     fn setFolder(state: *State, value: []const u8) void {
@@ -317,8 +365,8 @@ fn drawPage(state: *State, ctx: context.Context, roll_index: usize) void {
     drawSection(state, gui.vec2(left, bottom - section_height), gui.vec2(right, bottom));
 }
 
-/// Draws the title row: "Export Roll 014", how many frames are chosen, and Select all and Select
-/// none on the right.
+/// Draws the title row: "Export Roll 014", how many frames are chosen, and on the right the star
+/// filter, Select all and Select none.
 fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: f32) void {
     const list = c.ImGui_GetWindowDrawList();
     const height = gui.px(control_height);
@@ -333,7 +381,16 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
 
     const none_width = c.ImGui_CalcTextSize("Select none").x + gui.px(12 * 2 + 2);
     const all_width = c.ImGui_CalcTextSize("Select all").x + gui.px(12 * 2 + 2);
-    c.ImGui_SetCursorScreenPos(gui.vec2(right - none_width - gui.px(10) - all_width, top));
+    const all_x = right - none_width - gui.px(10) - all_width;
+    c.ImGui_SetCursorScreenPos(gui.vec2(all_x - gui.px(10 + star_filter_width), top));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(8), (height - c.ImGui_GetFontSize()) / 2));
+    if (gui.combo("stars", &star_filters, state.min_stars, star_filter_width)) |picked| {
+        state.min_stars = picked;
+        state.applyFilter(r);
+    }
+    c.ImGui_PopStyleVar();
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Choose frames by stars · rejected ones left out");
+    c.ImGui_SetCursorScreenPos(gui.vec2(all_x, top));
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
     shortcuts.tooltip("Selects every frame of the roll", .select_all);
     c.ImGui_SetCursorScreenPos(gui.vec2(right - none_width, top));
@@ -415,8 +472,18 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         // The number and the check box under the picture.
         const label_top = picture_max.y + gui.px(cell_padding);
         fonts.pushSized(.mono, 12);
-        c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), gui.print("{d:0>2}", .{i + 1}));
+        const number = gui.print("{d:0>2}", .{i + 1});
+        const number_end = picture_min.x + gui.px(2) + c.ImGui_CalcTextSize(number).x;
+        c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
         fonts.pop();
+        // The frame's stars, or that it's rejected.
+        const label_middle = label_top + gui.px(small_line) / 2;
+        if (frame.rating.rejected) {
+            c.ImDrawList_AddText(list, gui.vec2(number_end + gui.px(8), label_middle - c.ImGui_GetFontSize() / 2), theme.imU32(theme.red), "Rejected");
+        } else for (0..frame.rating.stars) |k| {
+            const star_radius = gui.px(5);
+            gui.star(list, gui.vec2(number_end + gui.px(8) + star_radius + @as(f32, @floatFromInt(k)) * (2 * star_radius + gui.px(2)), label_middle), star_radius, true, theme.accent);
+        }
         const box_min = gui.vec2(picture_max.x - gui.px(2 + check_size), label_top + (gui.px(small_line) - gui.px(check_size)) / 2);
         drawCheck(list, box_min, gui.px(check_size), on);
 
@@ -684,6 +751,22 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PopStyleVar();
     y += row + gui.px(grid_gap);
 
+    if (state.size == custom_size) {
+        rowLabel(list, x, y, "Long edge");
+        c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
+        fonts.pushSized(.mono, 12);
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
+        c.ImGui_SetNextItemWidth(gui.px(90));
+        _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
+        c.ImGui_PopStyleVar();
+        fonts.pop();
+        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("Pixels · {d} to {d} · smaller frames keep their size", .{ min_custom_edge, max_custom_edge }).ptr);
+        const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
+        const unit = if (state.customEdge() == null) "px · full resolution until set" else "px";
+        c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(90 + 8), unit_y), theme.imU32(theme.text_tertiary), unit);
+        y += row + gui.px(grid_gap);
+    }
+
     rowLabel(list, x, y, "File names");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y));
     fonts.pushSized(.mono, 12);
@@ -751,6 +834,7 @@ fn drawMetadata(state: *State, info: roll.Info, x: f32, top: f32, width: f32) f3
         .{ .label = "Date shot", .flag = &state.include.shot, .value = info.shot },
         .{ .label = "Copyright", .flag = &state.include.copyright, .value = info.copyright },
         .{ .label = "Settings", .flag = &state.include.settings, .value = "Look, base, scanner", .quiet = true },
+        .{ .label = "Rating", .flag = &state.include.rating, .value = "Stars, rejected", .quiet = true },
     };
     const value_x = x + gui.px(22 + 6 + 100 + 6);
     var y = top;

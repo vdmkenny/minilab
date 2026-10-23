@@ -33,6 +33,9 @@ pub const Metadata = struct {
     /// The file's size in pixels.
     width: usize = 0,
     height: usize = 0,
+    /// The frame's rating as `xmp:Rating` takes it: -1 for rejected, or 1 to 5 stars. Null leaves
+    /// it out.
+    rating: ?i8 = null,
 };
 
 pub const Develop = struct {
@@ -107,6 +110,7 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
         } else try attribute(w, "minilab:Shot", v);
     }
     if (m.stock) |v| try attribute(w, "minilab:FilmStock", v);
+    if (m.rating) |v| try w.print("    xmp:Rating=\"{d}\"\n", .{v});
     if (m.develop) |d| try writeDevelop(w, d);
     try w.writeAll("  >\n");
     if (m.copyright) |v| {
@@ -548,6 +552,13 @@ test "XMP escapes what the roll says and gives dates as dates" {
     defer gpa.free(other);
     try std.testing.expect(std.mem.indexOf(u8, other, "DateCreated") == null);
     try std.testing.expect(std.mem.indexOf(u8, other, "minilab:Shot=\"summer\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, other, "xmp:Rating") == null);
+
+    var rejected = example;
+    rejected.rating = -1;
+    const flagged = try xmp(gpa, rejected);
+    defer gpa.free(flagged);
+    try std.testing.expect(std.mem.indexOf(u8, flagged, "xmp:Rating=\"-1\"") != null);
 }
 
 test "only ISO dates count as dates" {
