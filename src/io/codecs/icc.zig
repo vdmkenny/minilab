@@ -82,6 +82,11 @@ fn primaries(red: [2]f64, green: [2]f64, blue: [2]f64) c.cmsCIExyYTRIPLE {
     };
 }
 
+/// The name the space's profile gives it.
+pub fn nameOf(space: Space) [:0]const u8 {
+    return definition(space).description;
+}
+
 fn definition(space: Space) Definition {
     return switch (space) {
         // IEC 61966-2-1.

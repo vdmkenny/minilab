@@ -173,7 +173,7 @@ fn freeLook(gpa: std.mem.Allocator, look: minilab.look.Resolved, name: []const u
 }
 
 fn isCubeFile(name: []const u8) bool {
-    return std.ascii.endsWithIgnoreCase(name, ".cube");
+    return std.ascii.endsWithIgnoreCase(name, minilab.look.cube_extension);
 }
 
 /// `minilab looks`: lists the looks `--look` takes by name, each with its human-readable name.

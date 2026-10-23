@@ -280,6 +280,16 @@ const max_cube_bytes = 64 << 20;
 /// Reads the looks that ids name, each one once: the built-in ones from minilab itself, and
 /// imported LUTs and fitted looks from the library's Looks folder. Only one thread can use it at a
 /// time.
+/// The extension of imported LUTs in the library's Looks folder.
+pub const cube_extension = ".cube";
+
+/// The path of the imported LUT called `name` in `folder`. The caller frees it.
+fn cubePath(gpa: std.mem.Allocator, folder: []const u8, name: []const u8) ![]u8 {
+    const file = try std.fmt.allocPrint(gpa, "{s}" ++ cube_extension, .{name});
+    defer gpa.free(file);
+    return std.fs.path.join(gpa, &.{ folder, file });
+}
+
 pub const Catalog = struct {
     /// `<library>/Looks`, or null without a library, when only the built-in looks are there.
     folder: ?[]u8 = null,
@@ -360,9 +370,7 @@ pub const Catalog = struct {
         switch (id.kind()) {
             .builtin, .bundled => unreachable,
             .cube => |name| {
-                const file = try std.fmt.allocPrint(gpa, "{s}.cube", .{name});
-                defer gpa.free(file);
-                const path = try std.fs.path.join(gpa, &.{ folder, file });
+                const path = try cubePath(gpa, folder, name);
                 defer gpa.free(path);
                 const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_cube_bytes));
                 defer gpa.free(bytes);
@@ -454,8 +462,8 @@ pub const Catalog = struct {
         while (try it.next(io)) |entry| {
             // Name the file exactly the way `load` and `remove` do, so every LUT listed can be
             // read.
-            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, ".cube")) {
-                const id = Id.ofCube(entry.name[0 .. entry.name.len - ".cube".len]) catch continue;
+            if (entry.kind == .file and std.mem.endsWith(u8, entry.name, cube_extension)) {
+                const id = Id.ofCube(entry.name[0 .. entry.name.len - cube_extension.len]) catch continue;
                 try cubes.append(gpa, .{ .id = id, .group = .imported });
             } else if (entry.kind == .directory) {
                 // A fitted look is ready once its look.json is there.
@@ -494,9 +502,7 @@ pub const Catalog = struct {
             const name = if (number == 1) try gpa.dupe(u8, stem) else try std.fmt.allocPrint(gpa, "{s} {d}", .{ stem, number });
             defer gpa.free(name);
             const id = try Id.ofCube(name);
-            const file = try std.fmt.allocPrint(gpa, "{s}.cube", .{name});
-            defer gpa.free(file);
-            const target = try std.fs.path.join(gpa, &.{ folder, file });
+            const target = try cubePath(gpa, folder, name);
             defer gpa.free(target);
             cwd.access(io, target, .{}) catch {
                 try cwd.writeFile(io, .{ .sub_path = target, .data = bytes });
@@ -515,9 +521,7 @@ pub const Catalog = struct {
             else => return error.NotImported,
         };
         catalog.forget(gpa, id);
-        const file = try std.fmt.allocPrint(gpa, "{s}.cube", .{name});
-        defer gpa.free(file);
-        const path = try std.fs.path.join(gpa, &.{ folder, file });
+        const path = try cubePath(gpa, folder, name);
         defer gpa.free(path);
         try std.Io.Dir.cwd().deleteFile(io, path);
     }
