@@ -75,11 +75,6 @@ const notes_padding = 12;
 const close_arm = 4;
 const close_thickness = 1.6;
 const create_height = 38;
-/// The Delete confirmation.
-const dialog_padding_x = 20;
-const dialog_padding_y = 16;
-const dialog_gap = 8;
-const dialog_button_height = 32;
 /// The longest path the form can hold.
 const path_field = 1024;
 
@@ -296,10 +291,7 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
         return null;
     };
     const r = library.rolls.items[index];
-    if (!c.ImGui_IsPopupOpen("delete roll", 0)) _ = c.ImGui_OpenPopup("delete roll", 0);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(dialog_padding_x), gui.px(dialog_padding_y)));
-    defer c.ImGui_PopStyleVar();
-    if (!c.ImGui_BeginPopupModal("delete roll", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
+    if (!gui.beginDialog("delete roll")) {
         state.stopDeleting(gpa);
         return null;
     }
@@ -307,11 +299,11 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
     gui.title(gui.print("Delete {s}?", .{r.info.name}), fonts.title_size);
     const frames = r.frames.items.len;
     gui.textColored(theme.text_tertiary, gui.print("{d} {s}", .{ frames, if (frames == 1) "frame" else "frames" }));
-    c.ImGui_Dummy(gui.vec2(0, gui.px(dialog_gap)));
+    c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
     var confirmed: ?usize = null;
-    if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, dialog_button_height))) confirmed = index;
-    c.ImGui_SameLineEx(0, gui.px(dialog_gap));
-    const cancelled = gui.buttonOf(.normal, "Cancel", gui.vec2(0, dialog_button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
+    if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, gui.button_height))) confirmed = index;
+    c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
+    const cancelled = gui.buttonOf(.normal, "Cancel", gui.vec2(0, gui.button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
     if (confirmed != null or cancelled) {
         state.stopDeleting(gpa);
         c.ImGui_CloseCurrentPopup();

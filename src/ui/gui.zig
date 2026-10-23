@@ -240,10 +240,35 @@ pub fn button(label: [:0]const u8) bool {
     return buttonOf(.normal, label, vec2(0, 0));
 }
 
+/// A dialog's padding, and the gap between its parts, in the design's pixels.
+pub const dialog = struct {
+    pub const padding_x = 20;
+    pub const padding_y = 16;
+    pub const gap = 8;
+};
+
+/// Opens the modal dialog `id` in the middle of the window, sized to what it holds. When it
+/// returns true, draw the dialog and then call `c.ImGui_EndPopup`. It returns false once the
+/// dialog has closed.
+pub fn beginDialog(id: [:0]const u8) bool {
+    if (!c.ImGui_IsPopupOpen(id, 0)) _ = c.ImGui_OpenPopup(id, 0);
+    // Centred every frame: a dialog sizes itself to what it shows, which can change while it's
+    // open, and on its first frame its size isn't known yet.
+    c.ImGui_SetNextWindowPosEx(c.ImGuiViewport_GetCenter(c.ImGui_GetMainViewport()), c.ImGuiCond_Always, vec2(0.5, 0.5));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, vec2(px(dialog.padding_x), px(dialog.padding_y)));
+    defer c.ImGui_PopStyleVar();
+    return c.ImGui_BeginPopupModal(id, null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar);
+}
+
+/// Opens `url` in the browser, or for a `file://` URL, in the file manager.
+pub fn openUrl(url: []const u8) void {
+    if (!c.SDL_OpenURL(print("{s}", .{url}))) std.log.err("can't open {s}: {s}", .{ url, c.SDL_GetError() });
+}
+
 /// The gap between "No roll open" and its button, in the design's pixels.
 const no_roll_gap = 14;
-/// The height of a button that fits its label, in the design's pixels.
-const button_height = 32;
+/// The height of a button that fits its label, and of a dialog's buttons, in the design's pixels.
+pub const button_height = 32;
 /// The padding either side of a button's label, in the design's pixels.
 pub const button_padding = 12;
 /// A control's border, in the design's pixels.

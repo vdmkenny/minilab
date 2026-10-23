@@ -79,7 +79,6 @@ const frame_view_padding = 20;
 const handle_size = 10;
 const slider_label_column = 110;
 const slider_value_column = 56;
-const button_height = 32;
 const slider_row_height = 20;
 /// The gaps around a slider row's slider.
 const slider_spacing = 10;
@@ -115,10 +114,6 @@ const check_note = struct {
     const icon = 16;
     const icon_gap = 10;
 };
-/// The scanner settings window.
-const dialog_padding_x = 20;
-const dialog_padding_y = 16;
-const dialog_gap = 8;
 /// A frame's box on the preview: its line, how far in from the frame it's drawn, the ring around
 /// the selected one, and its number chip.
 const box_line = 2;
@@ -924,7 +919,7 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
     switch (builtin.os.tag) {
         .windows => {
             y += gui.lineAt(list, x, y, theme.text, "Scanner driver needed") + gui.px(group_gap);
-            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "Maker's TWAIN driver") + gui.px(scanner_gap);
+            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "Scanner's TWAIN driver") + gui.px(scanner_gap);
         },
         .macos => {
             y += gui.lineAt(list, x, y, theme.text, "Scanner drivers needed: SANE") + gui.px(scanner_gap);
@@ -935,17 +930,13 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
             y = setupStep(list, x, y, width, "1", "Homebrew", if (has_homebrew) "Installed" else null);
             if (!has_homebrew) {
                 c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(step_indent), y));
-                if (gui.buttonOf(.normal, "Get Homebrew", gui.vec2(0, pill_height))) _ = c.SDL_OpenURL(homebrew_url);
+                if (gui.buttonOf(.normal, "Get Homebrew", gui.vec2(0, pill_height))) gui.openUrl(homebrew_url);
                 if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("brew.sh");
                 y += gui.px(pill_height) + gui.px(scanner_gap);
             }
             y = setupStep(list, x, y, width, "2", "SANE", sane_install);
             c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(step_indent), y));
-            if (gui.buttonOf(.normal, "Copy", gui.vec2(0, pill_height))) {
-                _ = c.SDL_SetClipboardText(sane_install);
-                ctx.notice.set("Copied", .{});
-            }
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("For Terminal");
+            context.copyButton(ctx.notice, sane_install, gui.vec2(0, pill_height));
             y += gui.px(pill_height) + gui.px(scanner_gap);
             y = setupStep(list, x, y, width, "3", "Refresh", null);
         },
@@ -1040,10 +1031,7 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
     const driver = device.?.driver;
     const settings = &ctx.library.scanner_settings;
 
-    if (!c.ImGui_IsPopupOpen("scanner settings", 0)) _ = c.ImGui_OpenPopup("scanner settings", 0);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(dialog_padding_x), gui.px(dialog_padding_y)));
-    defer c.ImGui_PopStyleVar();
-    if (!c.ImGui_BeginPopupModal("scanner settings", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
+    if (!gui.beginDialog("scanner settings")) {
         state.settings_open = false;
         return;
     }
@@ -1053,7 +1041,7 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
     const changes = settings.raw(name, driver);
     var report_buffer: [96]u8 = undefined;
     gui.textColored(theme.text_secondary, scan.rawSetup(options.?.items, changes).report.label(&report_buffer));
-    c.ImGui_Dummy(gui.vec2(0, gui.px(dialog_gap)));
+    c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
 
     var changed = false;
     const controls = scan.rawControls(options.?.items);
@@ -1093,9 +1081,9 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
         changed = true;
     }
 
-    c.ImGui_Dummy(gui.vec2(0, gui.px(dialog_gap)));
+    c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
     c.ImGui_BeginDisabled(changes.len == 0);
-    if (gui.buttonOf(.normal, "Reset", gui.vec2(0, button_height))) {
+    if (gui.buttonOf(.normal, "Reset", gui.vec2(0, gui.button_height))) {
         settings.reset(ctx.io, name, driver) catch |err| {
             std.log.err("can't save the scanner settings: {t}", .{err});
             ctx.notice.set("Scanner settings not saved", .{});
@@ -1103,8 +1091,8 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
         changed = true;
     }
     c.ImGui_EndDisabled();
-    c.ImGui_SameLineEx(0, gui.px(dialog_gap));
-    if (gui.buttonOf(.primary, "Done", gui.vec2(0, button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
+    c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
+    if (gui.buttonOf(.primary, "Done", gui.vec2(0, gui.button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
         state.settings_open = false;
         c.ImGui_CloseCurrentPopup();
     }
@@ -1207,7 +1195,7 @@ fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []con
     const width: u64 = @intFromFloat(@round(across_mm * dpi / mm_per_inch));
     const height: u64 = @intFromFloat(@round(along_mm * dpi / mm_per_inch));
     const deep = if (state.capabilities) |caps| caps.deep else true;
-    const megabytes = width * height * @as(u64, if (deep) 6 else 3) / 1_000_000;
+    const megabytes = labels.megabytes(width * height * @as(u64, if (deep) 6 else 3));
     const about: []const u8 = if (estimate) "About " else "";
     if (megabytes < 10) return gui.print("{s}{d} × {d} px per frame", .{ about, width, height });
     return gui.print("{s}{d} × {d} px · {d} MB per frame", .{ about, width, height, megabytes });
@@ -1510,7 +1498,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         const why = state.detect_note orelse "Detect frames, or add them by hand";
         y += gui.paragraphAt(list, x, y, @min(width, gui.px(note_max_width)), theme.text_secondary, why) + gui.px(section_gap);
         c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-        if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, button_height))) addFrame(state, ctx.gpa, preview, format);
+        if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, gui.button_height))) addFrame(state, ctx.gpa, preview, format);
         return;
     };
     const box = &state.boxes.items[index];
@@ -1586,14 +1574,14 @@ fn drawShapeControls(state: *State, box: *Box, preview: *const Preview, format: 
 fn drawFrameTools(state: *State, ctx: context.Context, roll_index: usize, preview: *Preview, format: formats.Format, index: usize, at: gui.Vec2) void {
     c.ImGui_SetCursorScreenPos(at);
     c.ImGui_BeginDisabled(state.scanning);
-    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(gui.button_padding), (gui.px(button_height) - c.ImGui_GetFontSize()) / 2));
-    if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, button_height))) addFrame(state, ctx.gpa, preview, format);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(gui.button_padding), (gui.px(gui.button_height) - c.ImGui_GetFontSize()) / 2));
+    if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, gui.button_height))) addFrame(state, ctx.gpa, preview, format);
     c.ImGui_SameLineEx(0, gui.px(tool_gap));
-    if (gui.buttonOf(.normal, "Split", gui.vec2(0, button_height))) splitFrame(state, ctx.gpa, index);
+    if (gui.buttonOf(.normal, "Split", gui.vec2(0, gui.button_height))) splitFrame(state, ctx.gpa, index);
     c.ImGui_SameLineEx(0, gui.px(tool_gap));
-    if (gui.buttonOf(.normal, "Delete", gui.vec2(0, button_height))) deleteFrame(state, index);
+    if (gui.buttonOf(.normal, "Delete", gui.vec2(0, gui.button_height))) deleteFrame(state, index);
     c.ImGui_SameLineEx(0, gui.px(tool_gap));
-    if (gui.buttonOf(.secondary, "Detect again", gui.vec2(0, button_height))) detect(state, ctx, roll_index);
+    if (gui.buttonOf(.secondary, "Detect again", gui.vec2(0, gui.button_height))) detect(state, ctx, roll_index);
     c.ImGui_PopStyleVar();
     c.ImGui_EndDisabled();
 }

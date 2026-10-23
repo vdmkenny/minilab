@@ -297,6 +297,16 @@ fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime f
     std.log.defaultLog(level, scope, format, args);
 }
 
+/// Runs the app, and after it installs an update, starts the new version with the same `argv`.
+fn runApp(gpa: std.mem.Allocator, io: std.Io, options: app.Options, argv: []const [:0]const u8) !void {
+    const folder = try app.run(gpa, io, options) orelse return;
+    defer gpa.free(folder);
+    const plain = try gpa.alloc([]const u8, argv.len);
+    defer gpa.free(plain);
+    for (plain, argv) |*p, arg| p.* = arg;
+    try minilab.update.restart(io, folder, plain);
+}
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
@@ -311,8 +321,8 @@ pub fn main(init: std.process.Init) !void {
     if (args.len == 2 and std.mem.eql(u8, args[1], "looks")) return listLooks(init.io);
     const library = try defaultLibrary(arena, init.environ_map);
     const home = homeFolder(init.environ_map);
-    if (args.len < 2) return app.run(gpa, init.io, .{ .library = library, .home = home });
-    if (std.mem.eql(u8, args[1], "open")) return app.run(gpa, init.io, parseOpen(arena, library, home, args[2..]) catch exitWithUsage());
+    if (args.len < 2) return runApp(gpa, init.io, .{ .library = library, .home = home }, all_args);
+    if (std.mem.eql(u8, args[1], "open")) return runApp(gpa, init.io, parseOpen(arena, library, home, args[2..]) catch exitWithUsage(), all_args);
     if (std.mem.eql(u8, args[1], "develop-roll")) {
         return developRoll(gpa, init.io, args[2..]) catch |err| switch (err) {
             error.Usage => exitWithUsage(),
@@ -753,6 +763,8 @@ test {
     _ = @import("platform/trash.zig");
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
+    _ = @import("app/update_view.zig");
+    _ = @import("app/update_worker.zig");
     _ = @import("app/looks_view.zig");
     _ = @import("app/export_view.zig");
     _ = @import("app/rolls_view.zig");

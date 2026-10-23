@@ -6,6 +6,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const strip = b.option(bool, "strip", "Leave the debug information out of the executable, as the releases do") orelse false;
+    const updates = b.option(bool, "updates", "Look for new releases at start and offer to install them, as the releases do") orelse false;
 
     // The codecs: libjpeg-turbo, libtiff, LibRaw and Little CMS, with their licences.
     const codecs = b.dependency("codecs", .{ .target = target, .optimize = optimize });
@@ -43,6 +44,7 @@ pub fn build(b: *std.Build) void {
     const build_options = b.addOptions();
     build_options.addOption([]const u8, "version", @import("build.zig.zon").version);
     build_options.addOption([]const u8, "describe", describe(b));
+    build_options.addOption(bool, "updates", updates);
 
     const app = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
