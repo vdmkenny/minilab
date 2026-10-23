@@ -2,10 +2,18 @@
 
 <img src="docs/icon.svg" alt="minilab's icon: an amber film strip on a dark tile" width="96">
 
-minilab is an app for scanning and developing film. You scan a roll, or bring in photos of your
-negatives taken with a camera, or scans you already have. minilab finds the frames, turns the
-negatives into positives and exports the results. It handles colour and black and white negatives
-and slides, and it works a roll at a time. It runs on macOS, Linux and Windows.
+minilab is a free app for people who shoot film and scan it themselves. It's named after the
+machines photo labs scan film with: negatives go in, finished photos come out.
+
+A scan of a negative is an orange picture with light and dark swapped round. Turning that into a
+good photo by hand takes a lot of fiddling in a photo editor, or a paid plugin. minilab does it
+for you. Scan a roll on your own scanner, or photograph the negatives with a camera, and minilab
+finds the frames, turns them into positives using what it knows about your film stock, and can
+give them the colours of a lab scan. Then you export them as JPEG or TIFF.
+
+It works a roll at a time, for colour and black and white negatives and slides. Lab scans you
+already have can go in too, so all your rolls are in one place. It runs on macOS, Linux and
+Windows.
 
 It's written in Zig 0.17 with a Dear ImGui interface. If you want to know how it works inside and
 why, have a look at [docs/design.md](docs/design.md).
