@@ -504,25 +504,12 @@ pub const Scanner = struct {
         var name_buffer: [max_string]u8 = undefined;
         if (scanner.getString("source", &name_buffer)) |name| current = interface.Source.classify(name) orelse .flatbed;
 
-        var resolutions: std.ArrayList(u32) = .empty;
-        errdefer resolutions.deinit(gpa);
-        if (scanner.find("resolution")) |found| {
-            const option = found.option;
-            switch (option.constraint_type) {
-                .word_list => for (option.words()) |w| {
-                    if (interface.resolutionOf(option.number(w))) |r| try resolutions.append(gpa, r);
-                },
-                .range => try interface.appendResolutionsInRange(
-                    gpa,
-                    &resolutions,
-                    option.number(option.constraint.range.min),
-                    option.number(option.constraint.range.max),
-                    option.number(option.constraint.range.quant),
-                ),
-                else => if (scanner.getNumber("resolution")) |value| if (interface.resolutionOf(value)) |r| try resolutions.append(gpa, r),
-            }
-        }
-        std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));
+        // Read the resolutions with the raw settings in place, since a driver can offer fewer for
+        // film or at 16 bits.
+        const deep = scanner.hasDeepColour();
+        try scanner.setUpRaw(gpa, .negative, &.{}, deep);
+        const resolutions = try scanner.rawResolutions(gpa);
+        errdefer gpa.free(resolutions);
 
         // Without a profile, raw setup works from the options, and so do the scanner settings.
         var options: ?interface.Owned(interface.OptionInfo) = null;
@@ -536,9 +523,9 @@ pub const Scanner = struct {
         return .{
             .sources = sources,
             .source = current,
-            .resolutions = try resolutions.toOwnedSlice(gpa),
+            .resolutions = resolutions,
             .area = scanner.fullArea(),
-            .deep = scanner.hasDeepColour(),
+            .deep = deep,
             .film_setting = scanner.hasFilmSetting() or raw_film,
             .profile = scanner.profile,
             .options = options,
@@ -671,16 +658,57 @@ pub const Scanner = struct {
         };
     }
 
-    /// Sets the scanner up for `request`: the profile's options if there's a profile, and
-    /// otherwise colour at the deepest bit depth the scanner has, with raw setup worked out from
-    /// its options.
-    fn prepare(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request) Error!void {
-        if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
+    /// The resolutions the scanner reads at with its raw settings in place, from lowest to
+    /// highest: the ones it lists that it keeps when they're set, along with its bit depth.
+    fn rawResolutions(scanner: *Scanner, gpa: std.mem.Allocator) Error![]u32 {
+        var listed: std.ArrayList(u32) = .empty;
+        defer listed.deinit(gpa);
+        if (scanner.find("resolution")) |found| {
+            const option = found.option;
+            switch (option.constraint_type) {
+                .word_list => for (option.words()) |w| {
+                    if (interface.resolutionOf(option.number(w))) |r| try listed.append(gpa, r);
+                },
+                .range => try interface.appendResolutionsInRange(
+                    gpa,
+                    &listed,
+                    option.number(option.constraint.range.min),
+                    option.number(option.constraint.range.max),
+                    option.number(option.constraint.range.quant),
+                ),
+                else => if (scanner.getNumber("resolution")) |value| if (interface.resolutionOf(value)) |r| try listed.append(gpa, r),
+            }
+        }
+        std.mem.sortUnstable(u32, listed.items, {}, std.sort.asc(u32));
+
+        var kept: std.ArrayList(u32) = .empty;
+        errdefer kept.deinit(gpa);
+        const depth = scanner.getNumber("depth");
+        for (listed.items) |r| if (scanner.keeps(r, depth)) try kept.append(gpa, r);
+        // A driver that keeps none of them can't be checked this way, so it gets its own list.
+        if (kept.items.len == 0) return listed.toOwnedSlice(gpa);
+        return kept.toOwnedSlice(gpa);
+    }
+
+    /// Whether the scanner keeps resolution `dpi` as it is when it's set, and bit depth `depth`
+    /// with it.
+    fn keeps(scanner: *Scanner, dpi: u32, depth: ?f64) bool {
+        const set = scanner.setNumber("resolution", @floatFromInt(dpi)) catch return false;
+        if (!set) return false;
+        if (scanner.getNumber("resolution")) |now| if (@round(now) != @as(f64, @floatFromInt(dpi))) return false;
+        if (depth) |bits| if (scanner.getNumber("depth")) |now| if (now != bits) return false;
+        return true;
+    }
+
+    /// Puts the scanner in its raw setup for `film`: the profile's options if there's a profile,
+    /// and otherwise colour with raw setup worked out from its options and the changes in `raw`.
+    /// Then 16 bits per channel if `deep`, otherwise 8.
+    fn setUpRaw(scanner: *Scanner, gpa: std.mem.Allocator, film: interface.Film, raw: []const interface.RawSetting, deep: bool) Error!void {
         if (scanner.profile) |profile| {
             // Set the film type first, because a backend may reset its colour settings when the
             // film type changes. scanimage uses the same order (film type, then the rest) for the
             // same reason.
-            if (profile.film) |film| _ = try scanner.setString(film.option, film.value(request.film));
+            if (profile.film) |film_setting| _ = try scanner.setString(film_setting.option, film_setting.value(film));
             for (profile.options) |setting| {
                 const set = switch (setting.value) {
                     .string => |v| try scanner.setString(setting.name, v),
@@ -694,10 +722,16 @@ pub const Scanner = struct {
             _ = try scanner.setString("mode", "Color");
             var arena: std.heap.ArenaAllocator = .init(gpa);
             defer arena.deinit();
-            const setup = interface.rawSetup(try scanner.optionInfos(arena.allocator()), request.raw);
-            try scanner.applyRaw(gpa, &setup, request.film);
+            const setup = interface.rawSetup(try scanner.optionInfos(arena.allocator()), raw);
+            try scanner.applyRaw(gpa, &setup, film);
         }
-        _ = try scanner.setNumber("depth", if (request.deep) 16 else 8);
+        _ = try scanner.setNumber("depth", if (deep) 16 else 8);
+    }
+
+    /// Sets the scanner up for `request`: its source, its raw setup, the resolution and the area.
+    fn prepare(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request) Error!void {
+        if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
+        try scanner.setUpRaw(gpa, request.film, request.raw, request.deep);
         if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
 
         // Now the area. Move the far corner out of the way first, so the near corner can go

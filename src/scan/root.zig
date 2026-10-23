@@ -150,6 +150,14 @@ pub fn resolutionOf(value: f64) ?u32 {
     return @intFromFloat(@round(value));
 }
 
+/// The start of `sorted` up to `optical`, the highest resolution a source reads itself: above
+/// it, the driver makes pixels up, which isn't raw. All of `sorted` when none are that low.
+pub fn upToNative(sorted: []const u32, optical: f64) []const u32 {
+    var n: usize = 0;
+    while (n < sorted.len and @as(f64, @floatFromInt(sorted[n])) <= optical) n += 1;
+    return if (n == 0) sorted else sorted[0..n];
+}
+
 pub fn appendResolutionsInRange(gpa: std.mem.Allocator, resolutions: *std.ArrayList(u32), low: f64, high: f64, step: f64) error{OutOfMemory}!void {
     for (standard_resolutions) |r| {
         const value: f64 = @floatFromInt(r);
@@ -250,6 +258,20 @@ pub const Capabilities = struct {
     pub fn resolutionFrom(capabilities: Capabilities, dpi: u32) ?u32 {
         for (capabilities.resolutions) |r| if (r >= dpi) return r;
         return if (capabilities.resolutions.len > 0) capabilities.resolutions[capabilities.resolutions.len - 1] else null;
+    }
+
+    /// Returns the resolution closest to `dpi`, the higher one of two as close.
+    pub fn resolutionNearest(capabilities: Capabilities, dpi: u32) ?u32 {
+        var nearest: ?u32 = null;
+        for (capabilities.resolutions) |r| {
+            if (nearest) |n| if (distance(r, dpi) > distance(n, dpi)) continue;
+            nearest = r;
+        }
+        return nearest;
+    }
+
+    fn distance(a: u32, b: u32) u32 {
+        return @max(a, b) - @min(a, b);
     }
 };
 
@@ -812,6 +834,23 @@ test "a resolution of at least the one asked for" {
     try std.testing.expectEqual(@as(?u32, 300), capabilities.resolutionFrom(200));
     try std.testing.expectEqual(@as(?u32, 2400), capabilities.resolutionFrom(301));
     try std.testing.expectEqual(@as(?u32, 4800), capabilities.resolutionFrom(9600));
+}
+
+test "the resolution closest to the one asked for: itself, or else the higher one of two" {
+    var resolutions = [_]u32{ 300, 1200, 3600, 4800 };
+    var capabilities: Capabilities = .{ .sources = .initOne(.transparency), .source = .transparency, .resolutions = &resolutions, .area = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .deep = true, .film_setting = true, .profile = null };
+    try std.testing.expectEqual(@as(?u32, 3600), capabilities.resolutionNearest(2400));
+    try std.testing.expectEqual(@as(?u32, 1200), capabilities.resolutionNearest(1000));
+    try std.testing.expectEqual(@as(?u32, 4800), capabilities.resolutionNearest(9600));
+    var v200 = [_]u32{ 300, 2400, 4800 };
+    capabilities.resolutions = &v200;
+    try std.testing.expectEqual(@as(?u32, 2400), capabilities.resolutionNearest(2400));
+}
+
+test "resolutions above the native one are left out" {
+    const sorted = [_]u32{ 300, 1200, 2400, 4800, 9600 };
+    try std.testing.expectEqualSlices(u32, &.{ 300, 1200, 2400, 4800 }, upToNative(&sorted, 4800));
+    try std.testing.expectEqualSlices(u32, &sorted, upToNative(&sorted, 100));
 }
 
 test "resolutions from a driver are checked before they become numbers" {
