@@ -289,35 +289,42 @@ pub const Catalog = struct {
     }
 
     /// Returns the look `id` names, reading it if it hasn't been read yet. A look that can't be
-    /// read comes back as Neutral, with a warning the first time.
-    pub fn resolve(catalog: *Catalog, gpa: std.mem.Allocator, io: std.Io, id: Id) Resolved {
+    /// read comes back as Neutral, with a warning the first time. Running out of memory is an
+    /// error, not a look that can't be read.
+    pub fn resolve(catalog: *Catalog, gpa: std.mem.Allocator, io: std.Io, id: Id) error{OutOfMemory}!Resolved {
         switch (id.kind()) {
             .builtin => |b| {
                 const file = b.cubeFile() orelse return .neutral;
                 const slot = catalog.builtins.getPtr(b);
-                if (slot.* == null) slot.* = parsed(gpa, file) catch |err| {
-                    std.log.err("the built-in look {s} doesn't read: {t}", .{ b.label(), err });
-                    return .neutral;
+                if (slot.* == null) slot.* = parsed(gpa, file) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => {
+                        std.log.err("the built-in look {s} doesn't read: {t}", .{ b.label(), err });
+                        return .neutral;
+                    },
                 };
                 return .{ .lut = slot.*.? };
             },
             .bundled => |index| {
                 const slot = &catalog.bundled_luts[index];
-                if (slot.* == null) slot.* = decoded(gpa, index) catch |err| {
-                    std.log.err("the look {s} doesn't read: {t}", .{ id.label(), err });
-                    return .neutral;
-                };
+                // The bundled looks are baked in and checked at build time, so only memory can fail.
+                if (slot.* == null) slot.* = try decoded(gpa, index);
                 return .{ .lut = slot.*.? };
             },
             .cube, .fitted => {},
         }
-        const entry = catalog.read.getOrPut(gpa, id.text()) catch return .neutral;
+        const entry = try catalog.read.getOrPut(gpa, id.text());
         if (!entry.found_existing) {
-            entry.key_ptr.* = gpa.dupe(u8, id.text()) catch {
+            entry.key_ptr.* = gpa.dupe(u8, id.text()) catch |err| {
                 catalog.read.swapRemoveAt(entry.index);
-                return .neutral;
+                return err;
             };
             entry.value_ptr.* = catalog.load(gpa, io, id) catch |err| loaded: {
+                if (err == error.OutOfMemory) {
+                    gpa.free(entry.key_ptr.*);
+                    catalog.read.swapRemoveAt(entry.index);
+                    return error.OutOfMemory;
+                }
                 std.log.warn("the look {s} can't be read: {t}; developing with Neutral", .{ id.label(), err });
                 break :loaded null;
             };
@@ -525,7 +532,7 @@ test "a render split over threads is the same as one in one piece" {
     for (scan.pixels, 0..) |*p, i| p.* = .{ @intCast(1000 + i % 30000), @intCast(800 + i % 20000), @intCast(500 + i % 9000) };
     var catalog: Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
-    const look = catalog.resolve(gpa, undefined, .frontier);
+    const look = try catalog.resolve(gpa, undefined, .frontier);
     const settings: develop.Settings = .{};
     var whole = try render(gpa, scan, settings, look);
     defer whole.deinit(gpa);
@@ -539,7 +546,7 @@ test "Frontier emulation leaves neutrals and keeps close to Neutral" {
     const gpa = std.testing.allocator;
     var catalog: Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
-    const look = catalog.resolve(gpa, undefined, .frontier);
+    const look = try catalog.resolve(gpa, undefined, .frontier);
     try std.testing.expect(look == .lut);
     for ([_]f32{ 0.002, 0.05, 0.18, 0.5, 0.9 }) |v| {
         var pixels = [_][3]f32{.{ v, v, v }};
@@ -566,7 +573,7 @@ test "a bundled look's id keeps its look, and every bundled look reads" {
     var catalog: Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
     for (bundled.looks, 0..) |b, i| {
-        const look = catalog.resolve(gpa, undefined, .ofBundled(i));
+        const look = try catalog.resolve(gpa, undefined, .ofBundled(i));
         try std.testing.expect(look == .lut);
         // A black and white look leaves a colour grey.
         var pixels = [_][3]f32{ .{ 0.3, 0.1, 0.05 }, .{ 0.05, 0.2, 0.4 } };

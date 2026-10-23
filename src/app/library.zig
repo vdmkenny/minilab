@@ -285,7 +285,7 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
         const gain = if (r.baseFor(key.frame)) |base| minilab.light_table.gainForBase(base) else minilab.light_table.gainForScan(scan);
         minilab.light_table.toScreen(scan.pixels, gain, pixels);
     } else {
-        var rendered = try minilab.look.render(gpa, scan, settings.settings, library.looks.resolve(gpa, io, settings.look));
+        var rendered = try minilab.look.render(gpa, scan, settings.settings, try library.looks.resolve(gpa, io, settings.look));
         defer rendered.deinit(gpa);
         var encoded = try minilab.encode.toSrgb8(gpa, rendered);
         defer encoded.deinit(gpa);

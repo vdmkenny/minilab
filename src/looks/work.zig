@@ -156,6 +156,8 @@ pub const Match = struct {
     /// For each reference, the frame it shows if one matches well enough, and how well it matches.
     found: []?usize,
     quality: []f32,
+    /// Why matching stopped, when it didn't finish.
+    failure: ?anyerror = null,
 
     pub const Frame = struct {
         /// The raw scan and its thumbnail, which the matching reads.
@@ -169,6 +171,8 @@ pub const Match = struct {
 
     /// The correlation a reference needs at the coarse level to count as showing a frame.
     pub const least_quality = 0.6;
+    /// The size a lab scan is reduced to before it's compared with the frames' thumbnails.
+    const reference_size = 256;
 
     pub fn init(gpa: std.mem.Allocator, references: []const []const u8, frames: usize) !Match {
         const refs = try gpa.alloc([]u8, references.len);
@@ -224,8 +228,16 @@ pub const Match = struct {
     }
 
     fn run(m: *Match, job: *Job) void {
+        m.attempt(job) catch |err| {
+            m.failure = err;
+        };
+    }
+
+    /// Matches each reference against every frame. A thumbnail or a reference that can't be read
+    /// just matches nothing; running out of memory stops the job.
+    fn attempt(m: *Match, job: *Job) !void {
         const gpa = job.gpa;
-        const grays = gpa.alloc(?register.Gray, m.frames.len) catch return;
+        const grays = try gpa.alloc(?register.Gray, m.frames.len);
         defer gpa.free(grays);
         @memset(grays, null);
         defer for (grays) |*g| if (g.*) |*gray| gray.deinit(gpa);
@@ -233,20 +245,29 @@ pub const Match = struct {
             if (job.stopped()) return;
             defer job.step();
             if (frame.thumbnail.len == 0) continue;
-            g.* = pairs.thumbnailGray(gpa, job.io, frame.thumbnail, frame.placement) catch null;
+            g.* = pairs.thumbnailGray(gpa, job.io, frame.thumbnail, frame.placement) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => null,
+            };
         }
         for (m.references, m.found, m.quality) |path, *found, *quality| {
             if (job.stopped()) return;
             defer job.step();
-            var gray = pairs.referenceGray(gpa, job.io, path) catch continue;
+            var gray = pairs.referenceGray(gpa, job.io, path) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    std.log.warn("{s} can't be read: {t}", .{ path, err });
+                    continue;
+                },
+            };
             defer gray.deinit(gpa);
-            var small = gray.reduce(gpa, 256) catch continue;
+            var small = try gray.reduce(gpa, reference_size);
             defer small.deinit(gpa);
-            var pyramid = register.Pyramid.init(gpa, small) catch continue;
+            var pyramid = try register.Pyramid.init(gpa, small);
             defer pyramid.deinit(gpa);
             for (grays, 0..) |g, i| {
                 const ours = g orelse continue;
-                const best = register.coarse(gpa, ours, &pyramid) catch continue;
+                const best = try register.coarse(gpa, ours, &pyramid);
                 if (best[0].quality > quality.*) {
                     quality.* = best[0].quality;
                     found.* = i;

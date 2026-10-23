@@ -255,7 +255,11 @@ pub const Library = struct {
             return error.Unavailable;
         } else {
             if (comptime builtin.os.tag == .macos) {
-                if (loadBundled(gpa, io)) |library| return library else |_| {}
+                if (loadBundled(gpa, io)) |library| return library else |err| switch (err) {
+                    // There's no bundle, as when minilab is built from source.
+                    error.Unavailable => {},
+                    else => std.log.warn("the SANE that comes with minilab doesn't load ({t}); trying the system's", .{err}),
+                }
             }
             for (library_paths) |path| {
                 var library = openAt(path) catch continue;
@@ -496,7 +500,7 @@ pub const Scanner = struct {
             const option = found.option;
             switch (option.constraint_type) {
                 .word_list => for (option.words()) |w| {
-                    try resolutions.append(gpa, @intFromFloat(@round(option.number(w))));
+                    if (interface.resolutionOf(option.number(w))) |r| try resolutions.append(gpa, r);
                 },
                 .range => try interface.appendResolutionsInRange(
                     gpa,
@@ -505,7 +509,7 @@ pub const Scanner = struct {
                     option.number(option.constraint.range.max),
                     option.number(option.constraint.range.quant),
                 ),
-                else => if (scanner.getNumber("resolution")) |r| try resolutions.append(gpa, @intFromFloat(@round(r))),
+                else => if (scanner.getNumber("resolution")) |value| if (interface.resolutionOf(value)) |r| try resolutions.append(gpa, r),
             }
         }
         std.mem.sortUnstable(u32, resolutions.items, {}, std.sort.asc(u32));

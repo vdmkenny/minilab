@@ -223,7 +223,7 @@ pub const Frame = struct {
         const started = std.Io.Clock.awake.now(io);
         defer std.log.scoped(.develop).debug("rendered {d} × {d} in {d} ms", .{ frame.preview.width, frame.preview.height, @divTrunc(started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds(), std.time.ns_per_ms) });
         frame.histogram = std.mem.zeroes(Histogram);
-        var linear = try look.render(gpa, frame.preview, frame.settings, catalog.resolve(gpa, io, frame.look));
+        var linear = try look.render(gpa, frame.preview, frame.settings, try catalog.resolve(gpa, io, frame.look));
         defer linear.deinit(gpa);
         var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
@@ -285,7 +285,7 @@ pub const Frame = struct {
         if (negative) {
             minilab.light_table.toScreen(turned.pixels, minilab.light_table.gainForBase(frame.gap_base orelse frame.whole.thinnest), pixels);
         } else {
-            var linear = try look.render(gpa, turned, frame.settings, catalog.resolve(gpa, io, frame.look));
+            var linear = try look.render(gpa, turned, frame.settings, try catalog.resolve(gpa, io, frame.look));
             defer linear.deinit(gpa);
             var encoded = try minilab.encode.toSrgb8(gpa, linear);
             defer encoded.deinit(gpa);

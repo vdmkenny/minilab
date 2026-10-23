@@ -139,6 +139,16 @@ pub const standard_resolutions = [_]u32{ 75, 100, 150, 200, 300, 400, 600, 800, 
 
 /// Appends the standard resolutions that fall in a scanner's range to `resolutions`. The range
 /// goes from `low` to `high` in steps of `step`, and a step of 0 allows any value in it.
+/// No scanner comes near this many pixels per inch. A driver that reports more is wrong.
+const max_dpi = 100_000;
+
+/// A resolution a driver reports, as a whole number, or null when it isn't one a scanner could
+/// have: not a number, below 1, or absurdly high. Casting it as it is could crash the app.
+pub fn resolutionOf(value: f64) ?u32 {
+    if (!std.math.isFinite(value) or value < 1 or value > max_dpi) return null;
+    return @intFromFloat(@round(value));
+}
+
 pub fn appendResolutionsInRange(gpa: std.mem.Allocator, resolutions: *std.ArrayList(u32), low: f64, high: f64, step: f64) error{OutOfMemory}!void {
     for (standard_resolutions) |r| {
         const value: f64 = @floatFromInt(r);
@@ -795,6 +805,13 @@ test "a resolution of at least the one asked for" {
     try std.testing.expectEqual(@as(?u32, 300), capabilities.resolutionFrom(200));
     try std.testing.expectEqual(@as(?u32, 2400), capabilities.resolutionFrom(301));
     try std.testing.expectEqual(@as(?u32, 4800), capabilities.resolutionFrom(9600));
+}
+
+test "resolutions from a driver are checked before they become numbers" {
+    try std.testing.expectEqual(@as(?u32, 2400), resolutionOf(2400.2));
+    try std.testing.expectEqual(@as(?u32, null), resolutionOf(-300));
+    try std.testing.expectEqual(@as(?u32, null), resolutionOf(std.math.nan(f64)));
+    try std.testing.expectEqual(@as(?u32, null), resolutionOf(1e12));
 }
 
 test "a range gives the standard resolutions on its steps" {

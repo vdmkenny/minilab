@@ -75,8 +75,10 @@ pub fn Image(comptime Pixel: type) type {
         }
 
         /// Returns a copy of the part of the image inside `area`.
+        /// Copies `area` out of the image. An area that reaches outside it, as a crop from a
+        /// frame file edited by hand can, gives `error.CropOutsideImage`.
         pub fn crop(image: Self, gpa: std.mem.Allocator, area: Area) !Self {
-            std.debug.assert(area.x + area.width <= image.width and area.y + area.height <= image.height);
+            if (!area.fitsIn(image.width, image.height)) return error.CropOutsideImage;
             var result: Self = try .init(gpa, area.width, area.height);
             for (0..area.height) |y| {
                 @memcpy(result.row(y), image.row(area.y + y)[area.x..][0..area.width]);
@@ -97,15 +99,30 @@ pub const Area = struct {
         return .{ .x = 0, .y = 0, .width = width, .height = height };
     }
 
+    /// Whether the area is inside an image `width` × `height` and isn't empty. It can't overflow,
+    /// however large the numbers in a frame file are.
+    pub fn fitsIn(area: Area, width: usize, height: usize) bool {
+        return area.width > 0 and area.height > 0 and
+            area.width <= width and area.x <= width - area.width and
+            area.height <= height and area.y <= height - area.height;
+    }
+
     /// Moves `area`, measured on an image `from` pixels wide, onto a copy of the same picture
     /// that's `to` pixels wide, clipped to `to_width` × `to_height`.
     pub fn rescale(area: Area, from: usize, to: usize, to_width: usize, to_height: usize) Area {
         const f = @as(f64, @floatFromInt(to)) / @as(f64, @floatFromInt(from));
-        const x = @min(to_width -| 1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(area.x)) * f))));
-        const y = @min(to_height -| 1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(area.y)) * f))));
-        const w = @max(1, @min(to_width - x, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(area.width)) * f)))));
-        const h = @max(1, @min(to_height - y, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(area.height)) * f)))));
+        const x = scaled(area.x, f, to_width -| 1);
+        const y = scaled(area.y, f, to_height -| 1);
+        const w = @max(1, scaled(area.width, f, to_width - x));
+        const h = @max(1, scaled(area.height, f, to_height - y));
         return .{ .x = x, .y = y, .width = w, .height = h };
+    }
+
+    /// `value` times `factor`, rounded and kept to `limit`. The limit is applied before the
+    /// number becomes an integer, so a huge value can't overflow.
+    fn scaled(value: usize, factor: f64, limit: usize) usize {
+        const product = @round(@as(f64, @floatFromInt(value)) * factor);
+        return @intFromFloat(std.math.clamp(product, 0, @as(f64, @floatFromInt(limit))));
     }
 
     /// Returns the middle of `area`, `fraction` of its width and height.
@@ -122,20 +139,25 @@ pub fn reductionFactor(width: usize, height: usize, longest: usize) usize {
 }
 
 /// Reduces `scan` by a whole-number factor so that its longer side is at most `longest`. Each
-/// pixel is the mean of the block it covers.
+/// pixel is the mean of the block it covers. A side shorter than the factor, on a very long thin
+/// scan, still gets one pixel, the mean of what's there.
 pub fn downscale(gpa: std.mem.Allocator, scan: Scan, longest: usize) !Scan {
     const factor = reductionFactor(scan.width, scan.height, longest);
-    var result: Scan = try .init(gpa, scan.width / factor, scan.height / factor);
-    const block: u64 = factor * factor;
+    var result: Scan = try .init(gpa, @max(1, scan.width / factor), @max(1, scan.height / factor));
     for (0..result.height) |y| {
+        const top = y * factor;
+        const bottom = @min(top + factor, scan.height);
         for (result.row(y), 0..) |*p, x| {
+            const left = x * factor;
+            const right = @min(left + factor, scan.width);
             var sum: [channel_count]u64 = @splat(0);
-            for (0..factor) |dy| {
-                for (scan.row(y * factor + dy)[x * factor ..][0..factor]) |s| {
+            for (top..bottom) |row| {
+                for (scan.row(row)[left..right]) |s| {
                     for (&sum, s) |*total, v| total.* += v;
                 }
             }
-            for (p, sum) |*out, total| out.* = @intCast(total / block);
+            const count: u64 = (bottom - top) * (right - left);
+            for (p, sum) |*out, total| out.* = @intCast(total / count);
         }
     }
     return result;
@@ -207,4 +229,40 @@ test "mirroring then a half turn turns the image upside down" {
     try std.testing.expectEqual(@as(u16, 3), flipped.at(0, 0)[0]);
     try std.testing.expectEqual(@as(u16, 5), flipped.at(2, 0)[0]);
     try std.testing.expectEqual(@as(u16, 0), flipped.at(0, 1)[0]);
+}
+
+test "areas from odd frame files don't overflow" {
+    const huge = std.math.maxInt(usize);
+    const area: Area = .{ .x = huge - 2, .y = 0, .width = 10, .height = 10 };
+    try std.testing.expect(!area.fitsIn(100, 100));
+    try std.testing.expect(!(Area{ .x = 0, .y = 0, .width = 0, .height = 10 }).fitsIn(100, 100));
+    try std.testing.expect((Area{ .x = 90, .y = 90, .width = 10, .height = 10 }).fitsIn(100, 100));
+    // Rescaling a huge area keeps it on the picture instead of trapping.
+    const moved = area.rescale(100, 50, 50, 50);
+    try std.testing.expect(moved.fitsIn(50, 50));
+    var scan: Scan = try .init(std.testing.allocator, 4, 4);
+    defer scan.deinit(std.testing.allocator);
+    try std.testing.expectError(error.CropOutsideImage, scan.crop(std.testing.allocator, area));
+}
+
+test "a very long thin scan still downscales to a picture" {
+    const gpa = std.testing.allocator;
+    // 600 by 1 with a longest side of 300: the factor is 2, more than the height.
+    var thin: Scan = try .init(gpa, 600, 1);
+    defer thin.deinit(gpa);
+    for (thin.pixels, 0..) |*p, i| p.* = @splat(@intCast(i % 2 * 1000));
+    var small = try downscale(gpa, thin, 300);
+    defer small.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 300), small.width);
+    try std.testing.expectEqual(@as(usize, 1), small.height);
+    try std.testing.expectEqual(@as(u16, 500), small.pixels[0][0]);
+    // 1000 by 1 with a longest side of 100: the factor is 10, more than the height.
+    var thinner: Scan = try .init(gpa, 1000, 1);
+    defer thinner.deinit(gpa);
+    @memset(thinner.pixels, @splat(40));
+    var tiny = try downscale(gpa, thinner, 100);
+    defer tiny.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 100), tiny.width);
+    try std.testing.expectEqual(@as(usize, 1), tiny.height);
+    try std.testing.expectEqual(@as(u16, 40), tiny.pixels[0][1]);
 }

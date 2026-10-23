@@ -400,7 +400,14 @@ pub const Roll = struct {
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
         defer reduced.deinit(gpa);
-        const found: []const framing.Found = framing.findAll(gpa, reduced, scan.width, scan.height, dpi orelse roll.info.dpi, roll.info.format.format(), roll.info.kind) catch &.{};
+        const found: []const framing.Found = framing.findAll(gpa, reduced, scan.width, scan.height, dpi orelse roll.info.dpi, roll.info.format.format(), roll.info.kind) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            // No frames found: the scan goes in as one frame, uncropped.
+            else => none: {
+                std.log.info("no frames found on {s} ({t}); it goes in whole", .{ name, err });
+                break :none &.{};
+            },
+        };
         defer gpa.free(found);
 
         const scan_bytes = try pnm.write(gpa, u16, scan);
