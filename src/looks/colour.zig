@@ -103,14 +103,6 @@ fn hue(b: f64, a: f64) f64 {
     return if (h < 0) h + 360 else h;
 }
 
-/// Returns the value that `share` of `values` fall below. It sorts `values` in place, and returns
-/// 0 when there are none.
-pub fn percentile(values: []f32, share: f32) f32 {
-    if (values.len == 0) return 0;
-    std.mem.sort(f32, values, {}, std.sort.asc(f32));
-    const rank: usize = @intFromFloat(@round(share * @as(f32, @floatFromInt(values.len - 1))));
-    return values[@min(rank, values.len - 1)];
-}
 
 test "CIEDE2000 matches Sharma's test data" {
     // Pairs 1, 2, 7, 17, 25 and 34 from the table in Sharma, Wu and Dalal.
@@ -135,10 +127,4 @@ test "sRGB white is L 100 and neutral" {
     try std.testing.expectApproxEqAbs(@as(f32, 0), w[2], 1e-2);
     const black = lab(.{ 0, 0, 0 });
     try std.testing.expectApproxEqAbs(@as(f32, 0), black[0], 1e-3);
-}
-
-test "percentiles of a list" {
-    var values = [_]f32{ 5, 1, 4, 2, 3 };
-    try std.testing.expectEqual(@as(f32, 3), percentile(&values, 0.5));
-    try std.testing.expectEqual(@as(f32, 5), percentile(&values, 1));
 }

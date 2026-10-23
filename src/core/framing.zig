@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const image = @import("image.zig");
+const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const frames = @import("../frames/root.zig");
 
@@ -203,7 +204,7 @@ fn medianOf(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area) ![3]f32 
     var median: [3]f32 = undefined;
     for (&median, &values) |*m, *list| {
         std.mem.sort(u16, list.items, {}, std.sort.asc(u16));
-        m.* = @as(f32, @floatFromInt(list.items[list.items.len / 2])) / image.full_scale;
+        m.* = @as(f32, @floatFromInt(stats.quantile(u16, list.items, 0.5))) / image.full_scale;
     }
     return median;
 }

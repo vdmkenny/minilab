@@ -27,6 +27,7 @@ const std = @import("std");
 const curve = @import("curve.zig");
 const model_ = @import("model.zig");
 const colour = @import("colour.zig");
+const stats = @import("../core/stats.zig");
 const linear = @import("linear.zig");
 
 const Model = model_.Model;
@@ -446,11 +447,11 @@ fn report(gpa: std.mem.Allocator, result: *Result, samples: []const Sample, held
         const e = colour.deltaE2000(colour.lab(out), colour.lab(s.target));
         try (if (held_out[s.pair]) &checked else &fitted).append(gpa, e);
     }
-    result.report.fitted_median = colour.percentile(fitted.items, 0.5);
+    result.report.fitted_median = stats.median(fitted.items) orelse 0;
     if (weights > 0) result.report.fitted_rms = @floatCast(@sqrt(squares / weights));
     if (checked.items.len > 0) {
-        result.report.median = colour.percentile(checked.items, 0.5);
-        result.report.p95 = colour.percentile(checked.items, 0.95);
+        result.report.median = stats.median(checked.items);
+        result.report.p95 = stats.percentile(checked.items, 0.95);
     }
 }
 

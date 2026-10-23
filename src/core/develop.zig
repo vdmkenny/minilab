@@ -20,6 +20,7 @@
 const std = @import("std");
 const image = @import("image.zig");
 const encode = @import("encode.zig");
+const statistics = @import("stats.zig");
 const stock_curves = @import("stock_curves.zig");
 
 pub const FilmKind = enum {
@@ -488,13 +489,15 @@ const histogram_bins = std.math.maxInt(u16) + 1;
 
 /// The value below which `per_mille` of the `count` pixels fall, as a fraction of full scale.
 fn percentile(histogram: []const [image.channel_count]u32, channel: usize, count: usize, per_mille: usize) f32 {
-    const rank = @min(count - 1, count * per_mille / 1000);
-    var seen: usize = 0;
-    for (histogram, 0..) |bins, v| {
-        seen += bins[channel];
-        if (seen > rank) return @max(@as(f32, @floatFromInt(v)) / image.full_scale, smallest_transmission);
-    }
-    return 1;
+    const Channel = struct {
+        histogram: []const [image.channel_count]u32,
+        channel: usize,
+        pub fn at(c: @This(), i: usize) u64 {
+            return c.histogram[i][c.channel];
+        }
+    };
+    const bin = statistics.binAtRank(Channel{ .histogram = histogram, .channel = channel }, histogram.len, statistics.rankAt(count, per_mille)) orelse return 1;
+    return @max(@as(f32, @floatFromInt(bin)) / image.full_scale, smallest_transmission);
 }
 
 /// Works out automatic settings for a negative: the base from `measured_base`, the density range

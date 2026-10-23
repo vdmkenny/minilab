@@ -7,6 +7,7 @@
 const std = @import("std");
 const image = @import("image.zig");
 const encode = @import("encode.zig");
+const stats = @import("stats.zig");
 
 /// How bright the clearest film shows, as a share of full brightness.
 pub const clearest = 0.92;
@@ -71,13 +72,14 @@ fn clearestLevel(scan: image.Scan) ?f32 {
         counted += 1;
     }
     if (counted == 0) return null;
-    const wanted = counted * clearest_per_mille / 1000;
-    var seen: u64 = 0;
-    for (bins, 0..) |n, i| {
-        seen += n;
-        if (seen >= wanted) return @as(f32, @floatFromInt(i)) / (histogram_bins - 1);
-    }
-    return null;
+    const Bins = struct {
+        counts: *const [histogram_bins]u32,
+        pub fn at(b: @This(), i: usize) u64 {
+            return b.counts[i];
+        }
+    };
+    const bin = stats.binAtRank(Bins{ .counts = &bins }, histogram_bins, stats.rankAt(counted, clearest_per_mille)) orelse return null;
+    return @as(f32, @floatFromInt(bin)) / (histogram_bins - 1);
 }
 
 /// Converts `pixels` for the screen into RGBA in `out`, brightened by `gain` and sRGB-encoded.

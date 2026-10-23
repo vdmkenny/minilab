@@ -19,6 +19,7 @@
 const std = @import("std");
 const Io = std.Io;
 const image = @import("image.zig");
+const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
 const pnm = @import("../io/pnm.zig");
@@ -546,21 +547,16 @@ pub const Roll = struct {
 pub const base_tolerance = 0.15;
 
 fn medianBase(frames: []const FrameSettings) ?[3]f32 {
-    var values: [3][max_median_frames]f32 = undefined;
+    var bases: [max_median_frames][3]f32 = undefined;
     var count: usize = 0;
     for (frames) |f| {
         const b = f.film_base orelse continue;
         if (count == max_median_frames) break;
-        for (&values, b) |*channel, v| channel[count] = v;
+        bases[count] = b;
         count += 1;
     }
-    if (count == 0) return null;
-    var base: [3]f32 = undefined;
-    for (&base, &values) |*out, *channel| {
-        std.mem.sort(f32, channel[0..count], {}, std.sort.asc(f32));
-        out.* = if (count % 2 == 1) channel[count / 2] else (channel[count / 2 - 1] + channel[count / 2]) / 2;
-    }
-    return base;
+    var scratch: [max_median_frames]f32 = undefined;
+    return stats.channelMedian(bases[0..count], &scratch);
 }
 
 /// The most frames the roll's base is worked out from. That's more than any roll has.
