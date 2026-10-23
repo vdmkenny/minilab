@@ -74,6 +74,33 @@ const Selected = union(enum) {
     own: usize,
 };
 
+/// What's been read of a pair's files.
+const Reading = union(enum) {
+    unread,
+    /// Read and lined up, ready to fit.
+    read: *pairs.Prepared,
+    /// They couldn't be read.
+    failed,
+
+    fn prepared(reading: Reading) ?*pairs.Prepared {
+        return switch (reading) {
+            .read => |p| p,
+            .unread, .failed => null,
+        };
+    }
+
+    fn deinit(reading: *Reading, gpa: std.mem.Allocator) void {
+        switch (reading.*) {
+            .read => |p| {
+                p.deinit(gpa);
+                gpa.destroy(p);
+            },
+            .unread, .failed => {},
+        }
+        reading.* = undefined;
+    }
+};
+
 /// One of the user's own looks, in the library's Looks folder.
 const Own = struct {
     name: []u8,
@@ -85,9 +112,8 @@ const Own = struct {
     references: draft.Source = .frontier_software,
     options: fit.Options = .{},
     pairs: std.ArrayList(draft.Pair) = .empty,
-    /// Each pair once it's been read (`prepared`), and whether it couldn't be read (`failed`).
-    prepared: std.ArrayList(?*pairs.Prepared) = .empty,
-    failed: std.ArrayList(bool) = .empty,
+    /// What's been read of each pair's files.
+    readings: std.ArrayList(Reading) = .empty,
     /// Each pair's balance offsets from the last fit.
     balance: std.ArrayList([3]f32) = .empty,
     result: ?fit.Result = null,
@@ -115,12 +141,8 @@ const Own = struct {
     fn deinit(own: *Own, gpa: std.mem.Allocator) void {
         gpa.free(own.name);
         gpa.free(own.path);
-        for (own.prepared.items) |p| if (p) |prepared| {
-            prepared.deinit(gpa);
-            gpa.destroy(prepared);
-        };
-        own.prepared.deinit(gpa);
-        own.failed.deinit(gpa);
+        for (own.readings.items) |*r| r.deinit(gpa);
+        own.readings.deinit(gpa);
         own.balance.deinit(gpa);
         own.pairs.deinit(gpa);
         if (own.result) |*r| r.deinit(gpa);
@@ -135,25 +157,20 @@ const Own = struct {
         copy.label = try a.dupe(u8, pair.label);
         copy.theirs = try a.dupe(u8, pair.theirs);
         copy.stock = if (pair.stock) |s| try a.dupe(u8, s) else null;
-        // The four lists stay in step, so make room in all of them first.
+        // The three lists stay in step, so make room in all of them first.
         try own.pairs.ensureUnusedCapacity(gpa, 1);
-        try own.prepared.ensureUnusedCapacity(gpa, 1);
-        try own.failed.ensureUnusedCapacity(gpa, 1);
+        try own.readings.ensureUnusedCapacity(gpa, 1);
         try own.balance.ensureUnusedCapacity(gpa, 1);
         own.pairs.appendAssumeCapacity(copy);
-        own.prepared.appendAssumeCapacity(null);
-        own.failed.appendAssumeCapacity(false);
+        own.readings.appendAssumeCapacity(.unread);
         own.balance.appendAssumeCapacity(@splat(0));
         own.changed();
     }
 
     fn remove(own: *Own, gpa: std.mem.Allocator, index: usize) void {
         _ = own.pairs.orderedRemove(index);
-        if (own.prepared.orderedRemove(index)) |p| {
-            p.deinit(gpa);
-            gpa.destroy(p);
-        }
-        _ = own.failed.orderedRemove(index);
+        var reading = own.readings.orderedRemove(index);
+        reading.deinit(gpa);
         _ = own.balance.orderedRemove(index);
         own.changed();
     }
@@ -188,7 +205,7 @@ const Own = struct {
     /// How many pairs haven't been read yet but can be.
     fn unread(own: *const Own) usize {
         var n: usize = 0;
-        for (own.prepared.items, own.failed.items) |p, f| n += @intFromBool(p == null and !f);
+        for (own.readings.items) |r| n += @intFromBool(r == .unread);
         return n;
     }
 
@@ -312,8 +329,19 @@ const pair_files = [_]c.SDL_DialogFileFilter{
     .{ .name = "Scans and references (PPM, JPEG, TIFF)", .pattern = "ppm;jpg;jpeg;tif;tiff" },
 };
 
-/// What a job is doing, for the line under the references.
-const Doing = enum { reading, matching, fitting };
+/// A job running in the background, and the look it's for.
+const Running = struct {
+    job: *work.Job,
+    look: usize,
+    /// For a fit: where each of the job's pairs is in the look's list.
+    pairs: []const usize = &.{},
+
+    /// Waits for the job if `cancel` is false, or stops it, and frees it.
+    fn finish(running: Running, gpa: std.mem.Allocator, cancel: bool) void {
+        running.job.finish(cancel);
+        gpa.free(running.pairs);
+    }
+};
 
 pub const State = struct {
     loaded: bool = false,
@@ -324,12 +352,7 @@ pub const State = struct {
     selected: Selected = .neutral,
     /// The selected pair of the selected look.
     pair: usize = 0,
-    job: ?*work.Job = null,
-    /// The look the job is working on, and what it's doing.
-    job_look: usize = 0,
-    doing: Doing = .reading,
-    /// For a fit: each pair's place in the job's list.
-    job_pairs: std.ArrayList(usize) = .empty,
+    running: ?Running = null,
     dialog: Dialog = .{ .filters = &pair_files, .many = true },
     figures: Figures = .{},
     previews: Previews = .{},
@@ -340,9 +363,8 @@ pub const State = struct {
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         state.imported.deinit(gpa);
         state.cube_dialog.deinit(gpa);
-        if (state.job) |j| j.finish(true);
-        state.job = null;
-        state.job_pairs.deinit(gpa);
+        if (state.running) |r| r.finish(gpa, true);
+        state.running = null;
         state.figures.release(gpu);
         state.previews.deinit(gpa, gpu);
         for (state.own.items) |*o| o.deinit(gpa);
@@ -358,11 +380,11 @@ pub const State = struct {
 
     /// Whether everything on the page has loaded. A screenshot waits for this.
     pub fn settled(state: *const State) bool {
-        if (!state.loaded or state.job != null or state.rendering()) return false;
+        if (!state.loaded or state.running != null or state.rendering()) return false;
         const own = state.current() orelse return true;
         if (own.unread() > 0) return false;
         if (state.pair >= own.pairs.items.len) return true;
-        if (own.prepared.items[state.pair] == null) return true;
+        if (own.readings.items[state.pair] != .read) return true;
         return state.figures.key != null;
     }
 
@@ -378,7 +400,7 @@ pub const State = struct {
                 return;
             },
         };
-        if (state.job != null) {
+        if (state.running != null) {
             ctx.notice.set("Busy", .{});
             return;
         }
@@ -496,11 +518,11 @@ pub const State = struct {
     /// Picks up a finished job's results, and starts reading the selected look's pairs if they
     /// haven't been read yet.
     fn pump(state: *State, ctx: context.Context) void {
-        if (state.job) |job| {
-            if (!job.isDone()) return;
-            state.take(ctx, job);
-            job.finish(false);
-            state.job = null;
+        if (state.running) |running| {
+            if (!running.job.isDone()) return;
+            state.take(ctx, running);
+            running.finish(ctx.gpa, false);
+            state.running = null;
         }
         const chosen = state.dialog.take(ctx.gpa, ctx.io);
         defer Dialog.free(ctx.gpa, chosen);
@@ -508,7 +530,7 @@ pub const State = struct {
         const cubes = state.cube_dialog.take(ctx.gpa, ctx.io);
         defer Dialog.free(ctx.gpa, cubes);
         if (cubes.len > 0) state.importCubes(ctx, cubes);
-        if (state.job != null) return;
+        if (state.running != null) return;
 
         const index = switch (state.selected) {
             .own => |i| i,
@@ -519,35 +541,36 @@ pub const State = struct {
         if (count == 0) return;
         var task = work.Prepare.init(ctx.gpa, count) catch return;
         var n: usize = 0;
-        for (own.pairs.items, own.prepared.items, own.failed.items, 0..) |p, prepared, failed, i| {
-            if (prepared != null or failed) continue;
+        for (own.pairs.items, own.readings.items, 0..) |p, reading, i| {
+            if (reading != .unread) continue;
             task.set(ctx.gpa, n, i, p.ours, p.placement, p.theirs, p.alignment) catch break;
             n += 1;
         }
-        state.start(ctx, index, .reading, .{ .prepare = task });
+        state.start(ctx, .{ .prepare = task }, index, &.{});
     }
 
-    fn start(state: *State, ctx: context.Context, look: usize, doing: Doing, task: work.Task) void {
-        state.job = work.Job.start(ctx.gpa, ctx.io, task) catch |err| {
+    /// Starts `task` for the look at `look`. `job_pairs` is for a fit, and the job owns it.
+    fn start(state: *State, ctx: context.Context, task: work.Task, look: usize, job_pairs: []const usize) void {
+        const job = work.Job.start(ctx.gpa, ctx.io, task) catch |err| {
             std.log.err("can't start the work: {t}", .{err});
+            ctx.gpa.free(job_pairs);
             return;
         };
-        state.job_look = look;
-        state.doing = doing;
+        state.running = .{ .job = job, .look = look, .pairs = job_pairs };
     }
 
-    fn take(state: *State, ctx: context.Context, job: *work.Job) void {
-        const own = &state.own.items[state.job_look];
-        switch (job.task) {
+    fn take(state: *State, ctx: context.Context, running: Running) void {
+        const own = &state.own.items[running.look];
+        switch (running.job.task) {
             .prepare => |*task| {
                 var aligned = false;
                 for (task.items) |*item| {
                     // Skip items left unset because memory ran out.
                     if (item.ours.len == 0 or item.pair >= own.pairs.items.len) continue;
                     if (item.prepared) |p| {
-                        own.prepared.items[item.pair] = p;
+                        own.readings.items[item.pair] = .{ .read = p };
                         item.prepared = null;
-                    } else own.failed.items[item.pair] = true;
+                    } else own.readings.items[item.pair] = .failed;
                     if (item.failure) |err| std.log.err("pair {s} and {s}: {t}", .{ item.ours, item.theirs, err });
                     const pair = &own.pairs.items[item.pair];
                     if (pair.alignment == null and item.alignment != null) {
@@ -586,7 +609,7 @@ pub const State = struct {
                     own.result = result;
                     task.result = null;
                     for (own.balance.items) |*b| b.* = @splat(0);
-                    for (state.job_pairs.items, 0..) |pair, at| {
+                    for (running.pairs, 0..) |pair, at| {
                         if (pair < own.balance.items.len) own.balance.items[pair] = result.balance[at];
                     }
                     own.stale = false;
@@ -628,33 +651,45 @@ pub const State = struct {
                 n += 1;
             }
         }
-        state.start(ctx, look, .matching, .{ .match = task });
+        state.start(ctx, .{ .match = task }, look, &.{});
     }
 
     fn startFit(state: *State, ctx: context.Context, look: usize) void {
         const own = &state.own.items[look];
-        state.job_pairs.clearRetainingCapacity();
-        for (own.pairs.items, own.prepared.items, 0..) |p, prepared, i| {
-            if (prepared == null or !linedUp(p)) continue;
-            state.job_pairs.append(ctx.gpa, i) catch return;
+        var chosen: std.ArrayList(usize) = .empty;
+        for (own.pairs.items, own.readings.items, 0..) |p, reading, i| {
+            if (reading != .read or !linedUp(p)) continue;
+            chosen.append(ctx.gpa, i) catch {
+                chosen.deinit(ctx.gpa);
+                return;
+            };
         }
-        const n = state.job_pairs.items.len;
-        const prepared = ctx.gpa.alloc(*const pairs.Prepared, n) catch return;
+        const job_pairs = chosen.toOwnedSlice(ctx.gpa) catch {
+            chosen.deinit(ctx.gpa);
+            return;
+        };
+        const n = job_pairs.len;
+        const prepared = ctx.gpa.alloc(*const pairs.Prepared, n) catch {
+            ctx.gpa.free(job_pairs);
+            return;
+        };
         const alignments = ctx.gpa.alloc(register.Alignment, n) catch {
+            ctx.gpa.free(job_pairs);
             ctx.gpa.free(prepared);
             return;
         };
         const held_out = ctx.gpa.alloc(bool, n) catch {
+            ctx.gpa.free(job_pairs);
             ctx.gpa.free(prepared);
             ctx.gpa.free(alignments);
             return;
         };
-        for (state.job_pairs.items, 0..) |pair, at| {
-            prepared[at] = own.prepared.items[pair].?;
+        for (job_pairs, 0..) |pair, at| {
+            prepared[at] = own.readings.items[pair].read;
             alignments[at] = own.pairs.items[pair].alignment.?;
             held_out[at] = own.pairs.items[pair].held_out;
         }
-        state.start(ctx, look, .fitting, .{ .fit = .{ .prepared = prepared, .alignments = alignments, .held_out = held_out, .options = own.options } });
+        state.start(ctx, .{ .fit = .{ .prepared = prepared, .alignments = alignments, .held_out = held_out, .options = own.options } }, look, job_pairs);
     }
 
     /// Makes a new look, "Look N", with no pairs yet, and selects it.
@@ -745,7 +780,7 @@ pub const State = struct {
         };
         const own = &state.own.items[look];
         if (state.pair >= own.pairs.items.len) return state.figures.release(ctx.gpu);
-        const prepared = own.prepared.items[state.pair] orelse return state.figures.release(ctx.gpu);
+        const prepared = own.readings.items[state.pair].prepared() orelse return state.figures.release(ctx.gpu);
         const alignment = own.pairs.items[state.pair].alignment;
         const key: Figures.Key = .{ .look = look, .pair = state.pair, .prepared = prepared, .aligned = alignment != null, .generation = if (own.result != null) state.generation else 0 };
         if (state.figures.key) |k| if (std.meta.eql(k, key)) return;
@@ -1352,7 +1387,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
 
     c.ImGui_SetCursorScreenPos(gui.vec2(x, at.y));
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(12), (height - c.ImGui_GetFontSize()) / 2));
-    c.ImGui_BeginDisabled(state.job != null);
+    c.ImGui_BeginDisabled(state.running != null);
     if (gui.buttonOf(.normal, "Add pairs", gui.vec2(0, 32))) state.dialog.show(ctx.gpa, ctx.io);
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
@@ -1362,10 +1397,11 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     x = c.ImGui_GetItemRectMax().x + gui.px(10);
 
     const n = own.pairs.items.len;
-    const status: []const u8 = if (state.job != null and state.job_look == look) switch (state.doing) {
-        .reading => gui.print("Reading and lining up pairs, {d} of {d}…", .{ state.job.?.progress.load(.acquire), state.job.?.steps }),
-        .matching => "Finding the frames the references show…",
-        .fitting => "Fitting…",
+    const running = if (state.running) |r| (if (r.look == look) r else null) else null;
+    const status: []const u8 = if (running) |r| switch (r.job.task) {
+        .prepare => gui.print("Reading and lining up pairs, {d} of {d}…", .{ r.job.progress.load(.acquire), r.job.steps }),
+        .match => "Finding the frames the references show…",
+        .fit => "Fitting…",
     } else if (n == 0)
         "No pairs yet"
     else
@@ -1473,12 +1509,12 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         if (c.ImGui_BeginPopupContextItem()) {
             // Not while a fit is running, or the fit would end up shown against a split it wasn't
             // made from.
-            if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.job == null)) own.toggleHeldOut(ctx, i);
-            if (c.ImGui_MenuItemEx("Remove pair", null, false, state.job == null)) remove = i;
+            if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.running == null)) own.toggleHeldOut(ctx, i);
+            if (c.ImGui_MenuItemEx("Remove pair", null, false, state.running == null)) remove = i;
             c.ImGui_EndPopup();
         }
         c.ImGui_SetCursorScreenPos(gui.vec2(use_x, top));
-        if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.job == null) own.toggleHeldOut(ctx, i);
+        if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.running == null) own.toggleHeldOut(ctx, i);
         const use_hovered = c.ImGui_IsItemHovered(0);
         if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
 
@@ -1550,7 +1586,7 @@ fn stockName(stock: ?[]const u8) []const u8 {
 }
 
 fn registrationText(own: *const Own, index: usize) []const u8 {
-    if (own.failed.items[index]) return "Can't read";
+    if (own.readings.items[index] == .failed) return "Can't read";
     const a = own.pairs.items[index].alignment orelse return "Not aligned yet";
     if (a.quality >= aligned_quality) return gui.print("Aligned · {d:.2}", .{a.quality});
     if (a.quality >= poor_quality) return gui.print("Check · {d:.2}", .{a.quality});
@@ -1643,7 +1679,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
         },
     };
     const own = &state.own.items[look];
-    const busy = state.job != null;
+    const busy = state.running != null;
 
     const options = [_]struct { *bool, []const u8, []const u8 }{
         .{ &own.options.balance, "Per-frame balance", gui.print("3 offsets per frame, for {s} own correction · not part of the look", .{own.references.corrector()}) },
@@ -1676,9 +1712,10 @@ fn drawModel(state: *State, ctx: context.Context) void {
     const fit_top = save_top - gui.px(8 + 40);
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, fit_top));
     var fitted: usize = 0;
-    for (own.pairs.items, own.prepared.items) |p, prepared| fitted += @intFromBool(!p.held_out and linedUp(p) and prepared != null);
+    for (own.pairs.items, own.readings.items) |p, reading| fitted += @intFromBool(!p.held_out and linedUp(p) and reading == .read);
     c.ImGui_BeginDisabled(busy or fitted == 0);
-    if (gui.buttonOf(.primary, if (busy and state.doing == .fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, 40))) state.startFit(ctx, look);
+    const fitting = if (state.running) |r| r.job.task == .fit else false;
+    if (gui.buttonOf(.primary, if (fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, 40))) state.startFit(ctx, look);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
         c.ImGui_SetTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");

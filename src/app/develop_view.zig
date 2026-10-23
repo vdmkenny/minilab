@@ -56,8 +56,8 @@ const Compare = enum {
 };
 /// How big the viewer shows the frame.
 const Zoom = enum { fit, actual };
-/// What a click on the frame does.
-const Picking = enum { none, base, neutral };
+/// What a click on the frame picks.
+const Picking = enum { base, neutral };
 
 /// A frame's look and settings at one moment: what undo goes back to, and what Copy copies.
 const Snapshot = struct {
@@ -162,7 +162,7 @@ pub const State = struct {
     /// How far the frame is panned at 100%, in screen pixels from the centre.
     pan: gui.Vec2 = .{ .x = 0, .y = 0 },
     clipping: bool = true,
-    picking: Picking = .none,
+    picking: ?Picking = null,
     range: develop.Range = .midtones,
     /// The looks the drop-down lists, read each time it opens.
     look_choices: std.ArrayList(look.Catalog.Choice) = .empty,
@@ -275,7 +275,7 @@ pub const State = struct {
         state.committed = null;
         state.undo = .{};
         state.redo = .{};
-        state.picking = .none;
+        state.picking = null;
         state.cropping = null;
         state.pan = .{ .x = 0, .y = 0 };
     }
@@ -397,7 +397,7 @@ pub const State = struct {
             .turns = turns,
             .mirrored = mirrored,
         };
-        state.picking = .none;
+        state.picking = null;
     }
 
     /// Ends the crop tool. Keeps the new crop if `keep` is set, or else goes back to the old one.
@@ -768,7 +768,7 @@ pub const State = struct {
         if (keys.contains(.loupe)) state.loupe = !state.loupe;
         if (keys.contains(.before)) state.compare = if (state.compare == .negative) .positive else .negative;
         if (keys.contains(.split)) state.compare = if (state.compare == .split) .positive else .split;
-        if (keys.contains(.cancel)) state.picking = .none;
+        if (keys.contains(.cancel)) state.picking = null;
         if (keys.contains(.crop)) {
             if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err}) else state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
         }
@@ -790,8 +790,8 @@ pub const State = struct {
         const frame = if (state.frame) |*f| f else return null;
         // While the crop tool is on, the frame's settings have to wait until the crop is done.
         if (state.cropping != null) return null;
-        if (keys.contains(.white_balance)) state.picking = if (state.picking == .neutral) .none else .neutral;
-        if (keys.contains(.base)) state.picking = if (state.picking == .base) .none else .base;
+        if (keys.contains(.white_balance)) state.picking = if (state.picking == .neutral) null else .neutral;
+        if (keys.contains(.base)) state.picking = if (state.picking == .base) null else .base;
         if (keys.contains(.undo)) state.step(io, library, .back);
         if (keys.contains(.redo)) state.step(io, library, .forward);
         if (keys.contains(.automatic)) {
@@ -1198,17 +1198,16 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         cropTool(edit, list, min, scale, .{ width, height }, hovered, active, state.format(library).ratio());
         return;
     }
-    if (state.picking != .none and hovered and inside) {
+    if (state.picking != null and hovered and inside) {
         c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_Hand);
         if (c.ImGui_IsMouseClicked(0)) {
             const x: usize = @intFromFloat(std.math.clamp((mouse.x - min.x) / scale, 0, width - 1));
             const y: usize = @intFromFloat(std.math.clamp((mouse.y - min.y) / scale, 0, height - 1));
-            switch (state.picking) {
+            switch (state.picking.?) {
                 .base => frame.pickBase(x, y),
                 .neutral => frame.pickNeutral(x, y),
-                .none => {},
             }
-            state.picking = .none;
+            state.picking = null;
             state.dirty = true;
         }
     } else if (active and c.ImGui_IsMouseDragging(0, 0)) {
@@ -1220,7 +1219,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
             state.pan.y += delta.y;
         }
     }
-    if (near_split and state.picking == .none) c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeEW);
+    if (near_split and state.picking == null) c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeEW);
     // The loupe goes where the cursor is over the picture, and stands in for the cursor there.
     state.loupe_target = null;
     if (state.loupe and hovered and inside and !near_split) {
@@ -1250,8 +1249,11 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         tag(list, gui.vec2(min.x + gui.px(10), min.y + gui.px(10)), "Negative", .left);
         tag(list, gui.vec2(max.x - gui.px(10), min.y + gui.px(10)), "Positive", .right);
     }
-    if (state.picking != .none) {
-        const what = if (state.picking == .base) "Click the film base · Esc to cancel" else "Click something neutral gray · Esc to cancel";
+    if (state.picking) |picking| {
+        const what = switch (picking) {
+            .base => "Click the film base · Esc to cancel",
+            .neutral => "Click something neutral gray · Esc to cancel",
+        };
         const size = c.ImGui_CalcTextSize(what);
         tag(list, gui.vec2((min.x + max.x) / 2 + size.x / 2 + gui.px(8), max.y - gui.px(10) - size.y - gui.px(4)), what, .right);
     }
@@ -1666,7 +1668,7 @@ fn drawBase(state: *State) void {
     const pick_width = c.ImGui_CalcTextSize(pick_label).x + gui.px(20);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x + c.ImGui_GetContentRegionAvail().x - pick_width, corner.y + (row_height - c.ImGui_GetFrameHeight()) / 2));
     if (gui.buttonOf(if (state.picking == .base) .selected else .normal, pick_label, gui.vec2(0, 0))) {
-        state.picking = if (state.picking == .base) .none else .base;
+        state.picking = if (state.picking == .base) null else .base;
     }
     shortcuts.tooltip("Pick the film base", .base);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x, corner.y + row_height));
@@ -1764,12 +1766,12 @@ const SyncGroups = struct {
 /// `source`. `source_scan` is `source`'s scan file. Whatever isn't synced, the frame keeps: its
 /// saved settings, or automatic ones measured on its thumbnail if it was never developed. An
 /// automatic white balance is always worked out again for the frame itself.
-fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, source: *const Frame, source_scan: []const u8, groups: SyncGroups) !roll.FrameSettings {
+fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, source: *const Frame, source_scan: ?[]const u8, groups: SyncGroups) !roll.FrameSettings {
     var target = rl.frames.items[index];
     if (groups.geometry) {
         // A crop is in its scan's pixels, so it only carries over to a different scan of the
         // same size. Frames of one strip share a scan, and each has its own place on it.
-        const shared = std.mem.eql(u8, target.scan, source_scan);
+        const shared = if (target.scan) |a| if (source_scan) |b| std.mem.eql(u8, a, b) else false else false;
         if (!shared and target.width == source.scan_width and target.height == source.scan_height) target.crop = source.crop;
         target.quarter_turns = source.quarter_turns;
         target.mirrored = source.mirrored;

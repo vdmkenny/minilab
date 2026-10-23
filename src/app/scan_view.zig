@@ -159,7 +159,6 @@ const Shape = enum {
 
 /// Why a frame is marked for checking.
 const Check = enum {
-    none,
     /// Its own edges hardly show, so it was placed from the pitch of its neighbours.
     pitch,
     /// It measured far from the format's length, so it keeps its measured box.
@@ -187,7 +186,7 @@ const Box = struct {
     /// Percent of the frame taken off each side.
     inset: f32 = 0,
     full_height: bool = true,
-    check: Check = .none,
+    check: ?Check = null,
     /// Edited by hand. It's kept when frames are detected again, and its crop isn't refined.
     hand: bool = false,
 
@@ -202,6 +201,16 @@ const Box = struct {
     /// How much of the box's length and height the crop keeps.
     fn insetShare(box: Box) f32 {
         return 1 - 2 * box.inset / 100;
+    }
+
+    /// Reads a box from a saved preview. Previews saved before a box's check could be null say
+    /// "none" when it has none.
+    pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !Box {
+        var value = try std.json.innerParse(std.json.Value, allocator, source, options);
+        if (value == .object) if (value.object.getPtr("check")) |check| {
+            if (check.* == .string and std.mem.eql(u8, check.string, "none")) check.* = .null;
+        };
+        return std.json.parseFromValueLeaky(Box, allocator, value, options);
     }
 
     /// The crop: the box minus the inset.
@@ -284,15 +293,25 @@ const Preview = struct {
 };
 
 /// What's happened to a frame in the queue.
-const Progress = enum { waiting, scanning, checking, done, check_crop, failed, cancelled };
+const QueueItem = union(enum) {
+    waiting,
+    /// Since this time, in SDL's milliseconds.
+    scanning: u64,
+    checking,
+    /// In the roll as this frame.
+    done: usize,
+    /// In the roll as this frame, with its crop to check.
+    check_crop: usize,
+    failed: anyerror,
+    cancelled,
 
-const QueueItem = struct {
-    status: Progress = .waiting,
     /// The frame it became in the roll, once it's there.
-    frame: ?usize = null,
-    /// When its scan started, in SDL's milliseconds.
-    started: u64 = 0,
-    err: ?anyerror = null,
+    fn frame(item: QueueItem) ?usize {
+        return switch (item) {
+            .done, .check_crop => |index| index,
+            .waiting, .scanning, .checking, .failed, .cancelled => null,
+        };
+    }
 };
 
 /// What the preview's settings file holds.
@@ -309,11 +328,10 @@ const Saved = struct {
 
 /// What a drag in the workspace moves.
 const Drag = union(enum) {
-    none,
     /// A box along the strip, from the preview or the frame view.
     move: usize,
-    /// One corner of a box in the frame view: 0 is top left, then clockwise, as shown.
-    corner: struct { box: usize, corner: u2 },
+    /// A corner of a box in the frame view.
+    corner,
 };
 
 pub const State = struct {
@@ -346,7 +364,7 @@ pub const State = struct {
     detect_note: ?[]const u8 = null,
     /// Whether the boxes have changed since they were saved.
     boxes_dirty: bool = false,
-    drag: Drag = .none,
+    drag: ?Drag = null,
 
     queue: std.ArrayList(QueueItem) = .empty,
     /// The roll the queue scans into, as a path.
@@ -491,35 +509,27 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             return;
         },
         .frame_started => |index| if (queueItem(state, index)) |item| {
-            item.status = .scanning;
-            item.started = c.SDL_GetTicks();
+            item.* = .{ .scanning = c.SDL_GetTicks() };
         },
         .frame_checking => |index| if (queueItem(state, index)) |item| {
-            item.status = .checking;
+            item.* = .checking;
         },
         .frame_done => |done| {
             defer gpa.free(done.ppm);
             const item = queueItem(state, done.index);
             const frame = addToRoll(state, ctx, done) catch |err| {
                 std.log.err("can't add frame {d} to the roll: {t}", .{ done.index + 1, err });
-                if (item) |i| {
-                    i.status = .failed;
-                    i.err = err;
-                }
+                if (item) |i| i.* = .{ .failed = err };
                 return;
             };
-            if (item) |i| {
-                i.status = if (done.refined) .done else .check_crop;
-                i.frame = frame;
-            }
+            if (item) |i| i.* = if (done.refined) .{ .done = frame } else .{ .check_crop = frame };
             return;
         },
         .frame_failed => |failed| if (queueItem(state, failed.index)) |item| {
-            item.status = .failed;
-            item.err = failed.err;
+            item.* = .{ .failed = failed.err };
         },
         .frame_cancelled => |index| if (queueItem(state, index)) |item| {
-            item.status = .cancelled;
+            item.* = .cancelled;
         },
         .queue_done => |done| {
             state.scanning = false;
@@ -527,7 +537,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
                 ctx.notice.set("Scanning canceled", .{});
             } else {
                 var added: usize = 0;
-                for (state.queue.items) |item| added += @intFromBool(item.status == .done or item.status == .check_crop);
+                for (state.queue.items) |item| added += @intFromBool(item.frame() != null);
                 ctx.notice.set("Scanned {d} of {d} frames", .{ added, state.queue.items.len });
             }
         },
@@ -643,7 +653,7 @@ fn clearPreview(state: *State, ctx: context.Context) void {
     state.boxes.clearRetainingCapacity();
     state.selected = null;
     state.detect_note = null;
-    state.drag = .none;
+    state.drag = null;
     if (!state.scanning) state.queue.clearRetainingCapacity();
 }
 
@@ -1002,7 +1012,7 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
 
 /// The scanner's film mode as its driver names it, such as "Positive Film".
 fn filmMode(state: *const State, ctx: context.Context, caps: scan.Capabilities) []const u8 {
-    if (caps.profile) |p| return p.positive;
+    if (caps.profile) |p| if (p.film) |film| return film.value(scanner_film);
     const options = caps.options orelse return "Positive";
     const setup = scan.rawSetup(options.items, rawChanges(state, ctx));
     for (scan.rawControls(options.items).all()) |control| {
@@ -1347,14 +1357,14 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
             state.drag = .{ .move = i };
         }
         // A click only selects. The box moves once the mouse has gone past the drag threshold.
-        if (c.ImGui_IsItemActive() and c.ImGui_IsMouseDragging(0, -1) and state.drag == .move and state.drag.move == i) {
+        if (c.ImGui_IsItemActive() and c.ImGui_IsMouseDragging(0, -1) and moving(state, i)) {
             const moved = c.ImGui_GetIO().*.MouseDelta.y / map.along;
             if (moved != 0) moveBox(state, preview, i, moved, 0);
         }
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeNS);
         c.ImGui_PopID();
 
-        const weak = box.check != .none;
+        const weak = box.check != null;
         const ink = theme.imU32(if (weak) theme.text else theme.accent);
         const inner_min = gui.vec2(min.x + gui.px(1), min.y + gui.px(1));
         const inner_max = gui.vec2(max.x - gui.px(1), max.y - gui.px(1));
@@ -1371,9 +1381,7 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
         c.ImDrawList_AddText(list, gui.vec2(chip_min.x + gui.px(3), chip_min.y + (chip_max.y - chip_min.y - size.y) / 2), theme.imU32(theme.on_accent), chip);
         fonts.pop();
     }
-    if (state.drag != .none and !c.ImGui_IsMouseDown(0)) {
-        state.drag = .none;
-    }
+    if (state.drag != null and !c.ImGui_IsMouseDown(0)) state.drag = null;
 }
 
 /// Moves box `index` by `along` and `across` preview pixels, keeping it on the strip.
@@ -1382,8 +1390,17 @@ fn moveBox(state: *State, preview: *const Preview, index: usize, along: f32, acr
     box.along = std.math.clamp(box.along + along, 0, preview.alongSize());
     if (!box.full_height) box.across = std.math.clamp(box.across + across, 0, preview.acrossSize());
     // Placed by hand, so it no longer needs checking.
-    box.check = .none;
+    box.check = null;
     markEdited(state, box);
+}
+
+/// Whether box `index` is being moved.
+fn moving(state: *const State, index: usize) bool {
+    const drag = state.drag orelse return false;
+    return switch (drag) {
+        .move => |moved| moved == index,
+        .corner => false,
+    };
 }
 
 fn selectedBox(state: *const State) ?Box {
@@ -1424,7 +1441,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
 
     y += drawFrameView(state, preview, index, list, x, y, width) + gui.px(section_gap);
 
-    if (box.check != .none) {
+    if (box.check != null) {
         y += drawCheckNote(state, preview, index, list, x, y, width) + gui.px(section_gap);
     }
 
@@ -1515,8 +1532,8 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     const crop_min = gui.vec2(origin.x + crop_left * scale, origin.y + (crop.across - crop.height / 2 - (region.across - region.height / 2)) * scale);
     const crop_max = gui.vec2(crop_min.x + crop.length * scale, crop_min.y + crop.height * scale);
     const corners = rotatedCorners(crop_min, crop_max, box.rotation);
-    const ink = theme.imU32(if (box.check != .none) theme.text else theme.accent);
-    if (box.check != .none) {
+    const ink = theme.imU32(if (box.check != null) theme.text else theme.accent);
+    if (box.check != null) {
         drawDashedQuad(list, corners, ink, gui.px(2));
     } else {
         c.ImDrawList_AddQuadEx(list, corners[0], corners[1], corners[2], corners[3], ink, gui.px(2));
@@ -1532,7 +1549,7 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
         c.ImGui_PushIDInt(@intCast(k));
         _ = c.ImGui_InvisibleButton("corner", gui.vec2(2 * handle, 2 * handle), 0);
         if (c.ImGui_IsItemHovered(0) or c.ImGui_IsItemActive()) c.ImGui_SetMouseCursor(if (k % 2 == 0) c.ImGuiMouseCursor_ResizeNWSE else c.ImGuiMouseCursor_ResizeNESW);
-        if (c.ImGui_IsItemActivated()) state.drag = .{ .corner = .{ .box = index, .corner = @intCast(k) } };
+        if (c.ImGui_IsItemActivated()) state.drag = .corner;
         if (c.ImGui_IsItemActive() and c.ImGui_IsMouseDragging(0, -1)) {
             const delta = c.ImGui_GetIO().*.MouseDelta;
             if (delta.x != 0 or delta.y != 0) resizeBox(state, preview, index, @intCast(k), delta.x / scale, delta.y / scale);
@@ -1618,7 +1635,7 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
         box.height = height;
     }
     box.length = length;
-    box.check = .none;
+    box.check = null;
     markEdited(state, box);
 }
 
@@ -1645,8 +1662,8 @@ fn reshape(box: *Box, preview: *const Preview, format: formats.Format) void {
 /// Draws the note on a frame marked for checking, in a dashed box. Returns its height.
 fn drawCheckNote(state: *const State, preview: *const Preview, index: usize, list: *c.ImDrawList, x: f32, y: f32, width: f32) f32 {
     const box = state.boxes.items[index];
-    const message: []const u8 = switch (box.check) {
-        .none => return 0,
+    const check = box.check orelse return 0;
+    const message: []const u8 = switch (check) {
         .cut => "Check · runs off the preview",
         .length => "Check · length far from the format, measured box kept",
         .pitch => pitchNote(state, preview, index),
@@ -1670,13 +1687,13 @@ fn pitchNote(state: *const State, preview: *const Preview, index: usize) []const
     var i = index;
     while (i > 0) {
         i -= 1;
-        if (boxes[i].check == .none) {
+        if (boxes[i].check == null) {
             before = i;
             break;
         }
     }
     var after: ?usize = null;
-    for (boxes[index + 1 ..], index + 1..) |b, j| if (b.check == .none) {
+    for (boxes[index + 1 ..], index + 1..) |b, j| if (b.check == null) {
         after = j;
         break;
     };
@@ -1701,7 +1718,7 @@ fn addFrame(state: *State, gpa: std.mem.Allocator, preview: *const Preview, form
     const pitch = (format.pitch_mm orelse format.width_mm + format.gapMm()) * per_mm;
     if (selectedBox(state)) |selected| {
         box = selected;
-        box.check = .none;
+        box.check = null;
         box.hand = true;
         box.along = selected.along + pitch;
         if (box.end() > preview.alongSize()) box.along = selected.along - pitch;
@@ -1717,7 +1734,7 @@ fn splitFrame(state: *State, gpa: std.mem.Allocator, index: usize) void {
     first.length = box.length / 2;
     first.along = box.along - box.length / 4;
     first.hand = true;
-    first.check = .none;
+    first.check = null;
     var second = first;
     second.along = box.along + box.length / 4;
     state.boxes.items[index] = first;
@@ -1736,6 +1753,7 @@ fn deleteFrame(state: *State, index: usize) void {
 /// the frames, and the roll numbers them, in this order.
 fn sortBoxes(state: *State) void {
     const boxes = state.boxes.items;
+    if (boxes.len < 2) return;
     // Insertion sort: the boxes are few, and nearly always in order already.
     for (1..boxes.len) |i| {
         var j = i;
@@ -1862,7 +1880,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         };
     }
     state.queue.clearRetainingCapacity();
-    state.queue.appendNTimes(gpa, .{}, jobs.len) catch {
+    state.queue.appendNTimes(gpa, .waiting, jobs.len) catch {
         gpa.free(jobs);
         return;
     };
@@ -1903,7 +1921,7 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
 
     const worker = state.worker;
     for (0..count) |i| {
-        const item: QueueItem = if (i < state.queue.items.len) state.queue.items[i] else .{};
+        const item: QueueItem = if (i < state.queue.items.len) state.queue.items[i] else .waiting;
         c.ImGui_PushIDInt(@intCast(i));
         const row = drawQueueRow(list, x, y, width, i, item, worker);
         c.ImGui_PopID();
@@ -1918,7 +1936,7 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
                 break :failed false;
             };
             if (opened) {
-                ctx.develop.openForCrop(ctx.gpa, ctx.io, ctx.library, item.frame.?);
+                ctx.develop.openForCrop(ctx.gpa, ctx.io, ctx.library, item.check_crop);
                 next = .develop;
             }
         };
@@ -1948,9 +1966,12 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
     const pad_x = gui.px(queue_row_padding_x);
     const pad_y = gui.px(queue_row_padding_y);
     const line = gui.lineHeight();
-    const running = item.status == .scanning;
+    const running = item == .scanning;
     const height = 2 * pad_y + line + if (running) gui.px(group_gap + progress_height) else 0;
-    const filled = item.status != .waiting and item.status != .cancelled;
+    const filled = switch (item) {
+        .waiting, .cancelled => false,
+        .scanning, .checking, .done, .check_crop, .failed => true,
+    };
     if (filled) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.raised), gui.px(5), 0);
     if (running) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + gui.px(2), y + height), theme.imU32(theme.accent), gui.px(5), c.ImDrawFlags_RoundCornersLeft);
 
@@ -1960,25 +1981,25 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
     c.ImDrawList_AddText(list, gui.vec2(x + pad_x, text_y), theme.imU32(ink), gui.print("{d}", .{index + 1}));
     fonts.pop();
     const finishing = if (worker) |w| w.phase.load(.acquire) == .finishing else false;
-    const label: []const u8 = switch (item.status) {
+    const label: []const u8 = switch (item) {
         .waiting => "Waiting",
         .scanning => if (finishing) "Finishing" else if (worker != null and worker.?.progress.total.load(.acquire) == 0) "Starting" else "Scanning",
         .checking => "Checking edges",
         .done => "Scanned, base measured",
         .check_crop => "Scanned · crop to check",
-        .failed => gui.print("Failed: {s}", .{errorText(item.err)}),
+        .failed => |err| gui.print("Failed: {s}", .{errorText(err)}),
         .cancelled => "Canceled",
     };
     const text_x = x + pad_x + gui.px(number_column + 10);
     c.ImDrawList_AddText(list, gui.vec2(text_x, text_y), theme.imU32(ink), gui.elideEnd(label, x + width - pad_x - text_x - gui.px(48)));
     const right = x + width - pad_x;
     var check = false;
-    switch (item.status) {
+    switch (item) {
         .done => drawTick(list, gui.vec2(right - gui.px(14), y + pad_y + (line - gui.px(14)) / 2), theme.ready),
         // Its edges weren't found again on the scan, so show a link to the frame's crop in
         // Develop. The link works while the rest of the queue scans, since the frame is already in
         // the roll.
-        .check_crop => if (item.frame != null) {
+        .check_crop => {
             const link = "Check";
             const link_width = c.ImGui_CalcTextSize(link).x;
             const link_at = gui.vec2(right - link_width, text_y);
@@ -1991,8 +2012,8 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             }
             c.ImDrawList_AddText(list, link_at, theme.imU32(if (hovered) theme.text else theme.accent), link);
         },
-        .scanning => {
-            const seconds = (c.SDL_GetTicks() -| item.started) / 1000;
+        .scanning => |started| {
+            const seconds = (c.SDL_GetTicks() -| started) / 1000;
             fonts.push(.mono);
             const time = gui.print("{d}:{d:0>2}", .{ seconds / 60, seconds % 60 });
             c.ImDrawList_AddText(list, gui.vec2(right - c.ImGui_CalcTextSize(time).x, text_y), theme.imU32(theme.text_secondary), time);
@@ -2001,13 +2022,12 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             const done = if (worker) |w| w.progress.fraction() else 0;
             gui.progressBar(list, gui.vec2(x + pad_x, bar_y), gui.vec2(right, bar_y + gui.px(progress_height)), done);
         },
-        else => {},
+        .waiting, .checking, .failed, .cancelled => {},
     }
     return .{ .height = height, .check = check };
 }
 
-fn errorText(err: ?anyerror) []const u8 {
-    const e = err orelse return "unknown";
+fn errorText(e: anyerror) []const u8 {
     return switch (e) {
         error.Busy => "scanner busy",
         error.Jammed => "jammed",

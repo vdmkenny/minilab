@@ -268,8 +268,9 @@ pub const Match = struct {
             for (grays, 0..) |g, i| {
                 const ours = g orelse continue;
                 const best = try register.coarse(gpa, ours, &pyramid);
-                if (best[0].quality > quality.*) {
-                    quality.* = best[0].quality;
+                const top = best[0] orelse continue;
+                if (top.quality > quality.*) {
+                    quality.* = top.quality;
                     found.* = i;
                 }
             }
