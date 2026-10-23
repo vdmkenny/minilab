@@ -4,6 +4,7 @@ const std = @import("std");
 const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
+const icon = @import("../platform/icon.zig");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
@@ -102,6 +103,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         }
         gui.newFrame();
         const keys = shortcuts.poll();
+        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice };
         for (std.enums.values(Workspace)) |w| {
             if (keys.contains(w.command())) workspace = w;
         }
@@ -128,13 +130,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
         // Scan.
         if (options.screenshot == null or workspace == .scan) {
-            scan_view.update(&scan, .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
+            scan_view.update(&scan, ctx);
         }
         const dropped = window.dropped.files();
         const drop: ?gui.Vec2 = if (dropped.len > 0) gui.vec2(window.dropped.position[0], window.dropped.position[1]) else null;
         if (dropped.len > 0 and workspace == .looks) {
             // Reference images for the look being fitted.
-            looks.addFiles(.{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice }, dropped);
+            looks.addFiles(ctx, dropped);
         } else if (dropped.len > 0 and workspace != .rolls) {
             dropScans(gpa, io, &library, &develop, dropped, &notice);
             workspace = .develop;
@@ -148,7 +150,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_PopStyleVar();
         if (panels != .viewer) drawHeader(&workspace, &notice, &library, &develop, scan_view.status(&scan));
         // When an export finishes, the user hears about it whichever workspace they're in.
-        exporting.poll(.{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
+        exporting.poll(ctx);
         // Each workspace gets its own ID space. Develop and Export both have "settings" panels,
         // which would otherwise be the same child window, sharing one scroll position.
         c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
@@ -178,9 +180,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
                     } else |err| notice.set("Can't move {s} to Trash · {t}", .{ name, err });
                 },
             },
-            .develop => develop_view.draw(&develop, gpa, io, &library, window.gpu, panels == .all),
+            .develop => develop_view.draw(&develop, ctx, panels == .all),
             .scan, .@"export", .looks => {
-                const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice };
                 const next = switch (workspace) {
                     .scan => scan_view.draw(&scan, ctx),
                     .@"export" => export_view.draw(&exporting, ctx),
@@ -274,7 +275,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
 
     // The workspaces, as tabs.
     var x = version_x + version_size.x + gui.px(20);
-    const tab_height = c.ImGui_GetTextLineHeight() * 1.4 + gui.px(16);
+    const tab_height = gui.lineHeight() + gui.px(16);
     for (std.enums.values(Workspace)) |w| {
         const label = w.label();
         const tab_width = c.ImGui_CalcTextSize(label).x + gui.px(24);
@@ -321,21 +322,18 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + height));
 }
 
-/// Draws the app's mark, 20 pixels square, at `corner`: a frame of film with perforations above
-/// and below.
+/// Draws the app's mark, the icon's film strip, 20 pixels square at `corner`.
 fn drawMark(list: *c.ImDrawList, corner: gui.Vec2) void {
     const ink = theme.imU32(theme.accent);
-    const thickness = gui.px(1.5);
+    const thickness = gui.px(icon.stroke);
     const p = struct {
-        fn at(o: gui.Vec2, x: f32, y: f32) gui.Vec2 {
-            return gui.vec2(o.x + gui.px(x), o.y + gui.px(y));
+        fn at(o: gui.Vec2, point: [2]f32) gui.Vec2 {
+            return gui.vec2(o.x + gui.px(point[0]), o.y + gui.px(point[1]));
         }
     }.at;
-    c.ImDrawList_AddRectEx(list, p(corner, 2, 4), p(corner, 18, 16), ink, gui.px(1.5), thickness, 0);
-    c.ImDrawList_AddLineEx(list, p(corner, 2, 7), p(corner, 18, 7), ink, thickness);
-    c.ImDrawList_AddLineEx(list, p(corner, 2, 13), p(corner, 18, 13), ink, thickness);
-    for ([_]f32{ 5, 9, 13 }) |x| {
-        c.ImDrawList_AddLineEx(list, p(corner, x, 4), p(corner, x, 7), ink, thickness);
-        c.ImDrawList_AddLineEx(list, p(corner, x, 13), p(corner, x, 16), ink, thickness);
-    }
+    const o = icon.outline;
+    const min = p(corner, .{ o.centre[0] - o.half[0], o.centre[1] - o.half[1] });
+    const max = p(corner, .{ o.centre[0] + o.half[0], o.centre[1] + o.half[1] });
+    c.ImDrawList_AddRectEx(list, min, max, ink, gui.px(o.radius), thickness, 0);
+    for (icon.segments) |s| c.ImDrawList_AddLineEx(list, p(corner, s[0]), p(corner, s[1]), ink, thickness);
 }

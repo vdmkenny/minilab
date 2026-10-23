@@ -13,6 +13,7 @@ const Texture = @import("../platform/texture.zig").Texture;
 const Frame = @import("frame.zig").Frame;
 const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
+const context = @import("context.zig");
 const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
@@ -156,8 +157,6 @@ pub const State = struct {
     /// The dialog for importing a .cube file as a look.
     cube_dialog: Dialog = .{ .filters = &file_dialog.cube_files },
     /// Why the last .cube didn't import. It's cleared when another look is chosen.
-    import_failed: ?anyerror = null,
-
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         state.look_choices.deinit(gpa);
         state.cube_dialog.deinit(gpa);
@@ -282,7 +281,7 @@ pub const State = struct {
         if (state.committed) |before| state.undo.push(before);
         state.redo = .{};
         state.committed = .of(&frame);
-        state.write(io, library);
+        state.write(io, library, .all);
     }
 
     /// Goes back to the settings before the last change, or forward again after undoing.
@@ -296,7 +295,7 @@ pub const State = struct {
         frame.settings = snapshot.settings;
         frame.stale = true;
         state.committed = snapshot;
-        state.write(io, library);
+        state.write(io, library, .all);
     }
 
     /// Gives the frame the settings in `snapshot`, adapted to this frame: it keeps its own film
@@ -321,15 +320,18 @@ pub const State = struct {
         state.changed();
     }
 
-    /// Writes the frame's settings to its roll, and marks it as developed.
-    fn write(state: *State, io: std.Io, library: *Library) void {
+    /// Writes the frame back to its roll: its crop and turns, and with `.all` its look and
+    /// settings too, which marks it as developed.
+    fn write(state: *State, io: std.Io, library: *Library, what: enum { geometry, all }) void {
         const frame = state.frame orelse return;
         const r = state.rollIndex(library) orelse return;
         const index = state.selected orelse return;
         const saved = &library.rolls.items[r].frames.items[index];
-        saved.look = frame.look;
-        saved.settings = frame.settings;
-        saved.developed = true;
+        if (what == .all) {
+            saved.look = frame.look;
+            saved.settings = frame.settings;
+            saved.developed = true;
+        }
         // The crop tool shows the whole scan, but the frame's crop is still the one it started
         // with.
         if (state.cropping) |edit| {
@@ -345,25 +347,10 @@ pub const State = struct {
         library.invalidate(.{ .roll = r, .frame = index });
     }
 
-    /// Writes the frame's crop and turns to its roll, without marking it as developed.
-    fn writeGeometry(state: *State, io: std.Io, library: *Library) void {
-        const frame = state.frame orelse return;
-        const r = state.rollIndex(library) orelse return;
-        const index = state.selected orelse return;
-        const saved = &library.rolls.items[r].frames.items[index];
-        // The crop tool shows the whole scan, but the frame's crop is still the one it started
-        // with.
-        if (state.cropping) |edit| {
-            saved.crop = edit.before;
-            saved.quarter_turns = edit.turns;
-            saved.mirrored = edit.mirrored;
-        } else {
-            saved.crop = frame.crop;
-            saved.quarter_turns = frame.quarter_turns;
-            saved.mirrored = frame.mirrored;
-        }
-        library.rolls.items[r].saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
-        library.invalidate(.{ .roll = r, .frame = index });
+    /// Marks what the viewer shows, and the negative, as out of date.
+    fn markStale(state: *State) void {
+        state.shown_stale = true;
+        state.negative_stale = true;
     }
 
     /// The roll's format, or 135 full frame for a scan opened outside any roll.
@@ -389,8 +376,7 @@ pub const State = struct {
         const mirrored = frame.mirrored;
         const before = frame.crop;
         try frame.setGeometry(gpa, null, 0, false);
-        state.shown_stale = true;
-        state.negative_stale = true;
+        state.markStale();
         const scale: f32 = @floatCast(frame.scale());
         state.cropping = .{
             .min = .{ @as(f32, @floatFromInt(area.x)) / scale, @as(f32, @floatFromInt(area.y)) / scale },
@@ -407,8 +393,7 @@ pub const State = struct {
         const edit = state.cropping orelse return;
         state.cropping = null;
         const frame = if (state.frame) |*f| f else return;
-        state.shown_stale = true;
-        state.negative_stale = true;
+        state.markStale();
         if (!keep) return frame.setGeometry(gpa, edit.before, edit.turns, edit.mirrored);
         const scale: f32 = @floatCast(frame.scale());
         const x: usize = @intFromFloat(@max(0, @round(edit.min[0] * scale)));
@@ -432,8 +417,7 @@ pub const State = struct {
         }
         const frame = if (state.frame) |*f| f else return;
         try frame.setGeometry(gpa, frame.crop, frame.quarter_turns +% quarter_turns, frame.mirrored);
-        state.shown_stale = true;
-        state.negative_stale = true;
+        state.markStale();
         state.afterGeometry(io, library);
     }
 
@@ -450,8 +434,7 @@ pub const State = struct {
         const frame = if (state.frame) |*f| f else return;
         const turns = oppositeTurns(frame.quarter_turns);
         try frame.setGeometry(gpa, frame.crop, turns, !frame.mirrored);
-        state.shown_stale = true;
-        state.negative_stale = true;
+        state.markStale();
         state.afterGeometry(io, library);
     }
 
@@ -466,7 +449,7 @@ pub const State = struct {
             // to the old values.
             state.committed = .of(frame);
         }
-        state.writeGeometry(io, library);
+        state.write(io, library, .geometry);
     }
 
     /// Loads the selected frame if it isn't loaded yet, for another workspace that shows it.
@@ -531,8 +514,7 @@ pub const State = struct {
         try state.shown.resize(gpa, frame.rendered.len);
         state.committed = .of(&frame);
         state.frame = frame;
-        state.shown_stale = true;
-        state.negative_stale = true;
+        state.markStale();
     }
 
     /// Re-renders the frame if its settings changed, and puts what the viewer shows on the GPU.
@@ -574,11 +556,7 @@ pub const State = struct {
     /// way to import another .cube.
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
-        c.ImGui_SetNextItemWidth(-std.math.floatMin(f32));
-        c.ImGui_SetNextWindowSizeConstraints(gui.vec2(0, 0), gui.vec2(std.math.floatMax(f32), gui.px(360)), null, null);
-        const open = c.ImGui_BeginCombo("##look", gui.print("{s}", .{frame.look.label()}).ptr, c.ImGuiComboFlags_NoArrowButton | c.ImGuiComboFlags_HeightLargest);
-        gui.chevron();
-        if (!open) return;
+        if (!gui.beginCombo("look", frame.look.label(), 0, .tall)) return;
         defer c.ImGui_EndCombo();
         if (c.ImGui_IsWindowAppearing()) {
             state.look_choices.deinit(gpa);
@@ -637,7 +615,6 @@ pub const State = struct {
 
     fn setLook(state: *State, frame: *Frame, id: look.Id) void {
         frame.look = id;
-        state.import_failed = null;
         state.changed();
     }
 
@@ -721,21 +698,11 @@ pub const State = struct {
     }
 
     /// Imports the .cube files chosen in the dialog, and gives the frame the last one.
-    fn importCubes(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
-        const chosen = state.cube_dialog.take(gpa, io);
-        defer Dialog.free(gpa, chosen);
-        for (chosen) |path| {
-            const id = library.looks.import(gpa, io, path) catch |err| {
-                std.log.err("can't import {s}: {t}", .{ path, err });
-                state.import_failed = err;
-                continue;
-            };
-            state.import_failed = null;
-            if (state.frame) |*f| {
-                f.look = id;
-                state.changed();
-            }
-        }
+    fn importCubes(state: *State, ctx: context.Context) void {
+        const chosen = state.cube_dialog.take(ctx.gpa, ctx.io);
+        defer Dialog.free(ctx.gpa, chosen);
+        const id = ctx.importCubes(chosen) orelse return;
+        if (state.frame) |*f| state.setLook(f, id);
     }
 
     /// The settings changed: render again, and save once the control is let go.
@@ -870,13 +837,17 @@ fn upload(texture: *?Texture, gpu: *c.SDL_GPUDevice, width: u32, height: u32, pi
 }
 
 /// Draws the workspace. Without `sides`, it draws just the viewer.
-pub fn draw(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, sides: bool) void {
+pub fn draw(state: *State, ctx: context.Context, sides: bool) void {
+    const gpa = ctx.gpa;
+    const io = ctx.io;
+    const library = ctx.library;
+    const gpu = ctx.gpu;
     state.ensureFrame(gpa, io, library);
     if (state.crop_on_open and state.frame != null) {
         state.crop_on_open = false;
         if (state.cropping == null) state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
     }
-    state.importCubes(gpa, io, library);
+    state.importCubes(ctx);
     state.refresh(gpa, io, library, gpu) catch |err| std.log.err("rendering failed: {t}", .{err});
     const roll_index = state.rollIndex(library);
 
@@ -963,7 +934,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             const selected = state.selected == i;
             gui.outline(corner, far, if (selected) theme.accent else theme.border, gui.px(3), if (selected) gui.px(2) else 1);
             fonts.pushSized(.mono, 10);
-            const number = gui.print("{d:0>2}", .{i + 1});
+            const number = labels.frameNumber(i);
             const size = c.ImGui_CalcTextSize(number);
             const label_min = gui.vec2(corner.x + gui.px(4), far.y - gui.px(3) - size.y);
             c.ImDrawList_AddRectFilledEx(list, label_min, gui.vec2(label_min.x + size.x + gui.px(6), far.y - gui.px(3)), theme.imU32(theme.withAlpha(theme.header, 0.75)), gui.px(2), 0);
@@ -1009,7 +980,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const list = c.ImGui_GetWindowDrawList();
     // The tallest thing on the toolbar is the Split / Negative / Positive box.
     const toolbar_height = gui.px(26 + 6 + 16) + 1;
-    const info_height = gui.px(12 * 1.4 + 16) + 1;
+    const info_height = gui.lineFor(12) + gui.px(16) + 1;
 
     // The toolbar.
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + size.x, origin.y + toolbar_height), theme.imU32(theme.page));
@@ -1149,10 +1120,7 @@ fn drawRating(state: *State, io: std.Io, library: *Library, list: *c.ImDrawList,
     const reject_hovered = c.ImGui_IsItemHovered(0);
     if (current.rejected) shortcuts.tooltip("Clear reject", .unreject) else shortcuts.tooltip("Reject", .reject);
     const cross = if (current.rejected) theme.red else if (reject_hovered) theme.text else theme.text_tertiary;
-    const inset = size * 0.2;
-    const thickness = gui.px(1.6);
-    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + inset, top + inset), gui.vec2(reject_x + size - inset, top + size - inset), theme.imU32(cross), thickness);
-    c.ImDrawList_AddLineEx(list, gui.vec2(reject_x + size - inset, top + inset), gui.vec2(reject_x + inset, top + size - inset), theme.imU32(cross), thickness);
+    gui.cross(list, gui.vec2(reject_x + size / 2, top + size / 2), size * 0.3, gui.px(1.6), cross);
 
     // The stars, left to right. Hovering one shows what a click would give.
     const step = size + gui.px(rating_gap);
@@ -1335,9 +1303,7 @@ fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(1.5), theme.imU32(theme.header), 96, gui.px(3));
     c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.text), 96, gui.px(1.5));
     const mark = gui.px(5);
-    const ink = theme.imU32(theme.withAlpha(theme.text, 0.7));
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - mark, centre.y), gui.vec2(centre.x + mark, centre.y), ink, 1);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, centre.y - mark), gui.vec2(centre.x, centre.y + mark), ink, 1);
+    gui.plus(list, centre, mark, 1, theme.withAlpha(theme.text, 0.7));
 }
 
 /// The smallest crop box, in preview pixels.
@@ -1528,10 +1494,6 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         drawStock(state, gpa, io, library, roll_index);
         gui.rowLabel("Look");
         state.drawLook(gpa, io, library);
-        if (state.import_failed) |err| {
-            gui.rowLabel("");
-            gui.paragraph(theme.text_tertiary, gui.print("LUT not imported: {s}", .{importError(err)}));
-        }
         gui.rowLabel("Tone");
         c.ImGui_BeginDisabled(fitted);
         const tones = comptime std.enums.values(develop.Tone);
@@ -1623,11 +1585,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
     if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Shooting light");
-    const shown = gui.print("{d:.0} K", .{kelvin.*});
-    gui.valueText(shown);
-    c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
-    const at = c.ImGui_GetCursorScreenPos();
-    if (gui.resetButton("reset", gui.vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - gui.px(gui.reset_size)) / 2), shown, gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
+    if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
         changed = true;
     }
@@ -1777,7 +1735,7 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
             rl.saveFrame(io, i) catch |err| std.log.err("can't save frame {d}: {t}", .{ i + 1, err });
             library.invalidate(.{ .roll = r, .frame = i });
         }
-        state.write(io, library);
+        state.write(io, library, .all);
         if (failed > 0) std.log.warn("{d} frames weren't synced", .{failed});
         c.ImGui_CloseCurrentPopup();
     }
@@ -1897,20 +1855,6 @@ fn drawHistogram(frame: *Frame) void {
         }
     }
     c.ImGui_Dummy(gui.vec2(width, height));
-}
-
-/// Why a .cube file didn't import, in words for the user.
-fn importError(err: anyerror) []const u8 {
-    return switch (err) {
-        error.NotACube => "not a .cube LUT",
-        error.BadSize => "size outside 2 to 129 points a side",
-        error.Truncated => "file ends early",
-        error.TooMuchData => "more values than its size",
-        error.InvalidNumber => "value not a number",
-        error.FileTooBig => "over 64 MB",
-        error.NoLibrary => "no library open",
-        else => @errorName(err),
-    };
 }
 
 test "Sync gives the chosen groups and leaves each frame its own density" {

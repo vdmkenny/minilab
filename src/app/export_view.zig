@@ -11,6 +11,7 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
+const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
@@ -46,9 +47,9 @@ const field_name_capacity = 64;
 const metadata_check = 13;
 const export_height = 40;
 const section_padding = 12;
-/// Line heights: the design sets lines at 1.4 times the text size.
-const line = 13 * 1.4;
-const small_line = 12 * 1.4;
+/// Line heights, in the design's pixels, for 13-pixel text and headings.
+const line = fonts.ui_size * gui.line_spacing;
+const small_line = gui.heading_size * gui.line_spacing;
 
 const path_field = 1024;
 
@@ -369,12 +370,8 @@ fn drawNoRoll() ?context.Workspace {
     fonts.pushSized(.semibold, title_size);
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), "Export");
     fonts.pop();
-    at.y += gui.px(title_size * 1.4 + block_gap);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), "No roll open");
-    at.y += gui.px(line + block_gap);
-    c.ImGui_SetCursorScreenPos(at);
-    const width = c.ImGui_CalcTextSize("Go to Rolls").x / gui.scale + 24 + 2;
-    const go = gui.buttonOf(.normal, "Go to Rolls", gui.vec2(width, control_height));
+    at.y += gui.lineFor(title_size) + gui.px(block_gap);
+    const go = gui.noRoll(at);
     shortcuts.tooltip("Rolls", .rolls);
     return if (go) .rolls else null;
 }
@@ -434,23 +431,8 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
     shortcuts.tooltip("Select all", .select_all);
     c.ImGui_SetCursorScreenPos(gui.vec2(right - none_width, top));
-    if (outlineButton("Select none", gui.vec2(none_width, height))) state.selectAll(false);
+    if (gui.buttonOf(.secondary, "Select none", gui.vec2(none_width / gui.scale, height / gui.scale))) state.selectAll(false);
     shortcuts.tooltip("Select none", .select_none);
-}
-
-/// A button with a border and no fill, and its label in the secondary colour: the design's
-/// quieter button. `size` is in screen pixels.
-fn outlineButton(label: [:0]const u8, size: gui.Vec2) bool {
-    const corner = c.ImGui_GetCursorScreenPos();
-    const clicked = c.ImGui_InvisibleButton(label, size, 0);
-    const hovered = c.ImGui_IsItemHovered(0);
-    const list = c.ImGui_GetWindowDrawList();
-    const far = gui.vec2(corner.x + size.x, corner.y + size.y);
-    if (hovered) c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control_hover), gui.px(5), 0);
-    c.ImDrawList_AddRectEx(list, corner, far, theme.imU32(theme.border), gui.px(5), 1, 0);
-    const text_size = c.ImGui_CalcTextSize(label);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + (size.x - text_size.x) / 2, corner.y + (size.y - text_size.y) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
-    return clicked;
 }
 
 /// Draws the frames as cards, in as many columns of at least 150 pixels as fit. A click picks or
@@ -512,7 +494,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         // The number and the check box under the picture.
         const label_top = picture_max.y + gui.px(cell_padding);
         fonts.pushSized(.mono, 12);
-        const number = gui.print("{d:0>2}", .{i + 1});
+        const number = labels.frameNumber(i);
         const number_end = picture_min.x + gui.px(2) + c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
         fonts.pop();
@@ -570,9 +552,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
         // The progress bar, on the second line.
         const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), theme.imU32(theme.border), gui.px(2), 0);
-        const done = (right - x) * std.math.clamp(batch.progress(), 0, 1);
-        if (done > 0) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, bar_y), gui.vec2(x + done, bar_y + gui.px(4)), theme.imU32(theme.accent), gui.px(2), 0);
+        gui.progressBar(list, gui.vec2(x, bar_y), gui.vec2(right, bar_y + gui.px(4)), batch.progress());
         return;
     }
 
@@ -640,11 +620,11 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     const running = state.running != null;
 
     // FILE.
-    heading(list, gui.vec2(x, y), "FILE");
+    _ = gui.headingAt(list, x, y, "FILE");
     y += gui.px(small_line + block_gap);
     y = drawFileChoices(state, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, formatNote(state));
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, formatNote(state));
     y += gui.px(block_gap);
 
     c.ImGui_BeginDisabled(running);
@@ -653,11 +633,11 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
 
     // METADATA.
     y += gui.px(block_gap + 6);
-    heading(list, gui.vec2(x, y), "METADATA");
+    _ = gui.headingAt(list, x, y, "METADATA");
     y += gui.px(small_line + block_gap);
     y = drawMetadata(state, ctx, roll_index, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
 
     // Export, at the bottom.
     const button_y = @max(y + gui.px(block_gap), origin.y + height - gui.px(panel_padding + export_height));
@@ -675,38 +655,6 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, button_y + gui.px(export_height + panel_padding)));
     c.ImGui_Dummy(gui.vec2(0, 0));
-}
-
-/// Draws a section heading at `at`, on the 12-pixel line the design gives it.
-fn heading(list: *c.ImDrawList, at: gui.Vec2, label: [:0]const u8) void {
-    fonts.pushSized(.semibold, 12);
-    c.ImDrawList_AddText(list, gui.vec2(at.x, at.y + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
-    fonts.pop();
-}
-
-/// Draws `text` from `at`, wrapped at `width`, with the design's line height. Returns its height.
-fn wrapped(list: *c.ImDrawList, at: gui.Vec2, width: f32, colour: theme.Color, text: []const u8) f32 {
-    var y = at.y;
-    var rest = std.mem.trim(u8, text, " ");
-    const offset = (gui.px(line) - c.ImGui_GetFontSize()) / 2;
-    while (rest.len > 0) {
-        // The longest run of whole words that fits. A word longer than the line gets a line of
-        // its own.
-        var end: usize = rest.len;
-        if (c.ImGui_CalcTextSize(gui.print("{s}", .{rest})).x > width) {
-            var fits: usize = 0;
-            var i: usize = 0;
-            while (std.mem.indexOfScalarPos(u8, rest, i, ' ')) |space| : (i = space + 1) {
-                if (c.ImGui_CalcTextSize(gui.print("{s}", .{rest[0..space]})).x > width) break;
-                fits = space;
-            }
-            end = if (fits > 0) fits else std.mem.indexOfScalar(u8, rest, ' ') orelse rest.len;
-        }
-        c.ImDrawList_AddText(list, gui.vec2(at.x, y + offset), theme.imU32(colour), gui.print("{s}", .{rest[0..end]}));
-        y += gui.px(line);
-        rest = std.mem.trimStart(u8, rest[end..], " ");
-    }
-    return y - at.y;
 }
 
 /// Draws the file choices (TIFF 16-bit, TIFF 8-bit, JPEG and HEIC HDR) as pills that wrap.
@@ -827,7 +775,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
             error.UnknownField => "Unknown field",
             error.UnclosedBrace => "Unclosed brace",
         };
-        y += wrapped(list, gui.vec2(control_x, y), control_width, theme.accent, problem);
+        y += gui.paragraphAt(list, control_x, y, control_width, theme.accent, problem);
         y -= gui.px(line) - c.ImGui_GetFontSize();
     }
     y += gui.px(grid_gap);
@@ -849,7 +797,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
 
 /// Draws a grid row's label, centred in the row's height.
 fn rowLabel(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8) void {
-    c.ImDrawList_AddText(list, gui.vec2(x, y + (gui.px(control_height) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), label);
+    gui.textIn(list, x, y, gui.px(control_height), theme.text_secondary, label);
 }
 
 /// Opens the system's folder dialog, starting at the folder that's chosen now.
@@ -936,10 +884,7 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
         const hovered = c.ImGui_IsItemHovered(0);
         if (hovered) c.ImGui_SetTooltip("Remove");
         const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
-        const arm = gui.px(4);
-        const ink = theme.imU32(if (hovered) theme.text else theme.text_tertiary);
-        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - arm, centre.y - arm), gui.vec2(centre.x + arm, centre.y + arm), ink, gui.px(1.5));
-        c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + arm, centre.y - arm), gui.vec2(centre.x - arm, centre.y + arm), ink, gui.px(1.5));
+        gui.cross(list, centre, gui.px(4), gui.px(1.5), if (hovered) theme.text else theme.text_tertiary);
         y += row + gui.px(metadata_gap);
     }
     if (add) state.focus_new_field = true;
@@ -965,13 +910,7 @@ fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag:
     if (c.ImGui_InvisibleButton(gui.print("{s}##check", .{label}), gui.vec2(gui.px(22 + 6 + 100), row), 0)) flag.* = !flag.*;
     const hovered = c.ImGui_IsItemHovered(0);
     const box = gui.vec2(x + gui.px(4), y + (row - gui.px(metadata_check)) / 2);
-    if (flag.*) {
-        drawCheck(list, box, gui.px(metadata_check), true);
-    } else {
-        const far = gui.vec2(box.x + gui.px(metadata_check), box.y + gui.px(metadata_check));
-        c.ImDrawList_AddRectFilledEx(list, box, far, theme.imU32(if (hovered) theme.control_hover else theme.control), gui.px(3), 0);
-        c.ImDrawList_AddRectEx(list, box, far, theme.imU32(theme.track), gui.px(3), 1, 0);
-    }
+    gui.checkBox(list, box, gui.px(metadata_check), flag.*, hovered);
     c.ImDrawList_AddText(list, gui.vec2(x + gui.px(22 + 6), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.text else theme.text_secondary), label);
 }
 

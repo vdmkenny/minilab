@@ -15,18 +15,18 @@ const corner = 0.225;
 /// How much of the tile the logo's 20-unit box takes up.
 const logo_share = 0.8;
 /// The logo's drawing, in its own 20-unit box: the stroke width and the film strip. The strip is
-/// an outline, two rails along it, and the frame edges between each rail and the outline, the same
-/// as the logo in the app's header.
-const logo_box = 20.0;
-const stroke = 1.5;
+/// an outline, two rails along it, and the frame edges between each rail and the outline. The
+/// app's header draws it from these too.
+pub const logo_box = 20.0;
+pub const stroke = 1.5;
 /// The thinnest we draw a stroke, in pixels, so the lines don't vanish at small sizes.
 const min_stroke_px = 1.2;
-const outline = struct {
-    const centre = [2]f32{ 10, 10 };
-    const half = [2]f32{ 8, 6 };
-    const radius = 1.5;
+pub const outline = struct {
+    pub const centre = [2]f32{ 10, 10 };
+    pub const half = [2]f32{ 8, 6 };
+    pub const radius = 1.5;
 };
-const segments = [_][2][2]f32{
+pub const segments = [_][2][2]f32{
     .{ .{ 2, 7 }, .{ 18, 7 } },
     .{ .{ 2, 13 }, .{ 18, 13 } },
     .{ .{ 5, 4 }, .{ 5, 7 } },

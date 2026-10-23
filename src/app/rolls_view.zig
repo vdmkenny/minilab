@@ -10,6 +10,7 @@ const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
+const holes = @import("holes.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
 const roll = minilab.roll;
@@ -231,12 +232,9 @@ fn drawTitleRow(state: *State, library: *Library) void {
     // The plus sign, then the label, laid out as in the design: 12 pixels in, a 14-pixel icon,
     // then a 6-pixel gap.
     const list = c.ImGui_GetWindowDrawList();
-    const ink = theme.imU32(theme.on_accent);
-    const plus = gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2);
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x - gui.px(5), plus.y), gui.vec2(plus.x + gui.px(5), plus.y), ink, gui.px(1.8));
-    c.ImDrawList_AddLineEx(list, gui.vec2(plus.x, plus.y - gui.px(5)), gui.vec2(plus.x, plus.y + gui.px(5)), ink, gui.px(1.8));
+    gui.plus(list, gui.vec2(corner.x + gui.px(12 + 7), corner.y + height / 2), gui.px(5), gui.px(1.8), theme.on_accent);
     fonts.push(.semibold);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(12 + 14 + 6), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), ink, new_label);
+    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(12 + 14 + 6), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.on_accent), new_label);
     fonts.pop();
 }
 
@@ -280,7 +278,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     var action: ?Action = null;
     const origin = c.ImGui_GetCursorScreenPos();
     const list = c.ImGui_GetWindowDrawList();
-    const line = c.ImGui_GetTextLineHeight() * 1.4;
+    const line = gui.lineHeight();
     const card_height = gui.px(card_padding_y * 2 + 21 + 17 + 3 * 3 + 6 + 3 + 3) + line * 3;
     const format = r.info.format.format();
 
@@ -308,11 +306,8 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const bar_y = origin.y + card_height - gui.px(card_padding_y + 3);
     c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(3) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
     const bar_width = gui.px(card_width - 2 * card_padding_x);
-    c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(3)), theme.imU32(theme.border), gui.px(2), 0);
-    if (total > 0 and developed > 0) {
-        const done = bar_width * @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
-        c.ImDrawList_AddRectFilledEx(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + done, bar_y + gui.px(3)), theme.imU32(theme.accent), gui.px(2), 0);
-    }
+    const share = if (total == 0) 0 else @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
+    gui.progressBar(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(3)), share);
 
     // Delete, in the card's top right corner while the mouse is over the card.
     const mouse = c.ImGui_GetMousePos();
@@ -356,7 +351,13 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const film_ink = theme.imU32(theme.film);
     if (shown > 0 and !sheets) {
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(strip_x, strip_top), gui.vec2(strip_end, strip_top + band), film_ink, gui.px(2), 0);
-        drawHoles(list, format.size, strip_x, strip_end, strip_top, band, per_mm, strip_x + leader, step, shown);
+        // Punched in the page's colour, so they look cut out.
+        const strip: holes.Strip = .{ .axis = .x, .start = strip_x, .end = strip_end, .near = strip_top, .far = strip_top + band, .along_per_mm = per_mm, .across_per_mm = per_mm };
+        switch (format.size.holes()) {
+            .none => {},
+            .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.page),
+            .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.page),
+        }
     }
 
     var x = strip_x + if (sheets) 0 else leader;
@@ -376,7 +377,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
             c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(1), 0);
         }
         fonts.pushSized(.mono, 11);
-        const number = gui.print("{d:0>2}", .{frame + 1});
+        const number = labels.frameNumber(frame);
         const number_width = c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.text_tertiary), number);
         fonts.pop();
@@ -424,40 +425,6 @@ fn drawBin(list: *c.ImDrawList, centre: gui.Vec2, half: f32, colour: theme.Color
     }
 }
 
-/// Punches the film's holes into a strip from `left` to `right`, `band` high: rows along both
-/// edges, or one or two along the top edge at the start of each of `frames` frames, the first at
-/// `first_frame` and the rest `step` apart. They're drawn in the page's colour, so they look cut out.
-fn drawHoles(list: *c.ImDrawList, size: formats.FilmSize, left: f32, right: f32, top: f32, band: f32, per_mm: f32, first_frame: f32, step: f32, frames: usize) void {
-    const ink = theme.imU32(theme.page);
-    switch (size.holes()) {
-        .none => {},
-        .rows => |p| {
-            const pitch = p.pitch_mm * per_mm;
-            const length = p.length_mm * per_mm;
-            const across = p.height_mm * per_mm;
-            const inset = p.inset_mm * per_mm;
-            const radius = @min(length, across) / 4;
-            var at = left + (pitch - length) / 2;
-            while (at + length <= right) : (at += pitch) {
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + inset), gui.vec2(at + length, top + inset + across), ink, radius, 0);
-                c.ImDrawList_AddRectFilledEx(list, gui.vec2(at, top + band - inset - across), gui.vec2(at + length, top + band - inset), ink, radius, 0);
-            }
-        },
-        .per_frame => |count| {
-            const hole = formats.registration_hole;
-            const side = hole.size_mm * per_mm;
-            const y = top + hole.inset_mm * per_mm;
-            for (0..frames) |i| {
-                const start = first_frame + @as(f32, @floatFromInt(i)) * step;
-                for (0..count) |k| {
-                    const centre = start + (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * hole.spacing_mm * per_mm;
-                    c.ImDrawList_AddRectFilledEx(list, gui.vec2(centre - side / 2, y), gui.vec2(centre + side / 2, y + side), ink, side / 4, 0);
-                }
-            }
-        },
-    }
-}
-
 /// Draws the new-roll panel. Returns the new roll's index once it's made.
 fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?Created {
     const form = &state.form;
@@ -474,9 +441,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
     const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
     const list = c.ImGui_GetWindowDrawList();
-    const ink = theme.imU32(theme.text_secondary);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x + gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x + gui.px(4), centre.y - gui.px(4)), gui.vec2(centre.x - gui.px(4), centre.y + gui.px(4)), ink, gui.px(1.6));
+    gui.cross(list, centre, gui.px(4), gui.px(1.6), theme.text_secondary);
 
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(10), gui.px(10)));
     defer c.ImGui_PopStyleVar();
@@ -516,7 +481,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     const notes_x = c.ImGui_GetCursorPosX();
     gui.textColored(theme.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
-    _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), c.ImGui_GetTextLineHeight() * 1.4 * 3 + gui.px(12)), 0, null, null);
+    _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * 3 + gui.px(12)), 0, null, null);
     gui.rowLabel("Input");
     if (gui.combo("input", &input_names, form.input, 0)) |picked| form.input = picked;
     const chosen = state.flat_dialog.take(gpa, io);

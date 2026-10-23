@@ -98,6 +98,79 @@ pub fn heading(value: []const u8) void {
     fonts.pop();
 }
 
+// Text on a draw list, for panels laid out by hand.
+
+/// The design's line height, as a multiple of the text size.
+pub const line_spacing = 1.4;
+/// A section heading's text size, in the design's pixels.
+pub const heading_size = 12;
+
+/// The height of a line of text `size` design pixels high.
+pub fn lineFor(size: f32) f32 {
+    return px(size * line_spacing);
+}
+
+/// The height of a line in the current font.
+pub fn lineHeight() f32 {
+    return c.ImGui_GetFontSize() * line_spacing;
+}
+
+/// Draws `text` in the current font, centred in a line box `height` high with its top left at
+/// `x`, `y`.
+pub fn textIn(list: *c.ImDrawList, x: f32, y: f32, height: f32, color: theme.Color, value: []const u8) void {
+    c.ImDrawList_AddText(list, vec2(x, y + (height - c.ImGui_GetFontSize()) / 2), theme.imU32(color), print("{s}", .{value}));
+}
+
+/// Draws `text` on one line in the current font, at the design's line height. Returns the line's
+/// height.
+pub fn lineAt(list: *c.ImDrawList, x: f32, y: f32, color: theme.Color, value: []const u8) f32 {
+    textIn(list, x, y, lineHeight(), color, value);
+    return lineHeight();
+}
+
+/// A section heading on a draw list, like `heading`. Returns its height.
+pub fn headingAt(list: *c.ImDrawList, x: f32, y: f32, value: []const u8) f32 {
+    fonts.pushSized(.semibold, heading_size);
+    defer fonts.pop();
+    return lineAt(list, x, y, theme.text_secondary, value);
+}
+
+/// The most lines a paragraph wraps to.
+const max_lines = 16;
+
+/// Splits `value` into the lines it wraps to at `width` in the current font, as ImGui wraps
+/// words.
+pub fn wrapLines(value: []const u8, width: f32, buffer: [][]const u8) [][]const u8 {
+    const font = c.ImGui_GetFont();
+    const size = c.ImGui_GetFontSize();
+    var n: usize = 0;
+    var rest = std.mem.trim(u8, value, " ");
+    while (rest.len > 0 and n < buffer.len) {
+        const start: [*]const u8 = rest.ptr;
+        const end = c.ImFont_CalcWordWrapPosition(font, size, start, start + rest.len, width);
+        var cut: usize = @intFromPtr(end) - @intFromPtr(start);
+        if (cut == 0) cut = rest.len;
+        buffer[n] = std.mem.trimEnd(u8, rest[0..cut], " ");
+        n += 1;
+        rest = std.mem.trimStart(u8, rest[cut..], " ");
+    }
+    return buffer[0..n];
+}
+
+/// The height of `value` wrapped at `width`, at the design's line height.
+pub fn paragraphHeight(value: []const u8, width: f32) f32 {
+    var buffer: [max_lines][]const u8 = undefined;
+    return @as(f32, @floatFromInt(wrapLines(value, width, &buffer).len)) * lineHeight();
+}
+
+/// Draws `value` wrapped at `width`, at the design's line height. Returns its height.
+pub fn paragraphAt(list: *c.ImDrawList, x: f32, y: f32, width: f32, color: theme.Color, value: []const u8) f32 {
+    var buffer: [max_lines][]const u8 = undefined;
+    const lines = wrapLines(value, width, &buffer);
+    for (lines, 0..) |l, i| _ = lineAt(list, x, y + @as(f32, @floatFromInt(i)) * lineHeight(), color, l);
+    return @as(f32, @floatFromInt(lines.len)) * lineHeight();
+}
+
 /// A page or panel title: `size` pixels, semibold.
 pub fn title(value: []const u8, size: f32) void {
     fonts.pushSized(.semibold, size);
@@ -113,6 +186,8 @@ pub const Kind = enum {
     primary,
     /// A border only.
     outline,
+    /// A border only, with secondary text, for the less important actions.
+    secondary,
     /// The chosen one in a set of choices: an amber border on a dark amber fill.
     selected,
     /// An unchosen one in a set of choices: grey, with secondary text.
@@ -128,6 +203,7 @@ pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
         .normal => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
         .primary => .{ .fill = theme.accent, .hover = theme.accent, .line = theme.withAlpha(theme.accent, 0), .ink = theme.on_accent },
         .outline => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
+        .secondary => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
         .selected => .{ .fill = theme.accent_fill, .hover = theme.accent_fill, .line = theme.accent, .ink = theme.text },
         .unselected => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
         .quiet => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.withAlpha(theme.page, 0), .ink = theme.text_secondary },
@@ -145,6 +221,23 @@ pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
 
 pub fn button(label: [:0]const u8) bool {
     return buttonOf(.normal, label, vec2(0, 0));
+}
+
+/// The gap between "No roll open" and its button, in the design's pixels.
+const no_roll_gap = 14;
+/// The height of a button that fits its label, in the design's pixels.
+const button_height = 32;
+/// The padding either side of a button's label, in the design's pixels.
+const button_padding = 12;
+
+/// Draws "No roll open" at `at` with a Go to Rolls button under it, for a page that needs a roll.
+/// Returns true when the button is clicked.
+pub fn noRoll(at: Vec2) bool {
+    const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.text_secondary, "No roll open");
+    c.ImGui_SetCursorScreenPos(vec2(at.x, at.y + height + px(no_roll_gap)));
+    const label = "Go to Rolls";
+    const width = c.ImGui_CalcTextSize(label).x / scale + 2 * button_padding + 2;
+    return buttonOf(.normal, label, vec2(width, button_height));
 }
 
 /// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
@@ -197,15 +290,36 @@ pub fn rowLabel(label: []const u8) void {
     c.ImGui_SameLineEx(x + px(label_column + label_gap), 0);
 }
 
+/// How long a drop-down's list gets before it scrolls.
+pub const ListHeight = enum {
+    /// ImGui's usual eight items.
+    regular,
+    /// As tall as the screen allows, up to `tall_list_height`.
+    tall,
+};
+
+/// The tallest a tall drop-down list gets, in the design's pixels.
+const tall_list_height = 360;
+
+/// Opens a drop-down `width` wide in the design's pixels (0 fills the row), showing `preview`. It
+/// has a small chevron, like a native drop-down, instead of ImGui's arrow button. When it returns
+/// true, add the list's items and then call `c.ImGui_EndCombo`.
+pub fn beginCombo(id: []const u8, preview: []const u8, width: f32, height: ListHeight) bool {
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    var flags: c.ImGuiComboFlags = c.ImGuiComboFlags_NoArrowButton;
+    if (height == .tall) {
+        c.ImGui_SetNextWindowSizeConstraints(vec2(0, 0), vec2(std.math.floatMax(f32), px(tall_list_height)), null, null);
+        flags |= c.ImGuiComboFlags_HeightLargest;
+    }
+    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, print("{s}", .{preview}).ptr, flags);
+    chevron();
+    return open;
+}
+
 /// A drop-down of `items`, `width` wide in the design's pixels (0 fills the row). Returns the
 /// chosen index when it changes.
 pub fn combo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32) ?usize {
-    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
-    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
-    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton);
-    // A small chevron, like a native drop-down has, instead of ImGui's arrow button.
-    chevron();
-    if (!open) return null;
+    if (!beginCombo(id, if (chosen < items.len) items[chosen] else "", width, .regular)) return null;
     defer c.ImGui_EndCombo();
     var picked: ?usize = null;
     for (items, 0..) |item, i| {
@@ -223,12 +337,7 @@ var search_buffer: [64:0]u8 = @splat(0);
 /// An item matches when it contains every word typed, ignoring case. Enter picks the first match.
 /// Returns the chosen index when it changes.
 pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, width: f32, hint: [:0]const u8) ?usize {
-    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
-    const preview = if (chosen < items.len) print("{s}", .{items[chosen]}) else "";
-    c.ImGui_SetNextWindowSizeConstraints(vec2(0, 0), vec2(std.math.floatMax(f32), px(360)), null, null);
-    const open = c.ImGui_BeginCombo(print("##{s}", .{id}).ptr, preview.ptr, c.ImGuiComboFlags_NoArrowButton | c.ImGuiComboFlags_HeightLargest);
-    chevron();
-    if (!open) return null;
+    if (!beginCombo(id, if (chosen < items.len) items[chosen] else "", width, .tall)) return null;
     defer c.ImGui_EndCombo();
     if (c.ImGui_IsWindowAppearing()) {
         search_buffer = @splat(0);
@@ -274,7 +383,7 @@ pub fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 }
 
 /// Draws a drop-down's small chevron at the right of the item just drawn.
-pub fn chevron() void {
+fn chevron() void {
     const max = c.ImGui_GetItemRectMax();
     const middle = (c.ImGui_GetItemRectMin().y + max.y) / 2;
     const tip = vec2(max.x - px(14), middle + px(2.5));
@@ -300,26 +409,43 @@ pub fn tickedBox(list: *c.ImDrawList, min: Vec2, size: f32) void {
     c.ImDrawList_AddPolyline(list, &points, points.len, theme.imU32(theme.on_accent), 1.8 * unit, 0);
 }
 
+/// Draws a check box `size` square at `min`: ticked, or empty and lighter while `hovered`.
+pub fn checkBox(list: *c.ImDrawList, min: Vec2, size: f32, checked: bool, hovered: bool) void {
+    if (checked) return tickedBox(list, min, size);
+    const max = vec2(min.x + size, min.y + size);
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
+    c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
+}
+
+/// How a check box with a label is laid out.
+pub const CheckboxOptions = struct {
+    /// The gap between the box and the label, in the design's pixels.
+    gap: f32 = 6,
+    /// The row's height, or null for a control's height.
+    height: ?f32 = null,
+    label_color: theme.Color = theme.text_secondary,
+};
+
+/// The size of a check box with a label, in the design's pixels.
+const checkbox_size = 14;
+
 /// A small check box with its label, drawn the way the design draws one. Returns true when it was
 /// clicked.
 pub fn checkbox(label: [:0]const u8, checked: *bool) bool {
-    const box = px(14);
+    return checkboxWith(label, checked, .{});
+}
+
+pub fn checkboxWith(label: [:0]const u8, checked: *bool, options: CheckboxOptions) bool {
+    const box = px(checkbox_size);
     const label_size = c.ImGui_CalcTextSize(label.ptr);
-    const height = c.ImGui_GetFrameHeight();
+    const height = options.height orelse c.ImGui_GetFrameHeight();
     const origin = c.ImGui_GetCursorScreenPos();
-    const clicked = c.ImGui_InvisibleButton(label.ptr, vec2(box + px(6) + label_size.x, height), 0);
+    const clicked = c.ImGui_InvisibleButton(label.ptr, vec2(box + px(options.gap) + label_size.x, height), 0);
     if (clicked) checked.* = !checked.*;
-    const hovered = c.ImGui_IsItemHovered(0);
     const list = c.ImGui_GetWindowDrawList();
     const min = vec2(origin.x, origin.y + (height - box) / 2);
-    const max = vec2(min.x + box, min.y + box);
-    if (checked.*) {
-        tickedBox(list, min, box);
-    } else {
-        c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (hovered) theme.control_hover else theme.control), px(3), 0);
-        c.ImDrawList_AddRectEx(list, min, max, theme.imU32(theme.border), px(3), 1, 0);
-    }
-    c.ImDrawList_AddText(list, vec2(max.x + px(6), origin.y + (height - label_size.y) / 2), theme.imU32(theme.text_secondary), label.ptr);
+    checkBox(list, min, box, checked.*, c.ImGui_IsItemHovered(0));
+    c.ImDrawList_AddText(list, vec2(min.x + box + px(options.gap), origin.y + (height - label_size.y) / 2), theme.imU32(options.label_color), label.ptr);
     return clicked;
 }
 
@@ -402,15 +528,20 @@ pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format
     rowLabel(label);
     var changed = slider("slider", v, min, max, 0);
     if (options.help) |help| if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
-    const shown = formatSigned(format, v.*);
-    valueText(shown);
-    c.ImGui_SameLineEx(0, px(reset_space - reset_size));
-    const at = c.ImGui_GetCursorScreenPos();
-    if (resetButton("reset", vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - px(reset_size)) / 2), shown, formatSigned(format, options.default))) {
+    if (valueAndReset(formatSigned(format, v.*), formatSigned(format, options.default))) {
         v.* = options.default;
         changed = true;
     }
     return changed;
+}
+
+/// The end of a slider row: the value as `shown`, and a reset button that's disabled while it
+/// reads as `default_shown`. Returns true when the reset button was clicked.
+pub fn valueAndReset(shown: []const u8, default_shown: []const u8) bool {
+    valueText(shown);
+    c.ImGui_SameLineEx(0, px(reset_space - reset_size));
+    const at = c.ImGui_GetCursorScreenPos();
+    return resetButton("reset", vec2(at.x, at.y + (c.ImGui_GetFrameHeight() - px(reset_size)) / 2), shown, default_shown);
 }
 
 /// What a slider row needs besides its value.
@@ -477,8 +608,31 @@ pub fn star(list: *c.ImDrawList, centre: Vec2, radius: f32, filled: bool, colour
 /// little more fills out a small one.
 const star_notch = 0.45;
 
+/// Draws an x centred on `centre`, its strokes reaching `arm` out along each axis.
+pub fn cross(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness);
+}
+
+/// Draws a plus sign centred on `centre`, its strokes reaching `arm` out each way.
+pub fn plus(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness);
+}
+
+/// Draws a progress bar filling `min` to `max`: a grey track, with `fraction` (0 to 1) of it in
+/// amber from the left.
+pub fn progressBar(list: *c.ImDrawList, min: Vec2, max: Vec2, fraction: f32) void {
+    const rounding = (max.y - min.y) / 2;
+    c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.border), rounding, 0);
+    const done = (max.x - min.x) * std.math.clamp(fraction, 0, 1);
+    if (done > 0) c.ImDrawList_AddRectFilledEx(list, min, vec2(min.x + done, max.y), theme.imU32(theme.accent), rounding, 0);
+}
+
 /// Prints `v` with `format`, using a real minus sign as the design does.
-pub fn formatSigned(comptime format: []const u8, v: f32) []const u8 {
+pub fn formatSigned(comptime format: []const u8, v: f32) [:0]const u8 {
     const shown = print(format, .{@abs(v)});
     // −0.00 looks like a mistake, so a value that prints as zero gets no sign.
     const zero = for (shown) |ch| {
