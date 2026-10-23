@@ -1,23 +1,49 @@
 # minilab
 
-<img src="docs/icon.svg" alt="minilab's icon: an amber film strip on a dark tile" width="96">
+<p align="center">
+  <img src="docs/icon.svg" alt="minilab's icon: an amber film strip on a dark tile" width="96">
+</p>
 
-minilab is an app for scanning and developing film. You scan a roll, or bring in photos of your
-negatives taken with a camera, or scans you already have. minilab finds the frames, turns the
-negatives into positives and exports the results. It handles colour and black and white negatives
-and slides, and it works a roll at a time. It runs on macOS, Linux and Windows.
+**minilab** is a cross-platform app for scanning, developing and exporting film, a roll at a
+time. Whether you scan on a flatbed, photograph your negatives with a camera, or already have
+finished scans from a lab, minilab handles frame detection, inversion, colour correction and batch
+export.
 
-It's written in Zig 0.17 with a Dear ImGui interface. If you want to know how it works inside and
-why, have a look at [docs/design.md](docs/design.md).
+It supports colour negatives, black and white negatives and slides, on macOS, Linux and Windows.
 
-## Getting it
+Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside, see
+[docs/design.md](docs/design.md).
 
-Download the archive for your system from the [latest release](../../releases/latest) and unpack
-it. There are builds for Windows, macOS and Linux, on both x86-64 and Arm, plus a file with their
-checksums so you can check your download.
+---
 
-The macOS builds aren't signed, so macOS blocks them the first time you open one. Run this once,
-in the folder you unpacked, to let minilab and the scanner drivers it comes with through:
+## Features
+
+- **Raw scanning:** drives your scanner directly for linear 16-bit scans and finds the frames on
+  the preview. The Mac download comes with SANE's drivers; on Windows it uses the maker's TWAIN
+  driver.
+- **One workflow:** frame detection, inversion, colour correction and batch export in one app.
+- **Datasheet corrections:** for stocks with a published datasheet, minilab uses the maker's
+  curves to open up the shadows the film squeezes together and keep them from tinting.
+- **Film looks:** Frontier lab emulation, 85 film looks from three free collections, and your own
+  `.cube` LUTs (3D or 1D).
+- **Fitted looks:** give minilab pairs of its scans and a lab's scans of the same negatives, and
+  it works out a look that matches the lab.
+- **Metadata:** camera, lens, film stock, date, copyright, star ratings and fields of your own,
+  written into the exports as EXIF and XMP.
+- **Command line:** import, scan and develop from the terminal as well as in the app.
+
+---
+
+## Installation
+
+Download the archive for your platform from the [latest release](../../releases/latest). There
+are builds for Windows, macOS and Linux, on x86-64 and Arm, with a file of checksums to check your
+download against.
+
+### macOS
+
+The macOS builds aren't signed, so run this once in the unpacked folder to let minilab and the
+scanner drivers it comes with through:
 
 ```bash
 xattr -dr com.apple.quarantine .
