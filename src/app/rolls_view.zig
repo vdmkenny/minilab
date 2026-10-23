@@ -51,11 +51,29 @@ pub const State = struct {
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
     flat_dialog: Dialog = .{ .filters = &flat_files },
-    /// The roll whose Delete was clicked, waiting for the confirmation.
-    deleting: ?usize = null,
+    /// The folder of the roll whose Delete was clicked, waiting for the confirmation. It's kept
+    /// by path, not by place in the list, because the list changes when rolls are added on disk.
+    deleting: ?[]u8 = null,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
         state.flat_dialog.deinit(gpa);
+        state.stopDeleting(gpa);
+    }
+
+    fn startDeleting(state: *State, gpa: std.mem.Allocator, path: []const u8) void {
+        const copy = gpa.dupe(u8, path) catch return;
+        state.stopDeleting(gpa);
+        state.deleting = copy;
+    }
+
+    fn stopDeleting(state: *State, gpa: std.mem.Allocator) void {
+        if (state.deleting) |p| gpa.free(p);
+        state.deleting = null;
+    }
+
+    fn isDeleting(state: *const State, path: []const u8) bool {
+        const deleting = state.deleting orelse return false;
+        return std.mem.eql(u8, deleting, path);
     }
 };
 
@@ -84,11 +102,18 @@ pub const Action = union(enum) {
     none,
     /// Open the roll in Develop, at this frame.
     open: struct { roll: usize, frame: usize = 0 },
-    created: usize,
+    created: Created,
     /// Files were dropped on this roll's row.
     dropped_on: usize,
     /// Move this roll to the Trash, after it was confirmed.
     trash: usize,
+};
+
+/// A roll New roll made.
+pub const Created = struct {
+    roll: usize,
+    /// Set when the flat field given couldn't be used, so the roll has none.
+    flat_failed: bool = false,
 };
 
 /// The film sizes a roll can have, in the order the form lists them.
@@ -139,7 +164,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(2)));
     gui.paragraph(theme.text_tertiary, "Undeveloped frames: raw scan");
-    if (drawDeleteConfirmation(state, library)) |index| action = .{ .trash = index };
+    if (drawDeleteConfirmation(state, library, gpa)) |index| action = .{ .trash = index };
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
@@ -150,7 +175,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_PopStyleVar();
         const window = c.ImGui_GetWindowPos();
         c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.divider));
-        if (drawForm(state, library, gpa, io)) |index| action = .{ .created = index };
+        if (drawForm(state, library, gpa, io)) |created| action = .{ .created = created };
         c.ImGui_EndChild();
     }
     return action;
@@ -218,18 +243,19 @@ fn drawTitleRow(state: *State, library: *Library) void {
 }
 
 /// Asks whether to delete the roll whose Delete was clicked. Returns its index once confirmed.
-fn drawDeleteConfirmation(state: *State, library: *const Library) ?usize {
-    const index = state.deleting orelse return null;
-    if (index >= library.rolls.items.len) {
-        state.deleting = null;
+fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.Allocator) ?usize {
+    const path = state.deleting orelse return null;
+    // The roll went in the meantime.
+    const index = library.find(path) orelse {
+        state.stopDeleting(gpa);
         return null;
-    }
+    };
     const r = library.rolls.items[index];
     if (!c.ImGui_IsPopupOpen("delete roll", 0)) _ = c.ImGui_OpenPopup("delete roll", 0);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(20), gui.px(16)));
     defer c.ImGui_PopStyleVar();
     if (!c.ImGui_BeginPopupModal("delete roll", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
-        state.deleting = null;
+        state.stopDeleting(gpa);
         return null;
     }
     defer c.ImGui_EndPopup();
@@ -242,7 +268,7 @@ fn drawDeleteConfirmation(state: *State, library: *const Library) ?usize {
     c.ImGui_SameLineEx(0, gui.px(8));
     const cancelled = gui.buttonOf(.normal, "Cancel", gui.vec2(0, 32)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
     if (confirmed != null or cancelled) {
-        state.deleting = null;
+        state.stopDeleting(gpa);
         c.ImGui_CloseCurrentPopup();
     }
     return confirmed;
@@ -293,11 +319,11 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     // Delete, in the card's top right corner while the mouse is over the card.
     const mouse = c.ImGui_GetMousePos();
     const over_card = mouse.x >= origin.x and mouse.x < origin.x + gui.px(card_width) and mouse.y >= origin.y and mouse.y < origin.y + card_height;
-    if (over_card or state.deleting == index) {
+    if (over_card or state.isDeleting(r.path)) {
         const size = gui.px(delete_size);
         const corner = gui.vec2(origin.x + gui.px(card_width) - size - gui.px(6), origin.y + gui.px(6));
         c.ImGui_SetCursorScreenPos(corner);
-        if (c.ImGui_InvisibleButton("delete", gui.vec2(size, size), 0)) state.deleting = index;
+        if (c.ImGui_InvisibleButton("delete", gui.vec2(size, size), 0)) state.startDeleting(gpa, r.path);
         const on_button = c.ImGui_IsItemHovered(0);
         if (on_button) {
             c.ImGui_SetTooltip("Delete roll");
@@ -435,7 +461,7 @@ fn drawHoles(list: *c.ImDrawList, size: formats.FilmSize, left: f32, right: f32,
 }
 
 /// Draws the new-roll panel. Returns the new roll's index once it's made.
-fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?usize {
+fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?Created {
     const form = &state.form;
     if (!form.named) {
         _ = std.fmt.bufPrintSentinel(&form.name, "Roll {d:0>3}", .{library.rolls.items.len + 1}, 0) catch {};
@@ -546,14 +572,24 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         return null;
     };
     const flat = std.mem.sliceTo(&form.flat, 0);
-    if (camera and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| std.log.err("can't use {s} as the flat field: {t}", .{ flat, err });
+    var flat_failed = false;
+    if (camera and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
+        std.log.err("can't use {s} as the flat field: {t}", .{ flat, err });
+        flat_failed = true;
+    };
     const path = gpa.dupe(u8, made.path) catch return null;
     defer gpa.free(path);
     made.close();
-    library.reload(gpa, io) catch return null;
+    // The roll is made either way, so the form is done: leaving it open would only say the name
+    // is taken next time.
     state.show_form = false;
     state.form = .{};
-    return library.find(path);
+    // If the library can't be read now, the roll shows up when it's next read.
+    library.reload(gpa, io) catch |err| {
+        std.log.err("can't read the library again: {t}", .{err});
+        return null;
+    };
+    return .{ .roll = library.find(path) orelse return null, .flat_failed = flat_failed };
 }
 
 /// Sets the shot in the file at `path` as the flat field of roll `r`.

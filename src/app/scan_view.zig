@@ -536,6 +536,8 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     const roll_index = ctx.develop.rollIndex(ctx.library);
     followRoll(state, ctx, roll_index);
     handleKeys(state, ctx);
+    // Once a box has been dragged past another, and let go.
+    if (!state.scanning and !c.ImGui_IsMouseDown(0)) sortBoxes(state);
     // Clear the results of an earlier run once the frames have changed.
     if (!state.scanning and state.queue.items.len > 0 and state.queue.items.len != state.boxes.items.len) state.queue.clearRetainingCapacity();
 
@@ -1538,6 +1540,23 @@ fn deleteFrame(state: *State, index: usize) void {
     state.boxes_dirty = true;
 }
 
+/// Puts the boxes back in order along the strip, keeping the same box selected. The queue scans
+/// the frames, and the roll numbers them, in this order.
+fn sortBoxes(state: *State) void {
+    const boxes = state.boxes.items;
+    // Insertion sort: the boxes are few, and nearly always in order already.
+    for (1..boxes.len) |i| {
+        var j = i;
+        while (j > 0 and boxes[j - 1].along > boxes[j].along) : (j -= 1) {
+            std.mem.swap(Box, &boxes[j - 1], &boxes[j]);
+            if (state.selected) |s| {
+                if (s == j) state.selected = j - 1 else if (s == j - 1) state.selected = j;
+            }
+            state.boxes_dirty = true;
+        }
+    }
+}
+
 /// Adds `box` in its place along the strip, and selects it.
 fn insertBox(state: *State, gpa: std.mem.Allocator, box: Box) void {
     var at: usize = 0;
@@ -1701,9 +1720,15 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
             // The frame is in the queue's roll, which Develop may not have open.
             const open = ctx.develop.roll_path;
             const same = open != null and std.mem.eql(u8, open.?, path);
-            if (!same) ctx.develop.openRoll(ctx.gpa, ctx.io, ctx.library, path) catch |err| std.log.err("can't open the roll: {t}", .{err});
-            ctx.develop.openForCrop(ctx.gpa, ctx.io, ctx.library, item.frame.?);
-            next = .develop;
+            const opened = same or if (ctx.develop.openRoll(ctx.gpa, ctx.io, ctx.library, path)) true else |err| failed: {
+                std.log.err("can't open the roll: {t}", .{err});
+                ctx.notice.set("Roll not found", .{});
+                break :failed false;
+            };
+            if (opened) {
+                ctx.develop.openForCrop(ctx.gpa, ctx.io, ctx.library, item.frame.?);
+                next = .develop;
+            }
         };
     }
     if (count > 0) y += gui.px(queue_gap - group_gap);
@@ -1827,7 +1852,9 @@ fn setPreview(state: *State, ctx: context.Context, picture: scan_worker.Preview)
     };
     uploadPreview(state, ctx);
     savePreview(state, ctx);
-    const roll_index = ctx.develop.rollIndex(ctx.library);
+    // The preview belongs to the roll it was asked for, which may not be the open one any more:
+    // a preview takes a minute, and this runs while other workspaces show.
+    const roll_index = if (state.roll_path) |path| ctx.library.find(path) else null;
     detect(state, ctx, roll_index);
     savePreviewSettings(state, ctx);
 }
@@ -2136,4 +2163,18 @@ test "a vertical strip's boxes map to the scanner" {
     try std.testing.expectApproxEqAbs(@as(f32, 32), area.y, 1e-3);
     try std.testing.expectApproxEqAbs(@as(f32, 24), area.width, 1e-3);
     try std.testing.expectApproxEqAbs(@as(f32, 36), area.height, 1e-3);
+}
+
+test "a box moved past its neighbours goes back in order, still selected" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    for ([_]f32{ 10, 20, 30, 40 }) |along| try state.boxes.append(gpa, .{ .along = along, .across = 0, .length = 5, .height = 5 });
+    // Box 1 dragged past boxes 2 and 3.
+    state.boxes.items[1].along = 45;
+    state.selected = 1;
+    sortBoxes(&state);
+    for (state.boxes.items, [_]f32{ 10, 30, 40, 45 }) |box, along| try std.testing.expectEqual(along, box.along);
+    try std.testing.expectEqual(@as(?usize, 3), state.selected);
+    try std.testing.expect(state.boxes_dirty);
 }

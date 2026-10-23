@@ -161,6 +161,18 @@ pub const Profile = struct {
     }
 };
 
+/// Where an ICC profile's header holds when it was made: 12 bytes from byte 24. LittleCMS sets it
+/// to the time the profile was made, so two copies of one profile differ there.
+const created_at = 24;
+const created_len = 12;
+
+/// Whether two profiles are the same apart from when they were made.
+pub fn sameProfile(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len or a.len < created_at + created_len) return std.mem.eql(u8, a, b);
+    return std.mem.eql(u8, a[0..created_at], b[0..created_at]) and
+        std.mem.eql(u8, a[created_at + created_len ..], b[created_at + created_len ..]);
+}
+
 /// Returns the ICC profile of `space` as bytes, ready to embed in a file. The caller owns them.
 pub fn profileBytes(gpa: std.mem.Allocator, space: Space) Error![]u8 {
     var profile: Profile = try .init(space);
@@ -281,4 +293,17 @@ test "Rec. 2020's red lies outside sRGB and clips in 16 bits" {
     try std.testing.expectEqual(std.math.maxInt(u16), output[0][0]);
     try std.testing.expectEqual(0, output[0][1]);
     try std.testing.expectEqual(0, output[0][2]);
+}
+
+test "two copies of a profile are the same apart from when they were made" {
+    const gpa = std.testing.allocator;
+    const first = try profileBytes(gpa, .srgb);
+    defer gpa.free(first);
+    const second = try gpa.dupe(u8, first);
+    defer gpa.free(second);
+    // As if it were made a second later.
+    second[created_at + created_len - 1] +%= 1;
+    try std.testing.expect(sameProfile(first, second));
+    second[0] +%= 1;
+    try std.testing.expect(!sameProfile(first, second));
 }

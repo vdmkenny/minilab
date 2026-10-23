@@ -21,6 +21,8 @@ const std = @import("std");
 const Io = std.Io;
 
 pub const file_name = "calibration.json";
+/// Added to the name of a calibration.json that can't be read, when it's moved aside.
+pub const unreadable_suffix = ".bad";
 /// The fewest frames a roll needs for a calibration. With fewer, the median still follows the
 /// scenes.
 pub const min_frames = 4;
@@ -63,7 +65,15 @@ pub const Calibrations = struct {
             else => return err,
         };
         const file = std.json.parseFromSliceLeaky(File, a, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| {
-            std.log.warn("{s} can't be read ({t}); starting without calibrations", .{ calibrations.path.?, err });
+            // Move it aside rather than write over it with the next roll's measurement, so the
+            // measurements in it aren't lost.
+            const aside = try std.fmt.allocPrint(a, "{s}{s}", .{ calibrations.path.?, unreadable_suffix });
+            Io.Dir.cwd().rename(calibrations.path.?, Io.Dir.cwd(), aside, io) catch |rename_err| {
+                std.log.warn("{s} can't be read ({t}) or moved aside ({t}); calibrations won't be saved", .{ calibrations.path.?, err, rename_err });
+                calibrations.path = null;
+                return calibrations;
+            };
+            std.log.warn("{s} can't be read ({t}); moved it to {s} and starting without calibrations", .{ calibrations.path.?, err, aside });
             return calibrations;
         };
         calibrations.scanners = file.scanners;
@@ -221,4 +231,20 @@ test "calibrations keep one measurement per roll, and the median over rolls" {
     try std.testing.expectApproxEqAbs(@as(f32, 1.35), v200[0], 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 0.9), v200[2], 1e-6);
     try std.testing.expectApproxEqAbs(@as(f32, 1.1), again.factors("Epson Perfection V750").?[0], 1e-6);
+}
+
+test "an unreadable calibration.json is moved aside, not written over" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    try tmp.dir.writeFile(io, .{ .sub_path = file_name, .data = "{ not json" });
+    var calibrations: Calibrations = try .load(gpa, io, library);
+    defer calibrations.deinit();
+    try calibrations.add(io, "EPSON Perfection V200", .{ .roll = "Roll 1", .stock = "Kodak Gold 200", .frames = 36, .factors = .{ 1.4, 1, 0.9 } });
+    const kept = try tmp.dir.readFileAlloc(io, file_name ++ unreadable_suffix, gpa, .limited(max_bytes));
+    defer gpa.free(kept);
+    try std.testing.expectEqualStrings("{ not json", kept);
 }

@@ -40,16 +40,34 @@ pub const Library = struct {
 
     /// Loads the library at `path`. `home` is the user's home folder, used for the label.
     pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, home: ?[]const u8) !Library {
-        const label = if (home != null and home.?.len > 0 and std.mem.startsWith(u8, path, home.?))
-            try std.mem.concat(gpa, u8, &.{ "~", path[home.?.len..] })
-        else
-            try gpa.dupe(u8, path);
+        const label = try labelOf(gpa, path, home);
         errdefer gpa.free(label);
         const owned_home = if (home) |h| try gpa.dupe(u8, h) else null;
         errdefer if (owned_home) |h| gpa.free(h);
-        var library: Library = .{ .path = try gpa.dupe(u8, path), .home = owned_home, .label = label, .looks = try .init(gpa, path), .calibrations = try .load(gpa, io, path), .gpa = gpa };
-        library.rolls = try roll.listRolls(gpa, io, path);
-        return library;
+        const owned_path = try gpa.dupe(u8, path);
+        errdefer gpa.free(owned_path);
+        var looks: minilab.look.Catalog = try .init(gpa, path);
+        errdefer looks.deinit(gpa);
+        var calibrations: minilab.calibration.Calibrations = try .load(gpa, io, path);
+        errdefer calibrations.deinit();
+        return .{
+            .path = owned_path,
+            .home = owned_home,
+            .label = label,
+            .looks = looks,
+            .calibrations = calibrations,
+            .rolls = try roll.listRolls(gpa, io, path),
+            .gpa = gpa,
+        };
+    }
+
+    /// The library's path as the interface shows it: with the home folder as ~ when it's inside
+    /// it. "/home/al" doesn't make "/home/alice" into "~ice".
+    fn labelOf(gpa: std.mem.Allocator, path: []const u8, home: ?[]const u8) ![]u8 {
+        if (home) |h| if (h.len > 0 and std.mem.startsWith(u8, path, h)) {
+            if (path.len == h.len or std.fs.path.isSep(path[h.len])) return std.mem.concat(gpa, u8, &.{ "~", path[h.len..] });
+        };
+        return gpa.dupe(u8, path);
     }
 
     pub fn deinit(library: *Library, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
@@ -272,4 +290,19 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
 
 fn rgba(pixels: [][4]u8, encoded: image.Encoded8) void {
     for (pixels, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+}
+
+test "the library's label has ~ for the home folder, and only for it" {
+    const gpa = std.testing.allocator;
+    const cases = [_]struct { path: []const u8, home: ?[]const u8, label: []const u8 }{
+        .{ .path = "/home/al/Pictures/Rolls", .home = "/home/al", .label = "~/Pictures/Rolls" },
+        .{ .path = "/home/al", .home = "/home/al", .label = "~" },
+        .{ .path = "/home/alice/Pictures/Rolls", .home = "/home/al", .label = "/home/alice/Pictures/Rolls" },
+        .{ .path = "/mnt/Rolls", .home = null, .label = "/mnt/Rolls" },
+    };
+    for (cases) |case| {
+        const label = try Library.labelOf(gpa, case.path, case.home);
+        defer gpa.free(label);
+        try std.testing.expectEqualStrings(case.label, label);
+    }
 }

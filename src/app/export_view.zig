@@ -38,8 +38,10 @@ const grid_gap = 10;
 /// A Metadata row, tall enough for a text field, and the gap between rows.
 const detail_row = 28;
 const metadata_gap = 6;
-/// The longest a detail or a field's value can be, in bytes, and a field's name.
-const detail_capacity = 256;
+/// The longest a detail or a field's value can be, in bytes, and a field's name. A detail holds
+/// more than New roll's notes box, so notes typed there fit. A longer one, say from a roll.json
+/// edited by hand, is shown cut short and can't be edited here (`showCut`).
+const detail_capacity = 1024;
 const field_name_capacity = 64;
 const metadata_check = 13;
 const export_height = 40;
@@ -94,6 +96,9 @@ const Editing = union(enum) {
 const FieldBoxes = struct {
     name: [field_name_capacity:0]u8 = @splat(0),
     value: [detail_capacity:0]u8 = @splat(0),
+    /// Whether the field fits its boxes. One that doesn't is shown cut short, can't be edited,
+    /// and is saved from the roll as it is.
+    fits: bool = true,
 };
 
 /// An export that's running on its own thread.
@@ -228,6 +233,10 @@ pub const State = struct {
             state.anchor = null;
             state.last = null;
             state.setFolder(defaultFolder(library, r));
+            // The boxes held the last roll's details.
+            state.details = .initFill(@splat(0));
+            state.custom.clearRetainingCapacity();
+            state.editing = null;
         }
         const count = r.frames.items.len;
         const known = @min(state.seen.items.len, count);
@@ -555,8 +564,10 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
             gui.print("Canceling after frame {d}…", .{job.number})
         else
             gui.print("Exporting {d} of {d} · {s}.{s} · {s}", .{ current + 1, batch.jobs.len, job.stem, batch.options.format.extension(), batch.stage.load(.acquire).label() });
-        if (!cancelling and link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
-        shortcuts.tooltip("Stops after the current frame", .cancel);
+        if (!cancelling) {
+            if (link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
+            shortcuts.tooltip("Stops after the current frame", .cancel);
+        }
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
         // The progress bar, on the second line.
         const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
@@ -913,11 +924,13 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
             c.ImGui_SetKeyboardFocusHere();
             state.focus_new_field = false;
         }
+        c.ImGui_BeginDisabled(!field.fits);
         _ = gui.textField("name", &field.name, "Name", (name_width - gui.px(6)) / gui.scale);
         edited = trackEdit(state, .{ .field_name = i }) or edited;
         c.ImGui_SetCursorScreenPos(gui.vec2(value_left, y));
         _ = gui.textField("value", &field.value, "Value", (value_width - remove_size - gui.px(6)) / gui.scale);
         edited = trackEdit(state, .{ .field_value = i }) or edited;
+        c.ImGui_EndDisabled();
         c.ImGui_PopStyleVar();
         c.ImGui_SetCursorScreenPos(gui.vec2(x + width - remove_size, y));
         if (c.ImGui_InvisibleButton("remove", gui.vec2(remove_size, remove_size), 0)) remove = i;
@@ -967,13 +980,19 @@ fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag:
 /// typing in it, and saves the roll when you leave it.
 fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.Detail, at: gui.Vec2, width: f32) void {
     const buffer = state.details.getPtr(which);
-    if (!state.isEditing(.{ .detail = which })) gui.setText(buffer, r.detail(which) orelse "") catch {};
+    const value = r.detail(which) orelse "";
+    // A value too long for the box can't be edited here, so a shortened copy never gets saved
+    // over it.
+    const fits = value.len <= buffer.len;
+    if (!state.isEditing(.{ .detail = which })) showCut(buffer, value);
     c.ImGui_SetCursorScreenPos(at);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
+    c.ImGui_BeginDisabled(!fits);
     _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
+    c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (which == .shot and c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("YYYY, YYYY-MM or YYYY-MM-DD");
-    if (trackEdit(state, .{ .detail = which })) {
+    if (trackEdit(state, .{ .detail = which }) and fits) {
         r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
     }
 }
@@ -994,9 +1013,20 @@ fn syncFields(state: *State, gpa: std.mem.Allocator, r: *const roll.Roll) void {
     if (state.editing) |e| if (e == .field_name or e == .field_value) return;
     state.custom.resize(gpa, r.info.fields.len) catch return;
     for (state.custom.items, r.info.fields) |*boxes, field| {
-        gui.setText(&boxes.name, field.name) catch {};
-        gui.setText(&boxes.value, field.value) catch {};
+        boxes.fits = field.name.len <= boxes.name.len and field.value.len <= boxes.value.len;
+        showCut(&boxes.name, field.name);
+        showCut(&boxes.value, field.value);
     }
+}
+
+/// Puts `value` into a text box, cut short at a whole character if it doesn't fit. Only for
+/// showing: a box holding a cut value mustn't be saved.
+fn showCut(buffer: [:0]u8, value: []const u8) void {
+    var end = @min(value.len, buffer.len);
+    // Back off to the start of a character, so the cut doesn't split one.
+    while (end < value.len and end > 0 and value[end] & 0xc0 == 0x80) end -= 1;
+    @memcpy(buffer[0..end], value[0..end]);
+    buffer[end] = 0;
 }
 
 /// Saves the fields as they're typed, leaving out `remove` and adding an empty one for `add`.
@@ -1005,7 +1035,9 @@ fn saveFields(state: *const State, ctx: context.Context, r: *roll.Roll, remove: 
     defer fields.deinit(ctx.gpa);
     for (state.custom.items, 0..) |*boxes, i| {
         if (remove == i) continue;
-        fields.append(ctx.gpa, .{ .name = std.mem.sliceTo(&boxes.name, 0), .value = std.mem.sliceTo(&boxes.value, 0) }) catch return;
+        // A field that didn't fit its boxes is kept as the roll has it.
+        const field: roll.Field = if (boxes.fits or i >= r.info.fields.len) .{ .name = std.mem.sliceTo(&boxes.name, 0), .value = std.mem.sliceTo(&boxes.value, 0) } else r.info.fields[i];
+        fields.append(ctx.gpa, field) catch return;
     }
     if (add) fields.append(ctx.gpa, .{ .name = "", .value = "" }) catch return;
     r.setFields(ctx.io, fields.items) catch |err| std.log.err("can't save {s}'s fields: {t}", .{ r.info.name, err });
@@ -1039,4 +1071,15 @@ fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
     var running: Running = .{ .batch = batch, .future = future };
     running.what.set("{s}, {s}", .{ state.file.label(), space_names[state.space] });
     state.running = running;
+}
+
+test "a value cut short for showing keeps whole characters" {
+    var box: [6:0]u8 = @splat(0);
+    showCut(&box, "Gent");
+    try std.testing.expectEqualStrings("Gent", std.mem.sliceTo(&box, 0));
+    // "è" is two bytes, the sixth and seventh, so a cut after six would split it.
+    showCut(&box, "Gentsè, Belgium");
+    try std.testing.expectEqualStrings("Gents", std.mem.sliceTo(&box, 0));
+    showCut(&box, "Ghent, Belgium");
+    try std.testing.expectEqualStrings("Ghent,", std.mem.sliceTo(&box, 0));
 }
