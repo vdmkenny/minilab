@@ -17,10 +17,10 @@ it. There are builds for Windows, macOS and Linux, on both x86-64 and Arm, plus 
 checksums so you can check your download.
 
 The macOS builds aren't signed, so macOS blocks them the first time you open one. Run this once,
-in the folder you unpacked, to let it through:
+in the folder you unpacked, to let minilab and the scanner drivers it comes with through:
 
 ```bash
-xattr -d com.apple.quarantine minilab
+xattr -dr com.apple.quarantine .
 ```
 
 `minilab --version` tells you which version you have.
@@ -38,7 +38,10 @@ make check      # formatting, the repository's file checks and the tests, like C
 
 The first build downloads and compiles every library minilab uses (SDL3, Dear ImGui,
 libjpeg-turbo, libtiff, LibRaw and Little CMS) and the film look collections. You don't need to
-install anything else, except SANE if you want to scan on macOS or Linux.
+install anything else, except SANE if you want to scan on macOS or Linux. On a Mac you can build
+the SANE the releases come with instead: `scripts/build-sane-macos.sh arm64 zig-out/bin/sane`
+(or `x86_64` on an Intel Mac) puts it next to the program, where minilab looks for it. It needs
+CMake and the Xcode command line tools.
 
 ## Using the app
 
@@ -113,27 +116,26 @@ instead of copying them. Raw scans are always converted, so their originals stay
 
 ## Scanning
 
-minilab doesn't come with scanner drivers. It uses the ones your computer already has, and only
-looks for them when you open Scan, so everything else works without them.
+minilab only looks for scanner drivers when you open Scan, so everything else works without them.
 
-**On a Mac** the drivers are SANE, a free collection of drivers for most scanners. macOS doesn't
-come with it, so you install it once, from Homebrew:
+**On a Mac** the download comes with the drivers, so there's nothing to install. They're SANE, a
+free collection of drivers for most scanners, in the `sane` folder next to the program. Plug the
+scanner in, open Scan, and it's in the list. You don't need the scanner maker's own Mac software,
+and you can leave it installed. Just don't have it open while minilab scans, since only one
+program can use the scanner at a time.
 
-1. If you don't have Homebrew yet, get it from [brew.sh](https://brew.sh). It's one command to
-   paste into Terminal.
-2. In Terminal, run `brew install sane-backends`.
-3. In minilab's Scan screen, press Refresh. Your scanner shows up in the list.
-
-The Scan screen shows these same steps, with a button to copy the command, whenever it can't find
-SANE. You don't need the scanner maker's own Mac software, and you can leave it installed. Just
-don't have it open while minilab scans, since only one program can use the scanner at a time.
+If you've installed SANE yourself, from Homebrew or MacPorts, minilab still uses the drivers it
+comes with first, and picks up any extra drivers you've added to yours. If the drivers that come
+with minilab can't load, it uses yours instead, and if there aren't any, the Scan screen shows how
+to install SANE from Homebrew, with a button to copy the command.
 
 **On Linux** install your distribution's SANE package (often `sane-utils` or `sane-backends`).
 
 **On Windows** minilab uses the scanner maker's own TWAIN driver, so install that.
 
 A few scanners need their maker's own SANE driver rather than one of SANE's. The Epson Perfection
-V200 is one of them: it needs Epson's epkowa driver and its plugin.
+V200 is one of them: it needs Epson's epkowa driver and its plugin, which minilab can't come with.
+On a Mac, install them into Homebrew's SANE and minilab finds them.
 
 For scanners minilab has a profile for (only the Epson Perfection V200 so far), it scans raw:
 linear 16-bit data, with the scanner doing no inversion or colour correction of its own. That
@@ -145,6 +147,10 @@ minilab can measure it in the gaps between frames.
 minilab is under the Mozilla Public License 2.0 (see `LICENSE`). The libraries it builds keep
 their own licences, and the build puts a copy of each next to the program. LibRaw is linked under
 the LGPL 2.1, so you can relink minilab with your own LibRaw.
+
+The Mac download also carries SANE (under the GPL, mostly with an exception for programs that use
+it), libusb (LGPL 2.1) and libjpeg-turbo. Their licences are in its `sane` folder, along with a
+README that says where their source is, and each release has the source archives attached.
 
 The film stock presets are our own readings of the makers' datasheets;
 [data/stocks/README.md](data/stocks/README.md) explains how we read them. The film looks come from

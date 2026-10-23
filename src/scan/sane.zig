@@ -1,7 +1,9 @@
-//! SANE, the scanner library on macOS and Linux. We load the system's libsane at run time, so
-//! minilab doesn't link it or need it. The system's SANE configuration decides which backends
-//! load, and the V200 needs our epkowa build enabled there (the V200 driver's install notes cover
-//! this).
+//! SANE, the scanner library on macOS and Linux. We load libsane at run time, so minilab doesn't
+//! link it or need it. The macOS releases carry their own SANE in a `sane` folder next to the
+//! program (`scripts/build-sane-macos.sh` builds it), and we try that first. Otherwise we load the
+//! system's. SANE's configuration decides which backends load, and the V200 needs our epkowa build
+//! enabled in the system's (the V200 driver's install notes cover this). The bundled SANE reads the
+//! system's configuration and backends after its own, so that works with either.
 //!
 //! The declarations follow `sane.h` (SANE standard 1.0, public domain). We find options by name.
 //! SANE's standard ones (`source`, `mode`, `depth`, `resolution`, `tl-x`, `tl-y`, `br-x`, `br-y`)
@@ -25,16 +27,87 @@ pub const supported = switch (builtin.os.tag) {
     else => false,
 };
 
-/// Where we look for libsane, in order. The bare names go through the system's own search.
+/// Where the system's SANE is installed on a Mac, in the order we look: Homebrew on Apple silicon,
+/// Homebrew on Intel, and MacPorts.
+const mac_prefixes = [_][]const u8{ "/opt/homebrew", "/usr/local", "/opt/local" };
+
+/// `suffix` under each of `mac_prefixes`.
+fn underMacPrefixes(comptime suffix: []const u8) [mac_prefixes.len][:0]const u8 {
+    var paths: [mac_prefixes.len][:0]const u8 = undefined;
+    for (mac_prefixes, &paths) |prefix, *path| path.* = std.fmt.comptimePrint("{s}{s}", .{ prefix, suffix });
+    return paths;
+}
+
+/// Where we look for the system's libsane, in order. The bare names go through the system's own
+/// search.
 pub const library_paths: []const [:0]const u8 = switch (builtin.os.tag) {
-    .macos => &.{
-        "/opt/homebrew/lib/libsane.1.dylib",
-        "/usr/local/lib/libsane.1.dylib",
-        "/opt/local/lib/libsane.1.dylib",
-        "libsane.1.dylib",
-    },
+    .macos => &(underMacPrefixes("/lib/libsane.1.dylib") ++ .{"libsane.1.dylib"}),
     else => &.{ "libsane.so.1", "libsane.so" },
 };
+
+/// The SANE the macOS releases carry, in a folder next to the program. It has its backends and
+/// configs in folders of their own.
+const bundle = struct {
+    const folder = "sane";
+    const library = "libsane.1.dylib";
+    const backends = "backends";
+    const config = "sane.d";
+};
+
+/// The folder of the SANE that comes with minilab, written into `buffer`, or null when there isn't
+/// one. Only the macOS releases have one.
+fn bundledFolder(io: std.Io, buffer: []u8) ?[]const u8 {
+    if (comptime builtin.os.tag != .macos) return null;
+    const length = std.process.executableDirPath(io, buffer) catch return null;
+    const name = "/" ++ bundle.folder;
+    if (length + name.len > buffer.len) return null;
+    @memcpy(buffer[length..][0..name.len], name);
+    const folder = buffer[0 .. length + name.len];
+    std.Io.Dir.cwd().access(io, folder, .{}) catch return null;
+    return folder;
+}
+
+/// The C library's functions for changing the environment, which `std.c` doesn't have.
+const libc = struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+};
+
+/// An environment variable we changed, and the value it had before.
+const Changed = struct {
+    name: [:0]const u8,
+    old: ?[:0]u8,
+
+    fn set(gpa: std.mem.Allocator, name: [:0]const u8, value: [:0]const u8) Error!Changed {
+        const old = if (std.c.getenv(name)) |v| try gpa.dupeSentinel(u8, std.mem.span(v), 0) else null;
+        errdefer if (old) |o| gpa.free(o);
+        if (libc.setenv(name, value, 1) != 0) return error.Unavailable;
+        return .{ .name = name, .old = old };
+    }
+
+    /// Puts the old value back.
+    fn restore(changed: Changed) void {
+        _ = if (changed.old) |o| libc.setenv(changed.name, o, 1) else libc.unsetenv(changed.name);
+    }
+
+    fn deinit(changed: Changed, gpa: std.mem.Allocator) void {
+        if (changed.old) |o| gpa.free(o);
+    }
+};
+
+/// Joins `own` and `system` under each of `mac_prefixes` into a search path, with `rest`, if
+/// there is one, at the end.
+fn searchPath(gpa: std.mem.Allocator, own: []const u8, comptime system: []const u8, rest: ?[]const u8) Error![:0]u8 {
+    var parts: [mac_prefixes.len + 2][]const u8 = undefined;
+    parts[0] = own;
+    for (comptime underMacPrefixes(system), parts[1..][0..mac_prefixes.len]) |dir, *part| part.* = dir;
+    var count: usize = mac_prefixes.len + 1;
+    if (rest) |r| {
+        parts[count] = r;
+        count += 1;
+    }
+    return std.mem.joinZ(gpa, ":", parts[0..count]);
+}
 
 const Int = i32;
 const Word = i32;
@@ -170,30 +243,78 @@ pub const Library = struct {
     dynlib: DynLib,
     api: Api,
 
-    pub fn load(gpa: std.mem.Allocator) Error!Library {
-        _ = gpa;
+    /// Loads the SANE that comes with minilab, or else the system's.
+    pub fn load(gpa: std.mem.Allocator, io: std.Io) Error!Library {
         if (comptime !supported) {
             return error.Unavailable;
         } else {
+            if (comptime builtin.os.tag == .macos) {
+                if (loadBundled(gpa, io)) |library| return library else |_| {}
+            }
             for (library_paths) |path| {
-                var dynlib = DynLib.openZ(path) catch continue;
-                var library: Library = .{ .dynlib = dynlib, .api = undefined };
-                const fields = @typeInfo(Api).@"struct";
-                inline for (fields.field_names, fields.field_types) |name, Type| {
-                    @field(library.api, name) = dynlib.lookup(Type, "sane_" ++ name) orelse {
-                        dynlib.close();
-                        return error.Unavailable;
-                    };
-                }
-                var version: Int = 0;
-                if (library.api.init(&version, null) != .good) {
-                    dynlib.close();
-                    return error.Unavailable;
-                }
+                var library = openAt(path) catch continue;
+                library.initialise() catch {
+                    library.dynlib.close();
+                    continue;
+                };
                 return library;
             }
             return error.Unavailable;
         }
+    }
+
+    /// Loads the SANE in the folder next to the program. SANE reads where its files are from the
+    /// environment when it starts, so we point it there first: at its own backends and configs,
+    /// then at the system's. Backends installed into the system's SANE, like epkowa for the V200,
+    /// still load that way. The dll backend searches `LD_LIBRARY_PATH` for backends on every
+    /// system (macOS's own loader ignores it). A `SANE_CONFIG_DIR` of your own is left as it is.
+    fn loadBundled(gpa: std.mem.Allocator, io: std.Io) Error!Library {
+        var buffer: [std.fs.max_path_bytes]u8 = undefined;
+        const folder = bundledFolder(io, &buffer) orelse return error.Unavailable;
+        const path = try std.fs.path.joinZ(gpa, &.{ folder, bundle.library });
+        defer gpa.free(path);
+        var library = try openAt(path);
+        errdefer library.dynlib.close();
+
+        const backends_dir = try std.fs.path.join(gpa, &.{ folder, bundle.backends });
+        defer gpa.free(backends_dir);
+        const backends = try searchPath(gpa, backends_dir, "/lib/sane", if (std.c.getenv("LD_LIBRARY_PATH")) |p| std.mem.span(p) else null);
+        defer gpa.free(backends);
+        const search = try Changed.set(gpa, "LD_LIBRARY_PATH", backends);
+        defer search.deinit(gpa);
+        errdefer search.restore();
+
+        var config: ?Changed = null;
+        defer if (config) |changed| changed.deinit(gpa);
+        errdefer if (config) |changed| changed.restore();
+        if (std.c.getenv("SANE_CONFIG_DIR") == null) {
+            const config_dir = try std.fs.path.join(gpa, &.{ folder, bundle.config });
+            defer gpa.free(config_dir);
+            const configs = try searchPath(gpa, config_dir, "/etc/sane.d", null);
+            defer gpa.free(configs);
+            config = try Changed.set(gpa, "SANE_CONFIG_DIR", configs);
+        }
+
+        try library.initialise();
+        return library;
+    }
+
+    /// Opens the libsane at `path` and finds its functions.
+    fn openAt(path: [:0]const u8) Error!Library {
+        var dynlib = DynLib.openZ(path) catch return error.Unavailable;
+        errdefer dynlib.close();
+        var library: Library = .{ .dynlib = dynlib, .api = undefined };
+        const fields = @typeInfo(Api).@"struct";
+        inline for (fields.field_names, fields.field_types) |name, Type| {
+            @field(library.api, name) = dynlib.lookup(Type, "sane_" ++ name) orelse return error.Unavailable;
+        }
+        return library;
+    }
+
+    /// Starts SANE up. It reads its configuration now.
+    fn initialise(library: *Library) Error!void {
+        var version: Int = 0;
+        if (library.api.init(&version, null) != .good) return error.Unavailable;
     }
 
     /// Forgets SANE without shutting it down: it doesn't call `sane_exit` or close the library.
@@ -667,6 +788,34 @@ fn errorOf(status: Status) Error {
     };
 }
 
+test "the bundled SANE looks in its own folders first, then the system's" {
+    const gpa = std.testing.allocator;
+    const backends = try searchPath(gpa, "/Apps/minilab/sane/backends", "/lib/sane", "/mine");
+    defer gpa.free(backends);
+    try std.testing.expectEqualStrings("/Apps/minilab/sane/backends:/opt/homebrew/lib/sane:/usr/local/lib/sane:/opt/local/lib/sane:/mine", backends);
+    const configs = try searchPath(gpa, "/Apps/minilab/sane/sane.d", "/etc/sane.d", null);
+    defer gpa.free(configs);
+    try std.testing.expectEqualStrings("/Apps/minilab/sane/sane.d:/opt/homebrew/etc/sane.d:/usr/local/etc/sane.d:/opt/local/etc/sane.d", configs);
+}
+
+test "an environment variable we change goes back to what it was" {
+    if (comptime builtin.os.tag != .macos) {
+        return error.SkipZigTest;
+    } else {
+        const gpa = std.testing.allocator;
+        const name = "MINILAB_SANE_TEST";
+        const first = try Changed.set(gpa, name, "first");
+        defer first.deinit(gpa);
+        const second = try Changed.set(gpa, name, "second");
+        defer second.deinit(gpa);
+        try std.testing.expectEqualStrings("second", std.mem.span(std.c.getenv(name).?));
+        second.restore();
+        try std.testing.expectEqualStrings("first", std.mem.span(std.c.getenv(name).?));
+        first.restore();
+        try std.testing.expect(std.c.getenv(name) == null);
+    }
+}
+
 test "fixed-point numbers" {
     try std.testing.expectEqual(@as(Word, @intFromFloat(@round(33.02 * fixed_one))), fix(33.02));
     try std.testing.expectApproxEqAbs(@as(f64, 244.348), unfix(fix(244.348)), 1e-4);
@@ -704,7 +853,7 @@ test "three-pass frames fill one channel each" {
 test "SANE's test backend scans, where libsane is installed" {
     if (comptime !supported) return error.SkipZigTest;
     const gpa = std.testing.allocator;
-    var library = Library.load(gpa) catch return error.SkipZigTest;
+    var library = Library.load(gpa, std.testing.io) catch return error.SkipZigTest;
     defer library.unload();
     const device: interface.Device = .{ .id = "test", .vendor = "Noname", .model = "frontend-tester", .driver = "test", .kind = .sane };
     var scanner = library.open(gpa, device) catch return error.SkipZigTest;

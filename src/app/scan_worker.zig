@@ -242,7 +242,7 @@ pub const Worker = struct {
     }
 
     fn run(worker: *Worker) void {
-        worker.library = scan.Library.load(worker.gpa) catch null;
+        worker.library = scan.Library.load(worker.gpa, worker.io) catch null;
         if (worker.library == null) worker.phase.store(.unavailable, .release);
         while (true) {
             worker.mutex.lockUncancelable(worker.io);
@@ -265,7 +265,7 @@ pub const Worker = struct {
     fn handle(worker: *Worker, job: Job) void {
         const gpa = worker.gpa;
         // Looking for scanners tries the scanner library again, so it's found once it's installed.
-        if (worker.library == null and job == .list) worker.library = scan.Library.load(gpa) catch null;
+        if (worker.library == null and job == .list) worker.library = scan.Library.load(gpa, worker.io) catch null;
         const library = if (worker.library) |*l| l else {
             freeJob(gpa, job);
             worker.post(.{ .failed = .{ .stage = switch (job) {
@@ -469,7 +469,7 @@ test "the scan thread's jobs preview and scan frames on SANE's test backend" {
         for (worker.events.items) |*event| event.deinit(gpa);
         worker.events.deinit(gpa);
     }
-    worker.library = scan.Library.load(gpa) catch return error.SkipZigTest;
+    worker.library = scan.Library.load(gpa, std.testing.io) catch return error.SkipZigTest;
     defer worker.library.?.unload();
     const test_device: scan.Device = .{ .id = "test", .vendor = "Noname", .model = "frontend-tester", .driver = "test", .kind = .sane };
     worker.devices = try gpa.alloc(scan.Device, 1);

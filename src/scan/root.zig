@@ -6,7 +6,7 @@
 //! scan takes as long as the scanner takes. Neither SANE nor TWAIN can be called from two threads
 //! at once, so one thread owns the library and the scanner and makes all the calls.
 //!
-//!     var library = try scan.Library.load(gpa);
+//!     var library = try scan.Library.load(gpa, io);
 //!     defer library.unload();
 //!     const devices = try library.devices(gpa);
 //!     defer scan.freeDevices(gpa, devices);
@@ -350,9 +350,9 @@ pub const Library = union(Kind) {
     twain: twain.Library,
 
     /// Loads the platform's library. Returns `Error.Unavailable` when it isn't installed.
-    pub fn load(gpa: std.mem.Allocator) Error!Library {
+    pub fn load(gpa: std.mem.Allocator, io: std.Io) Error!Library {
         return switch (native) {
-            .sane => .{ .sane = try sane.Library.load(gpa) },
+            .sane => .{ .sane = try sane.Library.load(gpa, io) },
             .twain => .{ .twain = try twain.Library.load(gpa) },
         };
     }

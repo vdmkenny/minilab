@@ -1,0 +1,29 @@
+# Builds the SANE the macOS releases carry (`scripts/build-sane-macos.sh`), for both Macs, whenever
+# the script or the release workflow changes. The release builds it as well, but a broken build
+# found there would leave a release without its Mac downloads.
+name: SANE for macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - scripts/build-sane-macos.sh
+      - .github/workflows/release.yml
+      - .github/workflows/sane-macos.yml
+  pull_request:
+    paths:
+      - scripts/build-sane-macos.sh
+      - .github/workflows/release.yml
+      - .github/workflows/sane-macos.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x86_64]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/build-sane-macos.sh ${{ matrix.arch }} sane
