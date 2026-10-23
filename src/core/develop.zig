@@ -100,7 +100,7 @@ pub const WhiteBalance = enum {
     }
 };
 
-/// How much warmer or cooler the warm and cool balances are: a twelfth of a stop on red and blue.
+/// How much warmer or cooler the warm and cool balances are: an eighth of a stop on red and blue.
 const warmth = 25;
 
 /// The light the balance as set counts as, K: daylight, which daylight film is balanced for.
