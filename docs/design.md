@@ -11,7 +11,7 @@ film. It does four things:
 - it exports finished files.
 
 35mm is the default, and most other formats work too. It's written in Zig 0.17 with a Dear ImGui
-interface, and it's set up the same way as openreliant-editor.
+interface.
 
 Most of what's described here is built. Section 15 lists what isn't yet.
 
@@ -87,17 +87,15 @@ What's out, at least for now:
    -------------------------------------------------------------------------------
 ```
 
-- **Zig 0.17, written idiomatically, with OpenReliant's conventions.** Name every number, give
-  every set of ids an `enum` and switch over it exhaustively, use tagged unions for variants and
-  optionals for "none", check invariants at `comptime`, and put `test` blocks next to the code.
-  Docs and comments use British spelling; text on screen uses American spelling.
+- **Zig 0.17, written idiomatically.** CONTRIBUTING.md has the conventions and the spelling
+  rules.
 - **The core** is everything you can test without a window: the pipeline, frame detection,
   scanner sessions and file handling. `zig build test` runs its tests without a scanner or a
   display.
 - **The app** is one program. Run it with no arguments and you get the GUI. Commands such as
   `minilab develop`, `minilab detect` and `minilab scan` run the core from the command line, for
   batch work and for testing.
-- **Dear ImGui, as in openreliant-editor.** Dear ImGui is C++, so we use it through Dear
+- **Dear ImGui.** Dear ImGui is C++, so we use it through Dear
   Bindings' C API. The translate-c package turns one header, `src/platform/c.h` (SDL3, `dcimgui.h`
   and its SDL3 and SDL_GPU backends), into the `c` module. We tried zgui, the Zig-native wrapper,
   but it doesn't build with Zig 0.17: it uses `std.meta.fields`, which 0.17 removed.
@@ -228,37 +226,14 @@ strip: `minilab scan` gives the same values as `scanimage` with the same options
 every channel.
 
 **Scanners without a profile: raw setup.** minilab scans in colour at the deepest bit depth the
-scanner has, and works out the rest from the options the backend lists (`rawControls` in
-`src/scan/root.zig`). Backends use SANE's standard names where there is one (`saneopts.h`), and
-we read the others' names and values from the drivers' own strings. In this order:
+scanner has, and sets the rest from the options the backend lists (`rawControls` in
+`src/scan/root.zig`): the film type to positive (first, as with a profile), gamma to 1.0 (a gamma
+choice that says so, or the gamma tables filled with a straight line), colour correction off, and
+brightness and contrast to 0 where 0 is the middle of their range. An option the scanner won't
+take is skipped and logged. On the V200 this gives the same data as its profile.
 
-- the film type: an option with "film" in its name and a value that says positive, set to
-  positive film, first, for the same reason as with a profile;
-- gamma: SANE's `custom-gamma` switched on and its gamma tables (`gamma-table`,
-  `red-gamma-table` and so on) filled with a straight line; or a gamma choice that says 1.0 or
-  linear, like epson2's `User defined (Gamma=1.0)`; or one that takes your own table, and then
-  the tables. Coolscans have tables and no switch, so their tables are always on and get filled
-  too. Gamma numbers (`gamma`, `analog-gamma`) are set to 1.0;
-- colour correction off: an option with "color correction" in its name set to none or off, or
-  epkowa's matrix set to the identity. Shading correction is left alone, since it evens out the
-  lamp;
-- brightness and contrast set to 0, but only where 0 is in the middle of their range.
-
-On the V200 it picks the profile's gamma choice and colour matrix (there's a test for it), and also
-fills the gamma tables with a straight line and sets brightness and contrast to 0. We scanned a
-colour strip on the V200 with the profile and then with raw setup (the profile switched off): the
-two agree within 1.2% in every channel. That's closer than two scans with the profile, because
-the first scan after the scanner wakes up comes out about 4% brighter. An option the scanner won't
-take is skipped and logged, and the scan still goes ahead. The Scan screen says
-how it all left the scanner: "Raw · gamma 1.0 · color correction off", or that the data may not
-be linear.
-
-When raw setup guesses wrong, the Scanner settings window shows each of those options, at Auto
-(what raw setup picks) or at another of its values, or at the driver's default. The changes are
-kept in the library's `scanners.json`, per scanner and driver, since the same scanner has other
-option names on another driver (epson2 and epkowa both drive Epsons). A `scanners.json` that can't
-be read is moved aside to `scanners.json.bad` rather than written over. The scan thread gets a copy
-of the open scanner's changes and applies them on every scan. Reset clears a scanner's changes.
+The Scanner settings window on Scan sets any of those options another way, per scanner and driver,
+for when raw setup guesses wrong. The changes are kept in the library's `scanners.json`.
 
 A scanner that can't give linear data at all could still be used if we undid its curve: a scan of
 a transmission step wedge (a strip of known densities, such as a Stouffer T2115) would measure
@@ -321,7 +296,6 @@ measures them. Nominal picture sizes, in mm:
 | APS | H 30.2 × 16.7, C 25.1 × 16.7, P 30.2 × 9.5 |
 | Minox | 8 × 11 |
 | Sheet film | 4×5 in, 5×7 in, 8×10 in, 9×12 cm, 13×18 cm; the picture area depends on the holder |
-| Custom | any size, with the ratio locked or free |
 
 The pitch is the distance from one frame to the next. The V200's 33.02 mm window takes 35 mm wide
 film (135 and 126), and narrower film (110 at 16 mm, APS at 24 mm, Minox at 9.2 mm) if a holder
@@ -352,8 +326,8 @@ Detection on a strip preview works like this for negatives (`src/frames/detect.z
    Missing edges are filled in from the pitch: measured between sharp edges where they repeat,
    or else the format's fixed pitch. Those frames are marked for checking too. 120 and other films
    without perforations have no fixed pitch, so there you'll more often fix weak frames by hand.
-6. **Inset.** By default there's none across the height. You can set one when the opening is
-   wider than the picture, for example a 35mm holder with a 120 mask.
+6. **Inset.** By default there's none. In Scan you can take a share off each side of a frame,
+   for when the opening is wider than the picture, like a 35mm holder with a 120 mask.
 
 Positives take the same steps with the gap test turned around: on unmounted slide film the gaps
 are unexposed, so they're dark instead of clear. Mounted slides are found by their openings
@@ -592,7 +566,7 @@ white balance. The stock presets are built into the program (`src/presets/stocks
   Tone, balance and the rest of Develop's settings still apply under it. minilab ships Frontier
   emulation (section 10) and the film looks below, and you can import any .cube that expects sRGB
   or Rec. 709 input. Imported LUTs are copied into the library's `Looks/` folder.
-- **Film looks:** 85 LUTs from three free collections, listed in `src/presets/looks/bundled.zig`
+- **Film looks:** LUTs from three free collections, listed in `src/presets/looks/bundled.zig`
   with each one's film, name and file:
   - GlassMeter (CC BY 4.0): 30 .cube files at 33³;
   - t3mujinpack (MIT): 51 HaldCLUTs at 144³. A HaldCLUT is a 3D LUT stored as a PNG picture;
@@ -706,7 +680,6 @@ write both in Zig: we only need a handful of tags, and exiv2, the usual library 
 
 | Part | What for | Licence |
 |---|---|---|
-| openreliant-editor | the build setup: `build.zig`, `c.h`, the SDL3/SDL_GPU window, the Makefile; patterns for `gui.zig` | MPL-2.0 (ours too) |
 | Dear ImGui, docking branch | the GUI | MIT |
 | Dear Bindings | a C API over Dear ImGui, for translate-c | MIT |
 | translate-c package | turns C headers into a Zig module | MIT |
@@ -723,15 +696,14 @@ write both in Zig: we only need a handful of tags, and exiv2, the usual library 
 | the V200 driver repo: `tools/imgcompare`, test data | how to line up two scans; our V200 scans as test inputs | ours |
 | GlassMeter Film Looks (Glass Works) | 30 film looks, baked in | CC BY 4.0 |
 | t3mujinpack (João Almeida) | 51 film looks, baked in | MIT |
-| Street Monochrome (Ivan Bogachev) | 4 B&W looks, baked in | CC BY 4.0 |
+| Street Monochrome (Ivan Bogachev) | B&W looks, baked in | CC BY 4.0 |
 
 `build.zig.zon` fetches the libraries, fonts and look collections at pinned versions, and
-`zig build` builds the C and C++ ones, the same way openreliant-editor and OpenReliant do:
+`zig build` builds the C and C++ ones:
 
 - Little CMS and zlib come from allyourcodebase's Zig packages;
 - libtiff, libjpeg-turbo and LibRaw are built from their upstream sources with our own build
-  files in `deps/`, the way OpenReliant does it for FreeType and libarchive. libjpeg-turbo is built
-  without its SIMD code, so you don't need NASM.
+  files in `deps/`. libjpeg-turbo is built without its SIMD code, so you don't need NASM.
 
 SANE and the TWAIN DSM are the exceptions. They're loaded when minilab runs, and on Linux and
 Windows they belong to the system, because the system's scanner configuration comes with them.
@@ -744,7 +716,7 @@ script changes, so a broken build shows up before a release.
 
 ## 13. Licence
 
-minilab is MPL-2.0, like openreliant-editor. The MPL works per file: a changed minilab file stays
+minilab is MPL-2.0. The MPL works per file: a changed minilab file stays
 MPL-2.0, but minilab can be combined with code under other licences.
 
 What that rules out, and how minilab stays within it:
@@ -758,11 +730,9 @@ What that rules out, and how minilab stays within it:
   shipped: people install it into their own SANE.
 - The macOS download carries SANE with every backend that builds on macOS, so that as many
   scanners as possible work with nothing to install. Fifteen of those backends are under the GPL
-  without the exception (agfafocus, canon_lide70, coolscan3, epson2, epsonds, genesys, hp4200,
-  kodakaio, magicolor, niash, p5, pieusb through `sanei_ir.c`, s9036, stv680 and tamarack), and
-  kvs1025, kvs20xx and kvs40xx have no licence notice at all. Several of them drive common film
-  scanners: Plustek OpticFilm and Canon's film flatbeds (genesys), newer Epsons (epson2), Nikon
-  Coolscans (coolscan3) and Reflecta (pieusb).
+  without the exception, and three have no licence notice at all (`scripts/build-sane-macos.sh`
+  lists them). Several of them drive common film scanners: Plustek OpticFilm and Canon's film
+  flatbeds (genesys), newer Epsons (epson2), Nikon Coolscans (coolscan3) and Reflecta (pieusb).
 - The MPL allows that. Its section 3.3 lets an MPL program go out in a larger work with GPL code,
   and minilab's own files may then be shared under the GPL as well. The GPL asks for the source of
   the whole download: minilab's is public, the SANE, libusb and libjpeg-turbo archives are attached

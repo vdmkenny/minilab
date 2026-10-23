@@ -153,8 +153,7 @@ pub const State = struct {
     /// The Io the export runs on, kept for `deinit`, which doesn't get one passed in.
     io_for_deinit: ?std.Io = null,
 
-    pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
-        _ = gpu;
+    pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
         if (state.running) |*running| {
             running.batch.cancel.store(true, .release);
             // Waits for the frame being exported to reach its next check.

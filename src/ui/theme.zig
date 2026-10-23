@@ -33,11 +33,10 @@ pub const ready = hex(0x7FB77E);
 pub const histogram_ground = hex(0x1A1A1B);
 /// A selected card or row, one step lighter than the panel.
 pub const raised = hex(0x2A2A2D);
-pub const sprocket = hex(0x4A4A4E);
 /// The film of the strips on Rolls.
 pub const film = hex(0x0E0E0F);
-/// The scanner's film holder, where it covers the film's edges.
-pub const holder = hex(0x121213);
+/// A slide's mount, on Scan's preview of mounted slides.
+pub const slide_mount = hex(0xC9C9C4);
 /// The track of a slider to the right of its thumb.
 pub const track = hex(0x5A5A5F);
 /// The background behind labels drawn over an image.

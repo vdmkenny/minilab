@@ -405,24 +405,15 @@ menu shows the preset instead.
 
 For each one, we first searched the makers' datasheets and other technical publications for stated
 numbers (contrast index, G-bar or gamma per development, base + fog, D-max, speed points), and then
-for a characteristic curve. Here's what turned up:
+for a characteristic curve. Here's what turned up for the ones still without a preset:
 
 | Stock | Result |
 |---|---|
-| Ilford HP5 Plus, FP4 Plus, Delta 100, Delta 3200, Pan F Plus, XP2 Super | Now presets, read from the curves. No sheet states a contrast for a particular development. Ilford's developer leaflets (ID-11 2004, ILFOTEC HC 2003, ILFOTEC DD, RT RAPID, the powder and liquid developer leaflets of 2003 to 2010, DD-X 2019, LC29 2020, Ilfosol 3 2019) only say that their times aim at G-bar 0.62 for all films. They also give FP4 Plus control-strip values for seasoned developers, but those describe the strip, not the film. |
 | Kentmere Pan 100, Pan 400 | Nothing usable. No edition prints a characteristic curve, a contrast-time graph or a contrast figure: January 2009 (kentmere.co.uk, archived), January 2019 and the current sheets only have reciprocity, temperature and time tables. Tried: https://web.archive.org/web/20121116050051id_/http://www.kentmere.co.uk/Webfiles/20091291713401332.pdf, https://web.archive.org/web/20121120120022id_/http://www.kentmere.co.uk/Webfiles/20091291714152280.pdf, https://web.archive.org/web/20220709053530id_/https://www.ilfordphoto.com/amfile/file/download/file/1921/product/696/, https://web.archive.org/web/20201112030440id_/https://www.ilfordphoto.com/amfile/file/download/file/1922/product/697/; kentmerephoto.com and kentmere.com didn't connect and have no archived captures. |
-| Kodak T-Max P3200 | Now a preset, read from the curve. Stated numbers: nominal speed EI 1000 in T-MAX developers (F-4001, F-4016), and Kodak J-86's blanket contrast-index aim of 0.56 for "the other films" (October 2002, https://web.archive.org/web/20160615035416id_/http://www.kodak.com/global/en/professional/support/techPubs/j86/j86.pdf). |
-| Fujifilm Acros 100 II | Now a preset, read from the curve. AF3-0258E only states granularity and resolving power; its time-Ḡ graph is an image. |
 | Kodak ColorPlus 200 | Nothing found from Kodak or Kodak Alaris. None of the archived PDF folders on Kodak Alaris's domains has a ColorPlus sheet, the current "everyday film" pages only list Gold 200 and UltraMax 400, the Kodak Alaris site search finds nothing for "colorplus" or "kodacolor", and the imaging.kodakalaris.com product page returns 404. |
-| Kodak Pro Image 100 | Now a preset, read from the vector curve in E-4L (July 1997, archived from kodak.com). It states red densities for judging exposure, which section 3 uses. There's no Kodak Alaris sheet for the current product (the imaging.kodakalaris.com product page returns 404). |
-| Fujifilm Superia 200 | Now a preset, read from the chart image in AF3-026E. Its only stated number is the grey-card red density (section 3). AF3-008E, archived from fujifilm.com, states the same. |
-| Harman Phoenix 200 | Now a preset, read from the chart image. The sheet states ISO 200 and that the film works best between EI 100 and 200; it doesn't say how density was measured. |
 | CineStill 400D | Nothing. CineStill doesn't name a base stock for 400D and hosts no datasheet for it; its only 400D PDF is a 4x5 handling sheet with no data (https://cdn.shopify.com/s/files/1/0339/5113/files/CineStill_400D_4x5_Handling_Tips.pdf). https://cinestillfilm.com/pages/datasheets returns 404. |
 | CineStill 50D | Left out. CineStill's 50D product page (archived 26 February 2018, https://web.archive.org/web/20180226220131id_/https://cinestillfilm.com/products/50daylight-36exp-135-fine-grain-color-film-35mm-roll) says "Original fresh stock from Kodak 50D, prepped and rolled for clean safe C-41 standard development as an ISO 50 film." It says Kodak 50D but not Vision3 50D or 5203, and the current page only says "Based on the original motion picture emulsion". Kodak's only 50D camera film is Vision3 50D 5203/7203, so if you accept that reading of CineStill's wording, the entry could use the Vision3 50D reading, the way 800T uses 5219. |
 | Lomography Color Negative 100, 400, 800 | Nothing usable. Lomography's film guides (https://cdn.downloads.lomography.com/downloads/color-negative-100-film-guide.pdf, and the same with -400- and -800-) only give ISO and C-41 and show sample photos. We didn't find a datasheet: lomography.com and shop.lomography.com returned 403, guessed datasheet names on cdn.downloads.lomography.com returned 404, and the web.archive.org index searches were offline. |
-| Fujichrome Velvia 50 | Now a preset, read from the chart image in AF3-0221E2. The sheet only states granularity and resolving power; the Japanese edition (163AR0128B) states the same. |
-
-Ilford SFX 200 and the Ortho Plus curve were added the same way.
 
 ## Stocks left out
 

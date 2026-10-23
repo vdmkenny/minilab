@@ -11,7 +11,7 @@
 //!     const devices = try library.devices(gpa);
 //!     defer scan.freeDevices(gpa, devices);
 //!     var scanner = try library.open(gpa, devices[0]);
-//!     defer scanner.close(gpa);
+//!     defer scanner.close();
 //!     var capabilities = try scanner.capabilities(gpa, .transparency);
 //!     defer capabilities.deinit(gpa);
 //!     var progress: scan.Progress = .{};
@@ -717,7 +717,7 @@ pub const Library = union(Kind) {
     pub fn load(gpa: std.mem.Allocator, io: std.Io) Error!Library {
         return switch (native) {
             .sane => .{ .sane = try sane.Library.load(gpa, io) },
-            .twain => .{ .twain = try twain.Library.load(gpa) },
+            .twain => .{ .twain = try twain.Library.load() },
         };
     }
 
@@ -764,9 +764,9 @@ pub const Scanner = union(Kind) {
         };
     }
 
-    pub fn close(scanner: *Scanner, gpa: std.mem.Allocator) void {
+    pub fn close(scanner: *Scanner) void {
         switch (scanner.*) {
-            inline else => |*s| s.close(gpa),
+            inline else => |*s| s.close(),
         }
         scanner.* = undefined;
     }

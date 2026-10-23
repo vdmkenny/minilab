@@ -379,8 +379,7 @@ pub const Library = struct {
     /// manager we use Windows' global memory instead.
     memory: EntryPoint,
 
-    pub fn load(gpa: std.mem.Allocator) Error!Library {
-        _ = gpa;
+    pub fn load() Error!Library {
         if (comptime !supported) return error.Unavailable;
         const module = win.LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral(manager_name)) orelse return error.Unavailable;
         errdefer _ = win.FreeLibrary(module);
@@ -557,8 +556,7 @@ pub const Scanner = struct {
         if (rc != rc_success and rc != rc_checkstatus) return scanner.library.failure(&scanner.source);
     }
 
-    pub fn close(scanner: *Scanner, gpa: std.mem.Allocator) void {
-        _ = gpa;
+    pub fn close(scanner: *Scanner) void {
         if (comptime !supported) unreachable;
         const library = scanner.library;
         _ = library.entry(&library.app, null, dg_control, dat_identity, msg_closeds, @ptrCast(&scanner.source));

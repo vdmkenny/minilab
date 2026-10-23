@@ -36,13 +36,6 @@ pub const Curves = struct {
     /// The straightened density at `samples` even steps from 0 to `top`. It's 0 at the base.
     values: [3][samples]f32,
 
-    /// Straightens `d`, the density above the base in each channel.
-    pub fn apply(curves: *const Curves, d: [3]f32) [3]f32 {
-        var out: [3]f32 = undefined;
-        for (&out, d, 0..) |*o, v, c| o.* = curves.layer(c, v);
-        return out;
-    }
-
     /// Straightens density `d` (above the base) for layer `c`. Below the base it carries on at the
     /// slope of the first step, and above the table at a slope of 1, like the straight part.
     pub fn layer(curves: *const Curves, c: usize, d: f32) f32 {
@@ -171,7 +164,7 @@ test "a straight curve changes nothing" {
     for ([_]f32{ 1, 0.8 }) |scale| {
         const curves = of(testStock(&line, 0.6), @splat(scale)).?;
         for ([_]f32{ 0, 0.1, 0.5, 1.2, 2.5 }) |d| {
-            for (curves.apply(@splat(d))) |v| try std.testing.expectApproxEqAbs(d, v, 1e-4);
+            for (0..3) |c| try std.testing.expectApproxEqAbs(d, curves.layer(c, d), 1e-4);
         }
     }
 }

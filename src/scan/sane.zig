@@ -12,8 +12,9 @@
 //! (`interface.rawSetup`): its gamma tables straightened, colour correction off, and so on.
 //!
 //! A scan is always read to the end. Calling `sane_cancel` in the middle of a scan leaves the V200
-//! stuck until it's switched off (we found this during the V200 driver work), so this file never
-//! calls it before the last line.
+//! stuck until it's switched off (we found this during the V200 driver work). So this file only
+//! calls it once the scanner has stopped sending: after the last line, after a read that failed,
+//! or when a scan fails before any data comes (`finish`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -372,8 +373,7 @@ pub const Scanner = struct {
     handle: Handle,
     profile: ?*const interface.Profile,
 
-    pub fn close(scanner: *Scanner, gpa: std.mem.Allocator) void {
-        _ = gpa;
+    pub fn close(scanner: *Scanner) void {
         scanner.api.close(scanner.handle);
         scanner.* = undefined;
     }
@@ -983,7 +983,7 @@ test "SANE's test backend scans, where libsane is installed" {
     defer library.unload();
     const device: interface.Device = .{ .id = "test", .vendor = "Noname", .model = "frontend-tester", .driver = "test", .kind = .sane };
     var scanner = library.open(gpa, device) catch return error.SkipZigTest;
-    defer scanner.close(gpa);
+    defer scanner.close();
     var capabilities = try scanner.capabilities(gpa, null);
     defer capabilities.deinit(gpa);
     try std.testing.expect(capabilities.resolutions.len > 0);

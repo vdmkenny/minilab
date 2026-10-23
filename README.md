@@ -50,12 +50,15 @@ The app has five workspaces, roughly one per step:
 - **Rolls** shows each roll as a contact sheet, with its film, its format and how many frames
   you've developed. Click New roll to start one. Drop scans, or a folder of them, on a roll's row
   to add them. The bin on a roll's card moves the whole roll to the Trash, after you confirm, so
-  you can still put it back from there. Rolls added from outside the app, say with `minilab import`, show up by themselves.
-- **Finished scans** are pictures that are already positives: a lab's JPEGs, or a scanner's that
-  inverts by itself. A roll keeps them as the files they are and shows them unchanged, with the
-  usual look, saturation and exposure on top if you want them.
+  you can still put it back from there. Rolls added from outside the app, say with
+  `minilab import`, show up by themselves.
+
+  A roll can also hold finished scans: pictures that are already positives, like a lab's JPEGs or
+  a scanner's that inverts by itself. The roll keeps them as the files they are and shows them
+  unchanged, with the usual look, saturation and exposure on top if you want them.
 - **Scan** shows the scanner's preview with the frames minilab found on it. You can fix any
-  frame's box, then queue the frames up and scan them into a roll.
+  frame's box, then queue the frames up and scan them into a roll. For slides in mounts, pick
+  Positive and then Mounted.
 - **Develop** is where a negative becomes a picture. You see the negative and the positive side
   by side, and you set the film base, density, inversion curve, colour balance, saturation and a
   look. Sync copies some or all of those settings to the roll's other frames. The Loupe (L) shows
@@ -99,20 +102,17 @@ colour) applied on top of Neutral.
 
 ## Command line
 
-```
-minilab import <roll name> <scan or folder>... [--library <folder>] [--stock <name>] [--film colour|bw|slide] [--move]
-minilab looks
-minilab develop <scan.ppm> <out.tif|out.ppm> [--look <look>] [--depth 8|16]
-minilab develop-roll <out folder> <scan.ppm>... [--look <look>]
-minilab detect <scan.ppm> --dpi <n>
-minilab scan --list
-minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
-```
+- `minilab open` opens the app, on a library, roll and workspace of your choice.
+- `minilab import` adds scans, or folders of them, to a roll, and makes the roll if it's new.
+- `minilab looks` lists the looks.
+- `minilab develop` and `minilab develop-roll` develop scans outside the library.
+- `minilab detect` lists the frames it finds on a strip scan.
+- `minilab scan` makes one scan, and `minilab scan --list` lists the scanners.
 
-`minilab --help` lists every option, and every command takes `--verbose`. `--look` takes a look
-name from `minilab looks`, like `glassmeter:kodak-portra-400`, or the path to a .cube file.
-`import` takes folders as well as files, and `--move` moves finished scans (JPEGs) into the roll
-instead of copying them. Raw scans are always converted, so their originals stay put.
+`minilab --help` lists every command with its options, and every command takes `--verbose`.
+`--look` takes a look name from `minilab looks`, like `glassmeter:kodak-portra-400`, or the path
+to a .cube file. `import`'s `--move` moves finished scans (JPEGs) into the roll instead of copying
+them. Raw scans are always converted, so their originals stay put.
 
 ## Scanning
 
@@ -142,12 +142,10 @@ of its own. That leaves the film base (the colour of the bare film, orange on mo
 negatives) untouched, so minilab can measure it in the gaps between frames.
 
 For the Epson Perfection V200 that comes from a profile we measured. For any other scanner,
-minilab works it out from the driver's own settings: it sets gamma to 1.0 (or fills the gamma
-tables with a straight line), turns colour correction off and sets the film type to positive,
-whatever the driver calls those. The box under the scanner's name on the Scan screen says what it
-managed. If it got something wrong for your scanner, open **Scanner settings**. It lists each of
-those settings with what minilab picked (Auto), and you can pick something else. Your changes are
-saved in the library, per scanner, and Reset puts the scanner back on Auto.
+minilab works it out from the driver's own settings: gamma 1.0, colour correction off and the
+film type on positive. The box under the scanner's name on the Scan screen says what it managed.
+If it got something wrong for your scanner, open **Scanner settings** and pick another value for
+any of them. Your changes are saved per scanner, and Reset puts the scanner back on Auto.
 
 ## Licence
 

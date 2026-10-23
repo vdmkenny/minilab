@@ -57,7 +57,7 @@ const library_check_ms = 2000;
 const Notice = context.Notice;
 
 pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
-    var window: Window = try .open("minilab", start_width, start_height, null, options.screenshot != null);
+    var window: Window = try .open("minilab", start_width, start_height, options.screenshot != null);
     defer window.close();
     gui.scale = window.scale;
     fonts.load(window.scale);
@@ -70,7 +70,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     var scan: scan_view.State = .{};
     defer scan.deinit(gpa, window.gpu);
     var exporting: export_view.State = .{};
-    defer exporting.deinit(gpa, window.gpu);
+    defer exporting.deinit(gpa);
     var looks: looks_view.State = .{};
     defer looks.deinit(gpa, window.gpu);
     var develop: develop_view.State = .{};
@@ -98,7 +98,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         // Pick up rolls and frames added on disk from outside the app.
         if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
             library_checked = c.SDL_GetTicks();
-            _ = library.refresh(gpa, io);
+            library.refresh(gpa, io);
         }
         gui.newFrame();
         const keys = shortcuts.poll();

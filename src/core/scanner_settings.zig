@@ -141,6 +141,9 @@ test "a change replaces the one before it, and null takes it away" {
 }
 
 test "an unreadable file is moved aside, not written over" {
+    // The warning about the file is expected.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});

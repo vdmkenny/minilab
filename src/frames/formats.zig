@@ -21,7 +21,6 @@ pub const FilmSize = enum {
     aps,
     minox,
     sheet,
-    custom,
 
     pub fn label(size: FilmSize) []const u8 {
         return switch (size) {
@@ -33,7 +32,6 @@ pub const FilmSize = enum {
             .aps => "APS",
             .minox => "Minox",
             .sheet => "Sheet film",
-            .custom => "Custom",
         };
     }
 
@@ -46,7 +44,7 @@ pub const FilmSize = enum {
             .@"110" => 16,
             .aps => 24,
             .minox => 9.2,
-            .sheet, .custom => null,
+            .sheet => null,
         };
     }
 
@@ -66,7 +64,7 @@ pub const FilmSize = enum {
             // (IX240) has two close together. They're all along one edge.
             .@"126", .@"110" => .{ .per_frame = 1 },
             .aps => .{ .per_frame = 2 },
-            .@"120", .@"127", .minox, .sheet, .custom => .none,
+            .@"120", .@"127", .minox, .sheet => .none,
         };
     }
 
@@ -75,7 +73,7 @@ pub const FilmSize = enum {
     pub fn perforations(size: FilmSize) ?Perforations {
         return switch (size) {
             .@"135" => .{ .pitch_mm = 4.75, .length_mm = 1.98, .height_mm = 2.8, .inset_mm = 2.0 },
-            .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet, .custom => null,
+            .@"120", .@"127", .@"110", .@"126", .aps, .minox, .sheet => null,
         };
     }
 
@@ -83,7 +81,7 @@ pub const FilmSize = enum {
     /// the format has no fixed pitch. Cameras differ, so this is a rough figure.
     pub fn typicalGapMm(size: FilmSize) f32 {
         return switch (size) {
-            .@"135", .aps, .custom => 2,
+            .@"135", .aps => 2,
             .@"120", .@"126" => 4,
             .@"127", .@"110" => 3,
             .minox => 1,
@@ -119,13 +117,8 @@ pub const registration_hole = struct {
     pub const spacing_mm = 3;
 };
 
-/// Whether a frame's length follows from its height.
-pub const RatioLock = enum {
-    /// The length follows from the height and the format's ratio.
-    locked,
-    /// The length is whatever detection measures.
-    free,
-};
+/// A 35mm slide's mount is 50 mm square (2 by 2 inches).
+pub const slide_mount_mm = 50;
 
 pub const Format = struct {
     size: FilmSize,
@@ -137,7 +130,6 @@ pub const Format = struct {
     /// How far the film advances from one frame to the next, in mm, when the camera sets this by
     /// counting perforations. Null when it varies from camera to camera.
     pitch_mm: ?f32 = null,
-    ratio_lock: RatioLock = .locked,
 
     /// The frame's length divided by its height.
     pub fn ratio(format: Format) f32 {
@@ -151,11 +143,6 @@ pub const Format = struct {
         return format.size.typicalGapMm();
     }
 };
-
-/// Makes a format of the user's own: any size, with the ratio locked or free.
-pub fn custom(width_mm: f32, height_mm: f32, ratio_lock: RatioLock) Format {
-    return .{ .size = .custom, .name = "custom", .width_mm = width_mm, .height_mm = height_mm, .ratio_lock = ratio_lock };
-}
 
 /// A 135 camera advances the film 8 perforations per frame.
 const full_frame_pitch_mm = 8 * FilmSize.@"135".perforationPitchMm().?;
@@ -228,8 +215,6 @@ test "every standard format has a positive size and belongs to a film size" {
     for (std.enums.values(Standard)) |id| {
         const f = id.format();
         try std.testing.expect(f.width_mm > 0 and f.height_mm > 0);
-        try std.testing.expect(f.size != .custom);
-        try std.testing.expectEqual(RatioLock.locked, f.ratio_lock);
         if (f.size.filmWidthMm()) |film| try std.testing.expect(f.height_mm < film);
         if (f.pitch_mm) |pitch| try std.testing.expect(pitch > f.width_mm);
     }

@@ -69,8 +69,15 @@ test "the colour strip develops as it did" {
 }
 
 fn read(gpa: std.mem.Allocator, io: std.Io, file: []const u8) ?[]u8 {
+    return readVendor(gpa, io, &.{ strip_dir, file });
+}
+
+/// Reads the file at `parts` in `vendor/`, or returns null when it isn't there.
+pub fn readVendor(gpa: std.mem.Allocator, io: std.Io, parts: []const []const u8) ?[]u8 {
     for (vendor_dirs) |dir| {
-        const path = std.fs.path.join(gpa, &.{ dir, strip_dir, file }) catch return null;
+        const inside = std.fs.path.join(gpa, parts) catch return null;
+        defer gpa.free(inside);
+        const path = std.fs.path.join(gpa, &.{ dir, inside }) catch return null;
         defer gpa.free(path);
         return std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes)) catch continue;
     }

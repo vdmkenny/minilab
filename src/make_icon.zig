@@ -5,17 +5,16 @@
 const std = @import("std");
 const icon = @import("platform/icon.zig");
 
+/// The exit status for a command line it doesn't understand, as minilab's own.
+const usage_status = 2;
+
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len != 2) {
         std.log.err("usage: make_icon <out.ico>", .{});
-        std.process.exit(2);
+        std.process.exit(usage_status);
     }
     const file = try icon.windowsIcon(init.gpa);
     defer init.gpa.free(file);
     try std.Io.Dir.cwd().writeFile(init.io, .{ .sub_path = args[1], .data = file });
-}
-
-test {
-    _ = icon;
 }

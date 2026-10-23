@@ -1,9 +1,6 @@
-//! Checks frame detection on the V200 scans in `vendor/`, when they're there. It isn't part of
-//! the test suite, because the scans are private and large, and it prints what detection finds
-//! instead of asserting anything. Zig only lets this file reach `../core/` from a root in `src/`,
-//! so run it through one: a file in `src/` that holds
-//! `test { _ = @import("frames/check_scans.zig"); }`, run with `zig test -O ReleaseFast` from the
-//! project root or from `minilab/`.
+//! Prints what frame detection finds on our V200 scans in `vendor/`, so a change to detection can
+//! be compared by eye. It runs with the tests and skips itself when the scans aren't there, since
+//! they're private and large (`core/scans_test.zig` reads them).
 //!
 //! The scans are a B&W negative strip and a colour negative frame:
 //!
@@ -19,6 +16,7 @@ const image = @import("../core/image.zig");
 const pnm = @import("../io/pnm.zig");
 const formats = @import("formats.zig");
 const detect = @import("detect.zig");
+const scans_test = @import("../core/scans_test.zig");
 
 const Source = struct {
     path: []const u8,
@@ -41,20 +39,15 @@ const sources = [_]Source{
     .{ .path = "hw-scans/2026-10-22/mac-negative-c8-2400-warm.pnm", .dpi = frame_dpi, .gamma = epson_gamma },
 };
 
-/// Where `vendor/` is, looking from the project root and from `minilab/`.
-const vendor_dirs = [_][]const u8{ "vendor", "../vendor" };
-const max_file_bytes = 256 << 20;
-
 test "V200 scans" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     const format = formats.Standard.@"135_full_frame".format();
+    var any = false;
     for (sources) |source| {
-        const bytes = read(gpa, io, source.path) orelse {
-            std.debug.print("{s}: not present\n", .{source.path});
-            continue;
-        };
+        const bytes = scans_test.readVendor(gpa, io, &.{source.path}) orelse continue;
         defer gpa.free(bytes);
+        any = true;
         var scan = try decode(gpa, bytes, source.gamma);
         defer scan.deinit(gpa);
         try report(gpa, io, source.path, scan, source.dpi, format);
@@ -65,15 +58,7 @@ test "V200 scans" {
             try report(gpa, io, "  reduced to 300 dpi", small, preview_dpi, format);
         }
     }
-}
-
-fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) ?[]u8 {
-    for (vendor_dirs) |dir| {
-        const full = std.fs.path.join(gpa, &.{ dir, path }) catch return null;
-        defer gpa.free(full);
-        return std.Io.Dir.cwd().readFileAlloc(io, full, gpa, .limited(max_file_bytes)) catch continue;
-    }
-    return null;
+    if (!any) return error.SkipZigTest;
 }
 
 fn report(gpa: std.mem.Allocator, io: std.Io, name: []const u8, scan: image.Scan, dpi: f32, format: formats.Format) !void {

@@ -566,8 +566,6 @@ fn medianBase(frames: []const FrameSettings) ?[3]f32 {
 /// The most frames the roll's base is worked out from. That's more than any roll has.
 const max_median_frames = 256;
 
-/// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on
-/// it.
 /// The longest extension a finished picture's file keeps, dot included.
 const max_extension = 8;
 
@@ -585,6 +583,8 @@ fn placeFile(gpa: std.mem.Allocator, io: Io, from: []const u8, to: []const u8, t
     if (transfer == .move) try cwd.deleteFile(io, from);
 }
 
+/// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on
+/// it.
 fn thumbnailLongest(scan: image.Scan, found: []const framing.Found) usize {
     if (found.len < 2) return thumbnail_longest;
     var shortest: usize = std.math.maxInt(usize);
@@ -1020,6 +1020,9 @@ test "a roll saved before the stock's corrections could be turned off has them o
 }
 
 test "a frame after a gap in the files keeps its own file" {
+    // The warning about notes.json is expected.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});

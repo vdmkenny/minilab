@@ -45,9 +45,8 @@ pub const Window = struct {
     dropped: Dropped = .{},
 
     /// Opens a window of `width` by `height` points at the display's scale, with ImGui set up to
-    /// draw in it. ImGui saves its layout in `ini_path`, or nowhere when that's null. A hidden
-    /// window only draws into images (`capture`).
-    pub fn open(title: [*:0]const u8, width: u32, height: u32, ini_path: ?[*:0]const u8, hidden: bool) Error!Window {
+    /// draw in it. A hidden window only draws into images (`capture`).
+    pub fn open(title: [*:0]const u8, width: u32, height: u32, hidden: bool) Error!Window {
         if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return fail("SDL_Init");
         errdefer c.SDL_Quit();
         const scale = displayScale();
@@ -71,7 +70,8 @@ pub const Window = struct {
         const io = c.ImGui_GetIO();
         // No keyboard navigation (no `NavEnableKeyboard`): the arrow keys and Tab are the app's
         // shortcuts.
-        io.*.IniFilename = ini_path;
+        // ImGui keeps no layout file: the app lays its panels out itself.
+        io.*.IniFilename = null;
         // Windows only move when you drag their title bars and tabs, so dragging inside a panel
         // never moves the panel.
         io.*.ConfigWindowsMoveFromTitleBarOnly = true;
@@ -220,10 +220,6 @@ pub const Window = struct {
     pub fn toggleFullScreen(window: *Window) void {
         const full = c.SDL_GetWindowFlags(window.handle) & c.SDL_WINDOW_FULLSCREEN != 0;
         _ = c.SDL_SetWindowFullscreen(window.handle, !full);
-    }
-
-    pub fn setTitle(window: *Window, title: [*:0]const u8) void {
-        _ = c.SDL_SetWindowTitle(window.handle, title);
     }
 };
 

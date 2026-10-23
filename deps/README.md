@@ -55,8 +55,8 @@ the C headers into Zig. A few of its small helper modules end up in the program.
   `libraw/libraw.h` and `jpeg_shim.h`) into the Zig module `codecs`, and links all the libraries.
   - `jpeg_shim.c` exists because libjpeg handles fatal errors with `longjmp`, and a `longjmp` must
     never jump over Zig code. So the shim runs libjpeg entirely inside C.
-  - The C libraries are always built with `ReleaseFast`, whatever mode you build minilab in (the
-    same as in OpenReliant). That way a debug build still decodes a camera file quickly.
+  - The C libraries are always built with `ReleaseFast`, whatever mode you build minilab in. That
+    way a debug build still decodes a camera file quickly.
   - Each library's licence file is a named lazy path, and `licences` in `codecs/build.zig` lists
     them, so the minilab build can install them next to the program.
 
@@ -81,4 +81,5 @@ cd deps/codecs
 zig build test -Draw-sample=/path/to/photo.nef
 ```
 
-Every package builds for `aarch64-macos`, `x86_64-linux-gnu` and `x86_64-windows-gnu`.
+Every package builds for the six targets the releases are made for: x86-64 and Arm on macOS, on
+Linux with glibc and on Windows with MinGW.

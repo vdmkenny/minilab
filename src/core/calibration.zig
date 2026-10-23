@@ -234,6 +234,9 @@ test "calibrations keep one measurement per roll, and the median over rolls" {
 }
 
 test "an unreadable calibration.json is moved aside, not written over" {
+    // The warning about the file is expected.
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
