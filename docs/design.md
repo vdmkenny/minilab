@@ -256,7 +256,8 @@ be linear.
 When raw setup guesses wrong, the Scanner settings window shows each of those options, at Auto
 (what raw setup picks) or at another of its values, or at the driver's default. The changes are
 kept in the library's `scanners.json`, per scanner and driver, since the same scanner has other
-option names on another driver (epson2 and epkowa both drive Epsons). The scan thread gets a copy
+option names on another driver (epson2 and epkowa both drive Epsons). A `scanners.json` that can't
+be read is moved aside to `scanners.json.bad` rather than written over. The scan thread gets a copy
 of the open scanner's changes and applies them on every scan. Reset clears a scanner's changes.
 
 A scanner that can't give linear data at all could still be used if we undid its curve: a scan of

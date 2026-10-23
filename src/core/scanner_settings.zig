@@ -11,6 +11,8 @@ const Io = std.Io;
 const scan = @import("../scan/root.zig");
 
 pub const file_name = "scanners.json";
+/// Added to the name of a scanners.json that can't be read, when it's moved aside.
+pub const unreadable_suffix = ".bad";
 const max_bytes = 1 << 20;
 
 pub const Scanner = struct {
@@ -46,7 +48,15 @@ pub const Settings = struct {
             else => return err,
         };
         const file = std.json.parseFromSliceLeaky(File, a, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| {
-            std.log.warn("{s} can't be read ({t}); starting without scanner settings", .{ settings.path.?, err });
+            // Move it aside rather than write over it with the next change, so nothing in it is
+            // lost.
+            const aside = try std.fmt.allocPrint(a, "{s}{s}", .{ settings.path.?, unreadable_suffix });
+            Io.Dir.cwd().rename(settings.path.?, Io.Dir.cwd(), aside, io) catch |rename_err| {
+                std.log.warn("{s} can't be read ({t}) or moved aside ({t}); scanner settings won't be saved", .{ settings.path.?, err, rename_err });
+                settings.path = null;
+                return settings;
+            };
+            std.log.warn("{s} can't be read ({t}); moved it to {s} and starting without scanner settings", .{ settings.path.?, err, aside });
             return settings;
         };
         settings.scanners = file.scanners;
@@ -128,6 +138,22 @@ test "a change replaces the one before it, and null takes it away" {
     try std.testing.expectEqual(@as(?scan.RawValue, null), scan.valueOf(settings.raw("EPSON V750", "epson2"), "gamma-correction"));
     try settings.reset(io, "EPSON V750", "epson2");
     try std.testing.expectEqual(@as(usize, 0), settings.scanners.len);
+}
+
+test "an unreadable file is moved aside, not written over" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    try tmp.dir.writeFile(io, .{ .sub_path = file_name, .data = "{ not json" });
+    var settings: Settings = try .load(gpa, io, library);
+    defer settings.deinit();
+    try settings.set(io, "EPSON V750", "epson2", "gamma-correction", .leave);
+    const kept = try tmp.dir.readFileAlloc(io, file_name ++ unreadable_suffix, gpa, .limited(max_bytes));
+    defer gpa.free(kept);
+    try std.testing.expectEqualStrings("{ not json", kept);
 }
 
 test "scanner settings survive the file" {
