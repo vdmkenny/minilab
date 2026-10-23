@@ -28,6 +28,8 @@ const frame_columns = 2;
 const frame_gap = 8;
 const thumb_height = 58;
 const bottom_bar_height = 36;
+/// The loupe's diameter. It shows the scan at full resolution: one scan pixel to one screen pixel.
+const loupe_size = 260;
 /// The rating's stars and reject button in the info line, and the space between them.
 const rating_icon = 14;
 const rating_gap = 4;
@@ -107,6 +109,14 @@ pub const State = struct {
     shown: std.ArrayList([4]u8) = .empty,
     positive: ?Texture = null,
     negative: ?Texture = null,
+    /// Whether the loupe is on, where it is over the picture this frame (null when the cursor is
+    /// elsewhere), and what its texture shows, so it's only rendered again when that changes.
+    loupe: bool = false,
+    loupe_target: ?LoupeTarget = null,
+    loupe_texture: ?Texture = null,
+    loupe_shows: ?LoupeKey = null,
+    /// Counts the renders of the frame, so the loupe knows when the settings have changed.
+    renders: u64 = 0,
     /// Whether `shown` and the textures are out of date.
     shown_stale: bool = true,
     negative_stale: bool = true,
@@ -158,6 +168,7 @@ pub const State = struct {
         if (state.roll_path) |p| gpa.free(p);
         if (state.positive) |*t| t.release(gpu);
         if (state.negative) |*t| t.release(gpu);
+        if (state.loupe_texture) |*t| t.release(gpu);
     }
 
     /// The open roll's index in `library`, or null for loose scans.
@@ -516,6 +527,7 @@ pub const State = struct {
         const frame = if (state.frame) |*f| f else return;
         if (frame.stale) {
             try frame.render(gpa, io, &library.looks);
+            state.renders +%= 1;
             state.shown_stale = true;
         }
         const width: u32 = @intCast(frame.preview.width);
@@ -762,6 +774,7 @@ pub const State = struct {
             state.clipping = !state.clipping;
             state.shown_stale = true;
         }
+        if (keys.contains(.loupe)) state.loupe = !state.loupe;
         if (keys.contains(.before)) state.compare = if (state.compare == .negative) .positive else .negative;
         if (keys.contains(.split)) state.compare = if (state.compare == .split) .positive else .split;
         if (keys.contains(.cancel)) state.picking = .none;
@@ -875,7 +888,7 @@ pub fn draw(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(0, 0));
     _ = c.ImGui_BeginChild("viewer", gui.vec2(viewer_width, available.y), c.ImGuiChildFlags_None, c.ImGuiWindowFlags_NoScrollbar | c.ImGuiWindowFlags_NoScrollWithMouse);
     c.ImGui_PopStyleVar();
-    drawViewer(state, gpa, io, library, roll_index);
+    drawViewer(state, gpa, io, library, gpu, roll_index);
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
@@ -978,7 +991,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
     return clicked;
 }
 
-fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
+fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, roll_index: ?usize) void {
     const origin = c.ImGui_GetCursorScreenPos();
     const size = c.ImGui_GetContentRegionAvail();
     const list = c.ImGui_GetWindowDrawList();
@@ -1005,6 +1018,9 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     c.ImGui_SameLineEx(0, gui.px(12));
     if (gui.checkbox("Clipping", &state.clipping)) state.shown_stale = true;
     shortcuts.tooltip("Clipped highlights red, shadows blue", .clipping);
+    c.ImGui_SameLineEx(0, gui.px(12));
+    _ = gui.checkbox("Loupe", &state.loupe);
+    shortcuts.tooltip("Full resolution under the cursor", .loupe);
     c.ImGui_SameLineEx(0, gui.px(12));
     c.ImGui_BeginDisabled(state.frame == null);
     const crop_corner = c.ImGui_GetCursorScreenPos();
@@ -1100,6 +1116,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const area_min = gui.vec2(origin.x, origin.y + toolbar_height);
     const area_max = gui.vec2(origin.x + size.x, info_top);
     drawPicture(state, library, area_min, area_max);
+    drawLoupe(state, gpa, io, library, gpu, area_min, area_max);
 }
 
 /// Draws the open frame's stars and its reject button, ending at `right` and centred on `middle`.
@@ -1212,6 +1229,13 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         }
     }
     if (near_split and state.picking == .none) c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_ResizeEW);
+    // The loupe goes where the cursor is over the picture, and stands in for the cursor there.
+    state.loupe_target = null;
+    if (state.loupe and hovered and inside and !near_split) {
+        const on_negative = state.compare == .negative or (state.compare == .split and mouse.x < split_x);
+        state.loupe_target = .{ .at = .{ (mouse.x - min.x) / scale, (mouse.y - min.y) / scale }, .screen = mouse, .negative = on_negative };
+        c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_None);
+    }
 
     c.ImDrawList_PushClipRect(list, area_min, area_max, true);
     defer c.ImDrawList_PopClipRect(list);
@@ -1236,6 +1260,69 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         const size = c.ImGui_CalcTextSize(what);
         tag(list, gui.vec2((min.x + max.x) / 2 + size.x / 2 + gui.px(8), max.y - gui.px(10) - size.y - gui.px(4)), what, .right);
     }
+}
+
+/// Where the loupe is: the point under the cursor on the preview, in its pixels, where to draw it,
+/// and whether it's over the negative.
+const LoupeTarget = struct {
+    at: [2]f32,
+    screen: gui.Vec2,
+    negative: bool,
+};
+
+/// What the loupe's texture shows: the scan pixel at its centre, at which render of the frame,
+/// how big, and whether it's the negative.
+const LoupeKey = struct {
+    centre: [2]i32,
+    render: u64,
+    side: usize,
+    negative: bool,
+};
+
+/// Draws the loupe at the cursor, as `drawPicture` placed it: a circle showing the scan at full
+/// resolution, rendered again when the point, the settings or the side changes.
+fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice, area_min: gui.Vec2, area_max: gui.Vec2) void {
+    const target = state.loupe_target orelse return;
+    const frame = if (state.frame) |*f| f else return;
+    const side: usize = @intFromFloat(@round(gui.px(loupe_size)));
+    const point = frame.scanPoint(target.at);
+    const key: LoupeKey = .{ .centre = .{ @intFromFloat(@floor(point[0])), @intFromFloat(@floor(point[1])) }, .render = state.renders, .side = side, .negative = target.negative };
+    if (state.loupe_shows == null or !std.meta.eql(state.loupe_shows.?, key)) {
+        const patch = frame.loupe(gpa, io, &library.looks, target.at, side, target.negative) catch |err| {
+            std.log.err("the loupe can't read the scan: {t}", .{err});
+            state.loupe = false;
+            return;
+        };
+        defer gpa.free(patch.pixels);
+        const width: u32 = @intCast(patch.width);
+        const height: u32 = @intCast(patch.height);
+        const same_size = if (state.loupe_texture) |t| t.width == width and t.height == height else false;
+        if (same_size) {
+            state.loupe_texture.?.replace(gpu, patch.pixels) catch return;
+        } else {
+            if (state.loupe_texture) |*t| t.release(gpu);
+            state.loupe_texture = Texture.upload(gpu, width, height, patch.pixels) catch null;
+        }
+        state.loupe_shows = key;
+    }
+    const texture = state.loupe_texture orelse return;
+    const list = c.ImGui_GetWindowDrawList();
+    c.ImDrawList_PushClipRect(list, area_min, area_max, true);
+    defer c.ImDrawList_PopClipRect(list);
+    const half = gui.vec2(@as(f32, @floatFromInt(texture.width)) / 2, @as(f32, @floatFromInt(texture.height)) / 2);
+    const centre = target.screen;
+    const min = gui.vec2(centre.x - half.x, centre.y - half.y);
+    const max = gui.vec2(centre.x + half.x, centre.y + half.y);
+    const radius = @min(half.x, half.y);
+    c.ImDrawList_AddImageRounded(list, texture.ref(), min, max, gui.vec2(0, 0), gui.vec2(1, 1), 0xFFFFFFFF, radius, 0);
+    // A dark ring and a light one, so the edge shows on any picture, and a small mark at the
+    // centre, where a click picks.
+    c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(1.5), theme.imU32(theme.header), 96, gui.px(3));
+    c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.text), 96, gui.px(1.5));
+    const mark = gui.px(5);
+    const ink = theme.imU32(theme.withAlpha(theme.text, 0.7));
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - mark, centre.y), gui.vec2(centre.x + mark, centre.y), ink, 1);
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, centre.y - mark), gui.vec2(centre.x, centre.y + mark), ink, 1);
 }
 
 /// The smallest crop box, in preview pixels.

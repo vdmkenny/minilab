@@ -22,6 +22,10 @@ pub const Histogram = [histogram_bins][image.channel_count]u32;
 
 pub const Frame = struct {
     name: []const u8,
+    /// The scan's file, for the loupe, which reads it at full resolution.
+    path: []const u8,
+    /// The scan at full resolution, read the first time the loupe needs it.
+    full_scan: ?image.Scan = null,
     /// The scan's size, for the info line and for crops (which are in the scan's pixels).
     scan_width: usize,
     scan_height: usize,
@@ -68,8 +72,11 @@ pub const Frame = struct {
         defer scan.deinit(gpa);
         var full = try image.downscale(gpa, scan, reducedLongest(scan, crop));
         errdefer full.deinit(gpa);
+        const owned_path = try gpa.dupe(u8, path);
+        errdefer gpa.free(owned_path);
         var frame: Frame = .{
             .name = try gpa.dupe(u8, name),
+            .path = owned_path,
             .scan_width = scan.width,
             .scan_height = scan.height,
             .full = full,
@@ -86,6 +93,8 @@ pub const Frame = struct {
 
     pub fn close(frame: *Frame, gpa: std.mem.Allocator) void {
         gpa.free(frame.name);
+        gpa.free(frame.path);
+        if (frame.full_scan) |*s| s.deinit(gpa);
         frame.full.deinit(gpa);
         frame.dropPreview(gpa);
         frame.* = undefined;
@@ -222,6 +231,69 @@ pub const Frame = struct {
         frame.stale = false;
     }
 
+    /// Where the point `at` on the preview (in its pixels, after the crop and the turns) falls on
+    /// the scan, in the scan's pixels. The preview is the crop of `full`, mirrored, then turned, so
+    /// this undoes the turn, then the mirror, then the crop and the reduction.
+    pub fn scanPoint(frame: *const Frame, at: [2]f32) [2]f32 {
+        const turned = frame.quarter_turns % 2 == 1;
+        // The size of the crop before it was turned.
+        const w: f32 = @floatFromInt(if (turned) frame.preview.height else frame.preview.width);
+        const h: f32 = @floatFromInt(if (turned) frame.preview.width else frame.preview.height);
+        var p: [2]f32 = switch (frame.quarter_turns) {
+            0 => at,
+            1 => .{ at[1], h - at[0] },
+            2 => .{ w - at[0], h - at[1] },
+            3 => .{ w - at[1], at[0] },
+        };
+        if (frame.mirrored) p[0] = w - p[0];
+        const area: image.Area = if (frame.crop) |c| c.rescale(frame.scan_width, frame.full.width, frame.full.width, frame.full.height) else .whole(frame.full.width, frame.full.height);
+        const s: f32 = @floatCast(frame.scale());
+        return .{ (@as(f32, @floatFromInt(area.x)) + p[0]) * s, (@as(f32, @floatFromInt(area.y)) + p[1]) * s };
+    }
+
+    /// What the loupe shows: RGBA pixels, row by row.
+    pub const Patch = struct {
+        pixels: [][4]u8,
+        width: usize,
+        height: usize,
+    };
+
+    /// Renders the square of the scan at full resolution, `side` pixels a side, around the point
+    /// `at` on the preview, cut and turned like the frame. It's developed with the frame's
+    /// settings and look, or shown as the negative when `negative`. The square stays inside the
+    /// crop, and is smaller if the crop is. The full scan is read the first time. Free the pixels
+    /// with `gpa`.
+    pub fn loupe(frame: *Frame, gpa: std.mem.Allocator, io: std.Io, catalog: *look.Catalog, at: [2]f32, side: usize, negative: bool) !Patch {
+        if (frame.full_scan == null) frame.full_scan = (try minilab.input.read(gpa, io, frame.path)).scan;
+        const scan = frame.full_scan.?;
+        const bounds: image.Area = frame.crop orelse .whole(scan.width, scan.height);
+        const centre = frame.scanPoint(at);
+        const width = @min(side, bounds.width);
+        const height = @min(side, bounds.height);
+        const area: image.Area = .{
+            .x = squareStart(centre[0], width, bounds.x, bounds.width),
+            .y = squareStart(centre[1], height, bounds.y, bounds.height),
+            .width = width,
+            .height = height,
+        };
+        var square = try scan.crop(gpa, area);
+        defer square.deinit(gpa);
+        var turned = try square.orient(gpa, frame.quarter_turns, frame.mirrored);
+        defer turned.deinit(gpa);
+        const pixels = try gpa.alloc([4]u8, turned.pixels.len);
+        errdefer gpa.free(pixels);
+        if (negative) {
+            minilab.light_table.toScreen(turned.pixels, minilab.light_table.gainForBase(frame.gap_base orelse frame.whole.thinnest), pixels);
+        } else {
+            var linear = try look.render(gpa, turned, frame.settings, catalog.resolve(gpa, io, frame.look));
+            defer linear.deinit(gpa);
+            var encoded = try minilab.encode.toSrgb8(gpa, linear);
+            defer encoded.deinit(gpa);
+            for (pixels, encoded.pixels) |*out, p| out.* = .{ p[0], p[1], p[2], std.math.maxInt(u8) };
+        }
+        return .{ .pixels = pixels, .width = turned.width, .height = turned.height };
+    }
+
     fn store(frame: *Frame, encoded: image.Encoded8) void {
         var black: usize = 0;
         var white: usize = 0;
@@ -249,6 +321,15 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.finished = keep.finished;
 }
 
+/// Where a run `length` long, centred on `centre`, starts so that it stays inside the run from
+/// `start` that's `room` long.
+fn squareStart(centre: f32, length: usize, start: usize, room: usize) usize {
+    const wanted = @round(centre - @as(f32, @floatFromInt(length)) / 2);
+    const lowest: f32 = @floatFromInt(start);
+    const highest: f32 = @floatFromInt(start + room - length);
+    return @intFromFloat(std.math.clamp(wanted, lowest, highest));
+}
+
 /// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.
 /// For a frame of a strip, it's `preview_longest` times the whole number of times the scan is
 /// longer than the frame, so the frame still gets `preview_longest` (up to `strip_longest`).
@@ -256,4 +337,42 @@ fn reducedLongest(scan: image.Scan, crop: ?image.Area) usize {
     const area = crop orelse return preview_longest;
     const times = @max(scan.width, scan.height) / @max(1, area.width, area.height);
     return @min(preview_longest * @max(1, times), strip_longest);
+}
+
+test "a point on the preview finds its pixel on the scan, however the frame is turned" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Every pixel different: x in red, y in green.
+    var scan: image.Scan = try .init(gpa, 40, 20);
+    defer scan.deinit(gpa);
+    for (scan.pixels, 0..) |*px, i| px.* = .{ @intCast(i % 40), @intCast(i / 40), 0 };
+    const bytes = try minilab.pnm.write(gpa, u16, scan);
+    defer gpa.free(bytes);
+    try tmp.dir.writeFile(io, .{ .sub_path = "scan.ppm", .data = bytes });
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    const path = try std.fs.path.join(gpa, &.{ folder, "scan.ppm" });
+    defer gpa.free(path);
+
+    const crop: image.Area = .{ .x = 10, .y = 4, .width = 20, .height = 10 };
+    for ([_]bool{ false, true }) |mirrored| {
+        for (0..4) |turns| {
+            var frame: Frame = try .load(gpa, io, path, "test", crop, @intCast(turns), mirrored);
+            defer frame.close(gpa);
+            for (0..frame.preview.height) |y| for (0..frame.preview.width) |x| {
+                const at = frame.scanPoint(.{ @as(f32, @floatFromInt(x)) + 0.5, @as(f32, @floatFromInt(y)) + 0.5 });
+                const expected = frame.preview.pixels[y * frame.preview.width + x];
+                try std.testing.expectEqual(expected[0], @as(u16, @intFromFloat(@floor(at[0]))));
+                try std.testing.expectEqual(expected[1], @as(u16, @intFromFloat(@floor(at[1]))));
+            };
+        }
+    }
+}
+
+test "the loupe's square stays inside the crop" {
+    try std.testing.expectEqual(@as(usize, 10), squareStart(5, 10, 10, 100));
+    try std.testing.expectEqual(@as(usize, 45), squareStart(50, 10, 10, 100));
+    try std.testing.expectEqual(@as(usize, 100), squareStart(200, 10, 10, 100));
 }

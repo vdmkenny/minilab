@@ -26,6 +26,7 @@ pub const Command = enum {
     zoom_in,
     zoom_out,
     clipping,
+    loupe,
     before,
     split,
     white_balance,
@@ -78,6 +79,7 @@ pub const Command = enum {
             .zoom_in => "Zoom to 100%",
             .zoom_out => "Zoom to fit",
             .clipping => "Show clipping",
+            .loupe => "Loupe",
             .before => "Negative or positive",
             .split => "Split view",
             .white_balance => "Pick white balance",
@@ -165,6 +167,8 @@ pub const bindings = [_]Binding{
     bind(.zoom_in, command_key | c.ImGuiKey_Equal),
     bind(.zoom_out, command_key | c.ImGuiKey_Minus),
     bind(.clipping, c.ImGuiKey_J),
+    // L for the loupe: Lightroom's L dims the screen, which minilab doesn't do.
+    bind(.loupe, c.ImGuiKey_L),
     bind(.before, c.ImGuiKey_Backslash),
     bind(.split, c.ImGuiKey_Y),
     // Tools: W for the white balance picker and R for crop, as in Lightroom, and B for the film
@@ -306,7 +310,7 @@ pub fn tooltip(text: []const u8, command: Command) void {
 const groups = [_]struct { []const u8, []const Command }{
     .{ "WORKSPACES", &.{ .rolls, .scan, .develop, .@"export", .looks } },
     .{ "FRAMES", &.{ .previous, .next, .first, .last, .select_all, .select_none } },
-    .{ "VIEWER", &.{ .zoom_toggle, .zoom_in, .zoom_out, .clipping, .before, .split } },
+    .{ "VIEWER", &.{ .zoom_toggle, .zoom_in, .zoom_out, .clipping, .loupe, .before, .split } },
     .{ "TOOLS", &.{ .white_balance, .base, .crop, .turn_left, .turn_right, .mirror, .confirm } },
     .{ "SETTINGS", &.{ .undo, .redo, .copy_settings, .paste_settings, .paste_previous, .sync, .reset, .automatic } },
     .{ "RATING", &.{ .no_stars, .one_star, .two_stars, .three_stars, .four_stars, .five_stars, .reject, .unreject } },
