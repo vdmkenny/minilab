@@ -4,6 +4,7 @@ const std = @import("std");
 const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
+const Dropped = @import("../platform/window.zig").Dropped;
 const icon = @import("../platform/icon.zig");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
@@ -85,82 +86,133 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     fonts.load(window.scale);
     theme.apply(window.scale);
 
-    var library: Library = try .load(gpa, io, options.library, options.home);
-    defer library.deinit(gpa, window.gpu);
-    var rolls: rolls_view.State = .{};
-    defer rolls.deinit(gpa);
-    var scan: scan_view.State = .{};
-    defer scan.deinit(gpa, window.gpu);
-    var exporting: export_view.State = .{};
-    defer exporting.deinit(gpa);
-    var looks: looks_view.State = .{};
-    defer looks.deinit(gpa, window.gpu);
-    var develop: develop_view.State = .{};
-    defer develop.deinit(gpa, window.gpu);
-    defer develop.save(io, &library);
-    var notice: Notice = .{};
-    var workspace = options.workspace;
-
-    if (options.roll) |name| {
-        for (library.rolls.items) |r| {
-            if (!std.mem.eql(u8, r.info.name, name)) continue;
-            try develop.openRoll(gpa, io, &library, r.path);
-            break;
-        } else std.log.err("no roll named {s} in {s}", .{ name, library.path });
-    }
-    for (options.open) |path| try develop.openLoose(gpa, io, &library, path);
+    var app: App = .{
+        .library = try .load(gpa, io, options.library, options.home),
+        .workspace = options.workspace,
+        .show_help = options.shortcuts,
+    };
+    defer app.deinit(gpa, io, window.gpu);
+    try app.openAtStart(gpa, io, options);
 
     var frames_drawn: usize = 0;
     var loaded_frames: usize = 0;
     var library_checked: u64 = 0;
-    var panels: Panels = .all;
-    var show_help = options.shortcuts;
     while (!window.close_asked) {
         if (!window.beginFrame()) continue;
         // Pick up rolls and frames added on disk from outside the app.
         if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
             library_checked = c.SDL_GetTicks();
-            library.refresh(gpa, io);
+            app.library.refresh(gpa, io);
         }
         gui.newFrame();
         const keys = shortcuts.poll();
-        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice };
-        for (std.enums.values(Workspace)) |w| {
-            if (keys.contains(w.command())) workspace = w;
-        }
-        if (keys.contains(.import)) workspace = .scan;
-        if (keys.contains(.help)) show_help = !show_help;
-        if (keys.contains(.quit)) window.close_asked = true;
-        if (keys.contains(.full_screen)) window.toggleFullScreen();
-        if (keys.contains(.hide_panels)) panels = if (panels == .all) .viewer_and_header else .all;
-        if (keys.contains(.hide_all)) panels = if (panels == .viewer) .all else .viewer;
-        if (keys.contains(.new_roll)) {
-            workspace = .rolls;
-            rolls.show_form = true;
-            rolls.form = .{};
-        }
-        if (keys.contains(.find)) {
-            workspace = .rolls;
-            rolls.focus_search = true;
-        }
-        if (keys.contains(.cancel) and workspace == .rolls) rolls.show_form = false;
-        if (workspace == .develop) {
-            if (develop.handle(gpa, io, &library, keys)) |message| notice.set("{s}", .{message});
-        }
+        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &app.library, .develop = &app.develop, .keys = keys, .notice = &app.notice };
+        app.handleKeys(ctx, &window);
         // Scanned frames go into their roll whichever workspace is showing, and the header picks
         // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
         // Scan.
-        if (options.screenshot == null or workspace == .scan) {
-            scan_view.update(&scan, ctx);
+        if (options.screenshot == null or app.workspace == .scan) scan_view.update(&app.scan, ctx);
+        try app.draw(ctx, &window.dropped);
+        if (app.show_help) app.show_help = shortcuts.drawHelp();
+
+        // If any thumbnail was asked for while drawing and isn't made yet, this frame was missing
+        // it.
+        const complete = app.library.wanted.items.len == 0;
+        // Make one thumbnail per frame, so the window stays responsive in the meantime.
+        app.library.work(gpa, io, window.gpu);
+        if (app.library.wanted.items.len > 0 or app.notice.text() != null) window.keepBusy();
+        if (app.workspace == .looks and app.looks.rendering()) window.keepBusy();
+
+        frames_drawn += 1;
+        const background: [4]f32 = .{ theme.page.x, theme.page.y, theme.page.z, 1 };
+        if (options.screenshot) |path| {
+            loaded_frames = if (complete and app.settled()) loaded_frames + 1 else 0;
+            if ((frames_drawn >= screenshot_frames and loaded_frames >= screenshot_loaded_frames) or frames_drawn == screenshot_frames_max) {
+                try window.capture(background, path);
+                return;
+            }
+            c.ImGui_Render();
+            app.library.releaseRetired(window.gpu);
+            continue;
         }
-        const dropped = window.dropped.files();
-        const drop: ?gui.Vec2 = if (dropped.len > 0) gui.vec2(window.dropped.position[0], window.dropped.position[1]) else null;
-        if (dropped.len > 0 and workspace == .looks) {
+        window.endFrame(background);
+        app.library.releaseRetired(window.gpu);
+    }
+}
+
+/// What the app keeps from frame to frame: the library, each workspace's state, and what's
+/// showing.
+const App = struct {
+    library: Library,
+    rolls: rolls_view.State = .{},
+    scan: scan_view.State = .{},
+    exporting: export_view.State = .{},
+    looks: looks_view.State = .{},
+    develop: develop_view.State = .{},
+    notice: Notice = .{},
+    workspace: Workspace,
+    panels: Panels = .all,
+    show_help: bool,
+
+    fn deinit(app: *App, gpa: std.mem.Allocator, io: std.Io, gpu: *c.SDL_GPUDevice) void {
+        app.develop.save(io, &app.library);
+        app.develop.deinit(gpa, gpu);
+        app.looks.deinit(gpa, gpu);
+        app.exporting.deinit(gpa);
+        app.scan.deinit(gpa, gpu);
+        app.rolls.deinit(gpa);
+        app.library.deinit(gpa, gpu);
+    }
+
+    /// Opens the roll and the scans the command line names.
+    fn openAtStart(app: *App, gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
+        if (options.roll) |name| {
+            for (app.library.rolls.items) |r| {
+                if (!std.mem.eql(u8, r.info.name, name)) continue;
+                try app.develop.openRoll(gpa, io, &app.library, r.path);
+                break;
+            } else std.log.err("no roll named {s} in {s}", .{ name, app.library.path });
+        }
+        for (options.open) |path| try app.develop.openLoose(gpa, io, &app.library, path);
+    }
+
+    /// Acts on the shortcuts that work in every workspace, and passes Develop its own.
+    fn handleKeys(app: *App, ctx: context.Context, window: *Window) void {
+        const keys = ctx.keys;
+        for (std.enums.values(Workspace)) |w| {
+            if (keys.contains(w.command())) app.workspace = w;
+        }
+        if (keys.contains(.import)) app.workspace = .scan;
+        if (keys.contains(.help)) app.show_help = !app.show_help;
+        if (keys.contains(.quit)) window.close_asked = true;
+        if (keys.contains(.full_screen)) window.toggleFullScreen();
+        if (keys.contains(.hide_panels)) app.panels = if (app.panels == .all) .viewer_and_header else .all;
+        if (keys.contains(.hide_all)) app.panels = if (app.panels == .viewer) .all else .viewer;
+        if (keys.contains(.new_roll)) {
+            app.workspace = .rolls;
+            app.rolls.show_form = true;
+            app.rolls.form = .{};
+        }
+        if (keys.contains(.find)) {
+            app.workspace = .rolls;
+            app.rolls.focus_search = true;
+        }
+        if (keys.contains(.cancel) and app.workspace == .rolls) app.rolls.show_form = false;
+        if (app.workspace == .develop) {
+            if (app.develop.handle(ctx.gpa, ctx.io, ctx.library, keys)) |message| app.notice.set("{s}", .{message});
+        }
+    }
+
+    /// Draws the window: the header, then the workspace, which gets what was dropped on it.
+    fn draw(app: *App, ctx: context.Context, dropped_files: *const Dropped) !void {
+        const dropped = dropped_files.files();
+        const drop: ?gui.Vec2 = if (dropped.len > 0) gui.vec2(dropped_files.position[0], dropped_files.position[1]) else null;
+        if (dropped.len > 0 and app.workspace == .looks) {
             // Reference images for the look being fitted.
-            looks.addFiles(ctx, dropped);
-        } else if (dropped.len > 0 and workspace != .rolls) {
-            dropScans(gpa, io, &library, &develop, dropped, &notice);
-            workspace = .develop;
+            app.looks.addFiles(ctx, dropped);
+        } else if (dropped.len > 0 and app.workspace != .rolls) {
+            dropScans(ctx.gpa, ctx.io, ctx.library, &app.develop, dropped, &app.notice);
+            app.workspace = .develop;
         }
 
         const viewport = c.ImGui_GetMainViewport();
@@ -169,83 +221,72 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(0, 0));
         _ = c.ImGui_Begin("minilab", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
         c.ImGui_PopStyleVar();
-        if (panels != .viewer) drawHeader(&workspace, &notice, &library, &develop, scan_view.status(&scan));
+        defer c.ImGui_End();
+        if (app.panels != .viewer) drawHeader(&app.workspace, &app.notice, &app.library, &app.develop, scan_view.status(&app.scan));
         // When an export finishes, the user hears about it whichever workspace they're in.
-        exporting.poll(ctx);
+        app.exporting.poll(ctx);
         // Each workspace gets its own ID space. Develop and Export both have "settings" panels,
         // which would otherwise be the same child window, sharing one scroll position.
-        c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
-        switch (workspace) {
-            .rolls => switch (rolls_view.draw(&rolls, &library, gpa, io, drop)) {
-                .none => if (drop != null) notice.set("Drop on a roll's row", .{}),
-                .open => |at| {
-                    try develop.openRoll(gpa, io, &library, library.rolls.items[at.roll].path);
-                    if (at.frame < library.rolls.items[at.roll].frames.items.len) develop.select(gpa, io, &library, at.frame);
-                    workspace = .develop;
-                },
-                .created => |created| {
-                    if (created.flat_failed) notice.set("Flat field not set", .{});
-                    try develop.openRoll(gpa, io, &library, library.rolls.items[created.roll].path);
-                    workspace = if (library.rolls.items[created.roll].info.input == .scanner) .scan else .develop;
-                },
-                .dropped_on => |index| {
-                    try develop.openRoll(gpa, io, &library, library.rolls.items[index].path);
-                    dropScans(gpa, io, &library, &develop, dropped, &notice);
-                },
-                .trash => |index| {
-                    var name_buffer: [256]u8 = undefined;
-                    const name = std.fmt.bufPrint(&name_buffer, "{s}", .{library.rolls.items[index].info.name}) catch library.rolls.items[index].info.name;
-                    develop.forgetRoll(gpa, library.rolls.items[index].path);
-                    if (library.trashRoll(gpa, io, index)) |_| {
-                        notice.set("Moved {s} to Trash", .{name});
-                    } else |err| notice.set("Can't move {s} to Trash · {t}", .{ name, err });
-                },
-            },
-            .develop => develop_view.draw(&develop, ctx, panels == .all),
+        c.ImGui_PushIDInt(@intCast(@backingInt(app.workspace)));
+        defer c.ImGui_PopID();
+        switch (app.workspace) {
+            .rolls => try app.actOnRolls(ctx, rolls_view.draw(&app.rolls, &app.library, ctx.gpa, ctx.io, drop), dropped),
+            .develop => develop_view.draw(&app.develop, ctx, app.panels == .all),
             .scan, .@"export", .looks => {
-                const next = switch (workspace) {
-                    .scan => scan_view.draw(&scan, ctx),
-                    .@"export" => export_view.draw(&exporting, ctx),
-                    .looks => looks_view.draw(&looks, ctx),
-                    else => unreachable,
+                const next = switch (app.workspace) {
+                    .scan => scan_view.draw(&app.scan, ctx),
+                    .@"export" => export_view.draw(&app.exporting, ctx),
+                    .looks => looks_view.draw(&app.looks, ctx),
+                    .rolls, .develop => unreachable,
                 };
-                if (next) |w| workspace = w;
+                if (next) |w| app.workspace = w;
             },
         }
-        c.ImGui_PopID();
-        c.ImGui_End();
-        if (show_help) show_help = shortcuts.drawHelp();
-
-        // If any thumbnail was asked for while drawing and isn't made yet, this frame was missing
-        // it.
-        const complete = library.wanted.items.len == 0;
-        // Make one thumbnail per frame, so the window stays responsive in the meantime.
-        library.work(gpa, io, window.gpu);
-        if (library.wanted.items.len > 0 or notice.text() != null) window.keepBusy();
-        if (workspace == .looks and looks.rendering()) window.keepBusy();
-
-        frames_drawn += 1;
-        if (options.screenshot) |path| {
-            const loaded = complete and switch (workspace) {
-                .develop => develop.settled(),
-                .scan => scan.settled(),
-                .@"export" => exporting.settled(),
-                .looks => looks.settled(),
-                .rolls => true,
-            };
-            loaded_frames = if (loaded) loaded_frames + 1 else 0;
-            if ((frames_drawn >= screenshot_frames and loaded_frames >= screenshot_loaded_frames) or frames_drawn == screenshot_frames_max) {
-                try window.capture(.{ theme.page.x, theme.page.y, theme.page.z, 1 }, path);
-                return;
-            }
-            c.ImGui_Render();
-            library.releaseRetired(window.gpu);
-            continue;
-        }
-        window.endFrame(.{ theme.page.x, theme.page.y, theme.page.z, 1 });
-        library.releaseRetired(window.gpu);
     }
-}
+
+    /// Does what was asked on the Rolls page.
+    fn actOnRolls(app: *App, ctx: context.Context, action: rolls_view.Action, dropped: []const []const u8) !void {
+        const gpa = ctx.gpa;
+        const io = ctx.io;
+        const library = &app.library;
+        switch (action) {
+            .none => if (dropped.len > 0) app.notice.set("Drop on a roll's row", .{}),
+            .open => |at| {
+                try app.develop.openRoll(gpa, io, library, library.rolls.items[at.roll].path);
+                if (at.frame < library.rolls.items[at.roll].frames.items.len) app.develop.select(gpa, io, library, at.frame);
+                app.workspace = .develop;
+            },
+            .created => |created| {
+                if (created.flat_failed) app.notice.set("Flat field not set", .{});
+                try app.develop.openRoll(gpa, io, library, library.rolls.items[created.roll].path);
+                app.workspace = if (library.rolls.items[created.roll].info.input == .scanner) .scan else .develop;
+            },
+            .dropped_on => |index| {
+                try app.develop.openRoll(gpa, io, library, library.rolls.items[index].path);
+                dropScans(gpa, io, library, &app.develop, dropped, &app.notice);
+            },
+            .trash => |index| {
+                var name_buffer: [256]u8 = undefined;
+                const name = std.fmt.bufPrint(&name_buffer, "{s}", .{library.rolls.items[index].info.name}) catch library.rolls.items[index].info.name;
+                app.develop.forgetRoll(gpa, library.rolls.items[index].path);
+                if (library.trashRoll(gpa, io, index)) |_| {
+                    app.notice.set("Moved {s} to Trash", .{name});
+                } else |err| app.notice.set("Can't move {s} to Trash · {t}", .{ name, err });
+            },
+        }
+    }
+
+    /// Whether the workspace showing has loaded everything. A screenshot waits for this.
+    fn settled(app: *const App) bool {
+        return switch (app.workspace) {
+            .develop => app.develop.settled(),
+            .scan => app.scan.settled(),
+            .@"export" => app.exporting.settled(),
+            .looks => app.looks.settled(),
+            .rolls => true,
+        };
+    }
+};
 
 /// Handles scans dropped on the window: adds them to the open roll, or opens them outside any roll
 /// when none is open.

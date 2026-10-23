@@ -731,80 +731,115 @@ fn handleKeys(state: *State, ctx: context.Context) void {
 fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const origin = c.ImGui_GetWindowPos();
     const size = c.ImGui_GetWindowSize();
-    const list = c.ImGui_GetWindowDrawList();
-    const x = origin.x + gui.px(panel_padding);
-    // The right edge is the panel's divider.
-    const width = size.x - gui.px(2 * panel_padding) - 1;
-    var y = origin.y + gui.px(panel_padding);
     const worker = state.worker;
     const phase: scan_worker.Phase = if (worker) |w| w.phase.load(.acquire) else .loading;
-    const busy = switch (phase) {
-        .idle, .unavailable => false,
-        else => true,
+    const panel: ScannerPanel = .{
+        .ctx = ctx,
+        .list = c.ImGui_GetWindowDrawList(),
+        .x = origin.x + gui.px(panel_padding),
+        // The right edge is the panel's divider.
+        .width = size.x - gui.px(2 * panel_padding) - 1,
+        .roll_index = roll_index,
+        .worker = worker,
+        .phase = phase,
+        .busy = switch (phase) {
+            .idle, .unavailable => false,
+            else => true,
+        },
     };
+    var y = origin.y + gui.px(panel_padding);
+    y += gui.headingAt(panel.list, panel.x, y, "SCANNER") + gui.px(scanner_gap);
+    y = drawDevice(state, panel, y);
+    y = drawSetup(state, panel, y);
+    y = drawFilmChoice(state, panel, y);
+    y = drawResolution(state, panel, y);
+    y = drawMargin(state, panel, y);
+    drawActions(state, panel, y, origin.y + size.y - gui.px(panel_padding));
+}
 
-    y += gui.headingAt(list, x, y, "SCANNER") + gui.px(scanner_gap);
+/// What the scanner panel's sections share: where they draw, and the scan thread's state.
+const ScannerPanel = struct {
+    ctx: context.Context,
+    list: *c.ImDrawList,
+    x: f32,
+    width: f32,
+    roll_index: ?usize,
+    worker: ?*Worker,
+    phase: scan_worker.Phase,
+    busy: bool,
+};
 
-    // The device.
-    c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+/// The most scanners the device menu lists.
+const max_devices = 8;
+
+/// Draws the scanner menu at `y`. Returns the y below it.
+fn drawDevice(state: *State, panel: ScannerPanel, y: f32) f32 {
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding_x), (gui.px(device_height) - c.ImGui_GetFontSize()) / 2));
-    c.ImGui_BeginDisabled(busy or state.devices.len == 0);
-    var names: [8][]const u8 = undefined;
+    defer c.ImGui_PopStyleVar();
+    c.ImGui_BeginDisabled(panel.busy or state.devices.len == 0);
+    defer c.ImGui_EndDisabled();
+    var names: [max_devices][]const u8 = undefined;
     const shown = @min(state.devices.len, names.len);
     for (state.devices[0..shown], 0..) |d, i| names[i] = gui.print("{s} {s} ({s}, {s})", .{ d.vendor, d.model, d.kind.label(), d.driver });
-    const placeholder: []const []const u8 = &.{switch (phase) {
+    const placeholder: []const []const u8 = &.{switch (panel.phase) {
         .loading, .listing => "Looking for scanners…",
         .unavailable => "No scanner drivers",
         else => "No scanner found",
     }};
     const items = if (shown > 0) names[0..shown] else placeholder;
-    c.ImGui_SetNextItemWidth(width);
-    if (gui.combo("device", items, state.device orelse 0, width / gui.scale)) |picked| {
+    c.ImGui_SetNextItemWidth(panel.width);
+    if (gui.combo("device", items, state.device orelse 0, panel.width / gui.scale)) |picked| {
         if (shown > 0 and picked != state.device) {
             state.device = picked;
-            if (state.capabilities) |*caps| caps.deinit(ctx.gpa);
+            if (state.capabilities) |*caps| caps.deinit(panel.ctx.gpa);
             state.capabilities = null;
-            if (worker) |w| w.submit(.{ .open = picked }) catch {};
+            if (panel.worker) |w| w.submit(.{ .open = picked }) catch {};
         }
     }
-    c.ImGui_EndDisabled();
-    c.ImGui_PopStyleVar();
-    y += gui.px(device_height) + gui.px(scanner_gap);
+    return y + gui.px(device_height + scanner_gap);
+}
 
-    // What the scanner is set up for, or why there isn't one.
+/// Draws what the scanner is set up for, or why there isn't one, at `y`. Returns the y below it.
+fn drawSetup(state: *State, panel: ScannerPanel, top: f32) f32 {
+    const ctx = panel.ctx;
+    var y = top;
     if (state.capabilities) |caps| {
-        y += drawProfile(list, x, y, width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
+        y += drawProfile(panel.list, panel.x, y, panel.width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
         if (caps.options != null) {
-            c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+            c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
             if (gui.buttonOf(.normal, "Scanner settings", gui.vec2(0, pill_height))) state.settings_open = true;
-            y += gui.px(pill_height) + gui.px(scanner_gap);
+            y += gui.px(pill_height + scanner_gap);
         }
-        y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, filmAreaNote(caps, ctx, roll_index)) + gui.px(scanner_gap);
-    } else if (!busy) {
-        if (phase == .unavailable) {
-            y = drawDriverSetup(ctx, list, x, y, width);
-        } else if (state.problem) |problem| {
-            y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, problem) + gui.px(scanner_gap);
-        }
-        // Looking again also loads the drivers again, once they're installed.
-        c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
-        if (gui.buttonOf(.normal, "Refresh", gui.vec2(0, pill_height))) {
-            state.problem = null;
-            if (worker) |w| w.submit(.list) catch {};
-        }
-        y += gui.px(pill_height) + gui.px(scanner_gap);
+        return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, filmAreaNote(caps, ctx, panel.roll_index)) + gui.px(scanner_gap);
     }
+    if (panel.busy) return y;
+    if (panel.phase == .unavailable) {
+        y = drawDriverSetup(ctx, panel.list, panel.x, y, panel.width);
+    } else if (state.problem) |problem| {
+        y += gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, problem) + gui.px(scanner_gap);
+    }
+    // Looking again also loads the drivers again, once they're installed.
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
+    if (gui.buttonOf(.normal, "Refresh", gui.vec2(0, pill_height))) {
+        state.problem = null;
+        if (panel.worker) |w| w.submit(.list) catch {};
+    }
+    return y + gui.px(pill_height + scanner_gap);
+}
 
-    // Film type.
-    y += gui.lineAt(list, x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
+/// Draws the film type, and for slides the holder, at `y`. Returns the y below them.
+fn drawFilmChoice(state: *State, panel: ScannerPanel, top: f32) f32 {
+    var y = top;
+    y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
     c.ImGui_PushID("film");
-    if (pillsOf(FilmType, state.film, &labelsOf(FilmType), x, &y, width)) |picked| state.film = picked;
+    if (pillsOf(FilmType, state.film, &labelsOf(FilmType), panel.x, &y, panel.width)) |picked| state.film = picked;
     c.ImGui_PopID();
     y += gui.px(group_gap);
     // Slides can come as a strip or in mounts, which detection finds differently.
     if (state.film == .positive) {
         c.ImGui_PushID("holder");
-        if (pillsOf(frames.Holder, state.holder_choice, &labelsOf(frames.Holder), x, &y, width)) |picked| {
+        if (pillsOf(frames.Holder, state.holder_choice, &labelsOf(frames.Holder), panel.x, &y, panel.width)) |picked| {
             state.holder_choice = picked;
             state.boxes_dirty = true;
         }
@@ -813,12 +848,15 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
     const film_note = if (state.capabilities) |caps| blk: {
         if (!caps.film_setting) break :blk gui.print("No film mode", .{});
-        break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, ctx, caps), state.film.why() });
+        break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, panel.ctx, caps), state.film.why() });
     } else gui.print("Scanner mode: Positive Film · {s}", .{state.film.why()});
-    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
+    return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
+}
 
-    // Resolution.
-    y += gui.lineAt(list, x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
+/// Draws the resolutions to choose from at `y`, with the size of the scans. Returns the y below.
+fn drawResolution(state: *State, panel: ScannerPanel, top: f32) f32 {
+    var y = top;
+    y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
     var choices: [max_resolution_choices]u32 = undefined;
     const resolutions = resolutionChoices(state, &choices);
     if (resolutions.len > 0) {
@@ -830,40 +868,45 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
         }
         c.ImGui_PushID("resolution");
         c.ImGui_BeginDisabled(state.scanning);
-        if (pills(labels_[0..resolutions.len], chosen, x, &y, width, true)) |picked| state.dpi = resolutions[picked];
+        if (pills(labels_[0..resolutions.len], chosen, panel.x, &y, panel.width, true)) |picked| state.dpi = resolutions[picked];
         c.ImGui_EndDisabled();
         c.ImGui_PopID();
         y += gui.px(group_gap);
     }
-    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, sizeNote(state, ctx, roll_index)) + gui.px(scanner_gap);
+    return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, sizeNote(state, panel.ctx, panel.roll_index)) + gui.px(scanner_gap);
+}
 
-    // Margin.
+/// Draws the margin around the frames at `y`. Returns the y below it.
+fn drawMargin(state: *State, panel: ScannerPanel, y: f32) f32 {
     const field_height = gui.px(pill_height);
     const label_y = y + (field_height - gui.lineHeight()) / 2;
-    _ = gui.lineAt(list, x, label_y, theme.text_secondary, "Margin around frames");
-    drawMarginField(state, gui.vec2(x + width - gui.px(margin_field_width), y));
-    y += field_height + gui.px(scanner_gap);
+    _ = gui.lineAt(panel.list, panel.x, label_y, theme.text_secondary, "Margin around frames");
+    drawMarginField(state, gui.vec2(panel.x + panel.width - gui.px(margin_field_width), y));
+    return y + field_height + gui.px(scanner_gap);
+}
 
-    // The actions, at the bottom.
-    const bottom = origin.y + size.y - gui.px(panel_padding);
+/// Draws Preview, Detect frames and Scan at the bottom of the panel, which is at `bottom`, but no
+/// higher than `y`.
+fn drawActions(state: *State, panel: ScannerPanel, y: f32, bottom: f32) void {
+    const ctx = panel.ctx;
     const scan_y = @max(bottom - gui.px(scan_button_height), y + gui.px(scanner_gap + action_height + action_gap));
     const actions_y = scan_y - gui.px(action_gap + action_height);
-    const half = (width - gui.px(action_gap)) / 2;
-    const ready = state.capabilities != null and !busy and roll_index != null;
-    c.ImGui_SetCursorScreenPos(gui.vec2(x, actions_y));
+    const half = (panel.width - gui.px(action_gap)) / 2;
+    const ready = state.capabilities != null and !panel.busy and panel.roll_index != null;
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, actions_y));
     c.ImGui_BeginDisabled(!ready);
-    const preview_label: [:0]const u8 = if (phase == .previewing) gui.print("Previewing {d}%##preview", .{percent(worker)}) else "Preview";
+    const preview_label: [:0]const u8 = if (panel.phase == .previewing) gui.print("Previewing {d}%##preview", .{percent(panel.worker)}) else "Preview";
     if (gui.buttonOf(.normal, preview_label, gui.vec2(half / gui.scale, action_height))) startPreview(state, ctx.gpa);
     c.ImGui_EndDisabled();
-    c.ImGui_SetCursorScreenPos(gui.vec2(x + half + gui.px(action_gap), actions_y));
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x + half + gui.px(action_gap), actions_y));
     c.ImGui_BeginDisabled(state.preview == null or state.scanning);
-    if (gui.buttonOf(.normal, "Detect frames", gui.vec2(half / gui.scale, action_height))) detect(state, ctx, roll_index);
+    if (gui.buttonOf(.normal, "Detect frames", gui.vec2(half / gui.scale, action_height))) detect(state, ctx, panel.roll_index);
     c.ImGui_EndDisabled();
-    c.ImGui_SetCursorScreenPos(gui.vec2(x, scan_y));
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, scan_y));
     const count = state.boxes.items.len;
     c.ImGui_BeginDisabled(!ready or count == 0 or state.preview == null);
     const scan_label: [:0]const u8 = if (state.scanning) "Scanning…" else if (count == 0) "Scan" else if (count == 1) "Scan 1 frame" else gui.print("Scan {d} frames", .{count});
-    if (gui.buttonOf(.primary, scan_label, gui.vec2(width / gui.scale, scan_button_height))) startScan(state, ctx, roll_index);
+    if (gui.buttonOf(.primary, scan_label, gui.vec2(panel.width / gui.scale, scan_button_height))) startScan(state, ctx, panel.roll_index);
     c.ImGui_EndDisabled();
 }
 
@@ -1506,7 +1549,13 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         y += drawCheckNote(state, preview, index, list, x, y, width) + gui.px(section_gap);
     }
 
-    // Shape.
+    y = drawShapeControls(state, box, preview, format, list, x, y, width);
+    drawFrameTools(state, ctx, roll_index, preview, format, index, gui.vec2(x, y));
+}
+
+/// Draws the box's shape, inset, rotation and height controls at `top`. Returns the y below them.
+fn drawShapeControls(state: *State, box: *Box, preview: *const Preview, format: formats.Format, list: *c.ImDrawList, x: f32, top: f32, width: f32) f32 {
+    var y = top;
     y += gui.lineAt(list, x, y, theme.text_secondary, "Shape") + gui.px(group_gap);
     c.ImGui_PushID("shape");
     var shape_labels: [std.enums.values(Shape).len][:0]const u8 = undefined;
@@ -1549,10 +1598,12 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         reshape(box, preview, format);
         markEdited(state, box);
     }
-    y += gui.lineHeight() + gui.px(section_gap);
+    return y + gui.lineHeight() + gui.px(section_gap);
+}
 
-    // The frame tools.
-    c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+/// Draws Add frame, Split, Delete and Detect again at `at`.
+fn drawFrameTools(state: *State, ctx: context.Context, roll_index: usize, preview: *Preview, format: formats.Format, index: usize, at: gui.Vec2) void {
+    c.ImGui_SetCursorScreenPos(at);
     c.ImGui_BeginDisabled(state.scanning);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(gui.button_padding), (gui.px(button_height) - c.ImGui_GetFontSize()) / 2));
     if (gui.buttonOf(.normal, "Add frame", gui.vec2(0, button_height))) addFrame(state, ctx.gpa, preview, format);
