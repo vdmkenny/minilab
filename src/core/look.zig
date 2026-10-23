@@ -275,7 +275,7 @@ pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, 
 }
 
 /// The largest .cube file we read: 64 MiB. A 129-point 3D LUT in text is about 60 MiB.
-const max_cube_bytes = 64 << 20;
+pub const max_cube_bytes = 64 << 20;
 
 /// Reads the looks that ids name, each one once: the built-in ones from minilab itself, and
 /// imported LUTs and fitted looks from the library's Looks folder. Only one thread can use it at a

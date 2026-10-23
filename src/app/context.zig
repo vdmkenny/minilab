@@ -3,10 +3,12 @@
 
 const std = @import("std");
 const c = @import("c");
+const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const Library = @import("library.zig").Library;
 const develop_view = @import("develop_view.zig");
 const shortcuts = @import("shortcuts.zig");
+const labels = @import("labels.zig");
 
 pub const Workspace = enum {
     rolls,
@@ -68,4 +70,17 @@ pub const Context = struct {
     keys: std.EnumSet(shortcuts.Command),
     /// A line in the header that says what just happened.
     notice: *Notice,
+
+    /// Imports the .cube files at `paths` into the library's Looks folder, with a notice for each
+    /// one that can't be. Returns the last one imported.
+    pub fn importCubes(ctx: Context, paths: []const []const u8) ?minilab.look.Id {
+        var last: ?minilab.look.Id = null;
+        for (paths) |path| {
+            last = ctx.library.looks.import(ctx.gpa, ctx.io, path) catch |err| {
+                ctx.notice.set("Can't import {s} · {s}", .{ std.fs.path.basename(path), labels.importError(err) });
+                continue;
+            };
+        }
+        return last;
+    }
 };

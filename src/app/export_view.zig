@@ -11,6 +11,7 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
+const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
@@ -493,7 +494,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         // The number and the check box under the picture.
         const label_top = picture_max.y + gui.px(cell_padding);
         fonts.pushSized(.mono, 12);
-        const number = gui.print("{d:0>2}", .{i + 1});
+        const number = labels.frameNumber(i);
         const number_end = picture_min.x + gui.px(2) + c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_min.x + gui.px(2), label_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_secondary), number);
         fonts.pop();

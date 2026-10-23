@@ -377,7 +377,7 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
             c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(1), 0);
         }
         fonts.pushSized(.mono, 11);
-        const number = gui.print("{d:0>2}", .{frame + 1});
+        const number = labels.frameNumber(frame);
         const number_width = c.ImGui_CalcTextSize(number).x;
         c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.text_tertiary), number);
         fonts.pop();

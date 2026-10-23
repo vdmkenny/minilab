@@ -8,6 +8,8 @@
 
 const std = @import("std");
 
+/// The fewest points a side a LUT can have.
+pub const min_size = 2;
 /// The largest 3D LUT we read: 129 points a side, the size of the biggest common ones.
 pub const max_size_3d = 129;
 pub const max_size_1d = 65536;
@@ -50,9 +52,9 @@ pub const Lut = struct {
             if (std.mem.eql(u8, keyword, "TITLE")) {
                 title = std.mem.trim(u8, line["TITLE".len..], " \t\"");
             } else if (std.mem.eql(u8, keyword, "LUT_3D_SIZE")) {
-                three_size = try sizeOf(fields.next(), 2, max_size_3d);
+                three_size = try sizeOf(fields.next(), min_size, max_size_3d);
             } else if (std.mem.eql(u8, keyword, "LUT_1D_SIZE")) {
-                one_size = try sizeOf(fields.next(), 2, max_size_1d);
+                one_size = try sizeOf(fields.next(), min_size, max_size_1d);
             } else if (std.mem.eql(u8, keyword, "DOMAIN_MIN")) {
                 const v = try numbers(3, &fields);
                 one_range[0] = v;

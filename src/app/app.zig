@@ -103,6 +103,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         }
         gui.newFrame();
         const keys = shortcuts.poll();
+        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice };
         for (std.enums.values(Workspace)) |w| {
             if (keys.contains(w.command())) workspace = w;
         }
@@ -129,13 +130,13 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
         // Scan.
         if (options.screenshot == null or workspace == .scan) {
-            scan_view.update(&scan, .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
+            scan_view.update(&scan, ctx);
         }
         const dropped = window.dropped.files();
         const drop: ?gui.Vec2 = if (dropped.len > 0) gui.vec2(window.dropped.position[0], window.dropped.position[1]) else null;
         if (dropped.len > 0 and workspace == .looks) {
             // Reference images for the look being fitted.
-            looks.addFiles(.{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice }, dropped);
+            looks.addFiles(ctx, dropped);
         } else if (dropped.len > 0 and workspace != .rolls) {
             dropScans(gpa, io, &library, &develop, dropped, &notice);
             workspace = .develop;
@@ -149,7 +150,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_PopStyleVar();
         if (panels != .viewer) drawHeader(&workspace, &notice, &library, &develop, scan_view.status(&scan));
         // When an export finishes, the user hears about it whichever workspace they're in.
-        exporting.poll(.{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice });
+        exporting.poll(ctx);
         // Each workspace gets its own ID space. Develop and Export both have "settings" panels,
         // which would otherwise be the same child window, sharing one scroll position.
         c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
@@ -179,9 +180,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
                     } else |err| notice.set("Can't move {s} to Trash · {t}", .{ name, err });
                 },
             },
-            .develop => develop_view.draw(&develop, gpa, io, &library, window.gpu, panels == .all),
+            .develop => develop_view.draw(&develop, ctx, panels == .all),
             .scan, .@"export", .looks => {
-                const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &library, .develop = &develop, .keys = keys, .notice = &notice };
                 const next = switch (workspace) {
                     .scan => scan_view.draw(&scan, ctx),
                     .@"export" => export_view.draw(&exporting, ctx),

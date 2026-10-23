@@ -14,6 +14,7 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
+const labels = @import("labels.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const Library = @import("library.zig").Library;
 const bundled = minilab.bundled_looks;
@@ -159,6 +160,14 @@ const Own = struct {
 
     fn changed(own: *Own) void {
         if (own.result != null) own.stale = true;
+    }
+
+    /// Holds pair `index` out of the fit, or uses it again, and saves the look.
+    fn toggleHeldOut(own: *Own, ctx: context.Context, index: usize) void {
+        const pair = &own.pairs.items[index];
+        pair.held_out = !pair.held_out;
+        own.changed();
+        own.save(ctx);
     }
 
     /// Writes the look's file. A failure goes in the header's notice, since every edit relies on
@@ -465,14 +474,7 @@ pub const State = struct {
 
     /// Imports the chosen .cube files, and selects the last one.
     fn importCubes(state: *State, ctx: context.Context, paths: []const []const u8) void {
-        var last: ?minilab.look.Id = null;
-        for (paths) |path| {
-            last = ctx.library.looks.import(ctx.gpa, ctx.io, path) catch |err| {
-                ctx.notice.set("Can't import {s} · {t}", .{ std.fs.path.basename(path), err });
-                continue;
-            };
-        }
-        const id = last orelse return;
+        const id = ctx.importCubes(paths) orelse return;
         state.listImported(ctx);
         for (state.imported.items, 0..) |*i, n| if (i.eql(&id)) select(state, .{ .imported = n });
         ctx.notice.set("Imported {s}", .{id.label()});
@@ -622,7 +624,7 @@ pub const State = struct {
                 defer ctx.gpa.free(path);
                 const thumbnail = r.thumbnailPath(ctx.gpa, f) catch continue;
                 defer ctx.gpa.free(thumbnail);
-                task.setFrame(ctx.gpa, n, path, thumbnail, gui.print("{s} / {d:0>2}", .{ r.info.name, f + 1 }), r.info.stock, placementOf(r, f)) catch continue;
+                task.setFrame(ctx.gpa, n, path, thumbnail, labels.rollFrame(r.info.name, f), r.info.stock, placementOf(r, f)) catch continue;
                 n += 1;
             }
         }
@@ -870,6 +872,11 @@ fn byName(_: void, a: []const u8, b: []const u8) bool {
     return minilab.input.naturalLess({}, std.fs.path.basename(a), std.fs.path.basename(b));
 }
 
+/// What the Use column says for `pair`.
+fn useLabel(pair: draft.Pair) []const u8 {
+    return if (pair.held_out) "Held out" else "Fit";
+}
+
 /// Finds the roll frame whose raw scan is at `path`, with the name the table uses for it.
 fn findFrame(library: *Library, path: []const u8) ?struct { label: []const u8, stock: ?[]const u8, placement: draft.Placement } {
     for (library.rolls.items) |*r| {
@@ -878,7 +885,7 @@ fn findFrame(library: *Library, path: []const u8) ?struct { label: []const u8, s
             var buffer: [std.fs.max_path_bytes]u8 = undefined;
             var fixed: std.heap.FixedBufferAllocator = .init(&buffer);
             const scan = r.scanPath(fixed.allocator(), i) catch continue;
-            if (std.mem.eql(u8, scan, path)) return .{ .label = gui.print("{s} / {d:0>2}", .{ r.info.name, i + 1 }), .stock = r.info.stock, .placement = placementOf(r, i) };
+            if (std.mem.eql(u8, scan, path)) return .{ .label = labels.rollFrame(r.info.name, i), .stock = r.info.stock, .placement = placementOf(r, i) };
         }
     }
     return null;
@@ -1396,7 +1403,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         fonts.pop();
         widths[2] = @max(widths[2], textWidth(stockName(p.stock)));
         widths[3] = @max(widths[3], textWidth(registrationText(own, i)));
-        widths[4] = @max(widths[4], textWidth(if (p.held_out) "Held out" else "Fit"));
+        widths[4] = @max(widths[4], textWidth(useLabel(p)));
     }
     var total: f32 = 0;
     for (&widths) |*w| {
@@ -1433,20 +1440,12 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         if (c.ImGui_BeginPopupContextItem()) {
             // Not while a fit is running, or the fit would end up shown against a split it wasn't
             // made from.
-            if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.job == null)) {
-                p.held_out = !p.held_out;
-                own.changed();
-                own.save(ctx);
-            }
+            if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.job == null)) own.toggleHeldOut(ctx, i);
             if (c.ImGui_MenuItemEx("Remove pair", null, false, state.job == null)) remove = i;
             c.ImGui_EndPopup();
         }
         c.ImGui_SetCursorScreenPos(gui.vec2(use_x, top));
-        if (c.ImGui_InvisibleButton("use", gui.vec2(widths[4], row_height), 0) and state.job == null) {
-            p.held_out = !p.held_out;
-            own.changed();
-            own.save(ctx);
-        }
+        if (c.ImGui_InvisibleButton("use", gui.vec2(widths[4], row_height), 0) and state.job == null) own.toggleHeldOut(ctx, i);
         const use_hovered = c.ImGui_IsItemHovered(0);
         if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
 
@@ -1471,7 +1470,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
                 },
                 .stock => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text_secondary, gui.elideEnd(stockName(p.stock), room_in_cell)),
                 .registration => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), theme.text_secondary, registrationText(own, i)),
-                .use => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), if (use_hovered) theme.text else theme.text_secondary, if (p.held_out) "Held out" else "Fit"),
+                .use => gui.textIn(list, cell.x, cell.y, gui.lineFor(13), if (use_hovered) theme.text else theme.text_secondary, useLabel(p.*)),
             }
             x += w;
         }

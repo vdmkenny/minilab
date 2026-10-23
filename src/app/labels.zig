@@ -37,6 +37,16 @@ pub fn ratio(r: f32) []const u8 {
     return gui.print("{d:.2}:1", .{r});
 }
 
+/// A frame's number, like "03", for frame `index` counting from 0.
+pub fn frameNumber(index: usize) [:0]const u8 {
+    return gui.print("{d:0>2}", .{index + 1});
+}
+
+/// A frame of a roll, like "Roll 002 / 03", for frame `index` counting from 0.
+pub fn rollFrame(roll_name: []const u8, index: usize) [:0]const u8 {
+    return gui.print("{s} / {d:0>2}", .{ roll_name, index + 1 });
+}
+
 /// The note under the frames, like "35mm full frame · 3:2 · whole roll".
 pub fn rollFormatNote(id: formats.Standard) [:0]const u8 {
     const f = id.format();
@@ -148,4 +158,18 @@ pub fn stockGamma(name: ?[]const u8) ?[3]f32 {
     const choice = findStock(name orelse return null) orelse return null;
     const preset = choice.preset orelse return null;
     return preset.gamma;
+}
+
+/// Why a .cube file couldn't be imported, for the notice.
+pub fn importError(err: anyerror) []const u8 {
+    return switch (err) {
+        error.NotACube => "not a .cube LUT",
+        error.BadSize => gui.print("size outside {d} to {d} points a side", .{ minilab.cube_lut.min_size, minilab.cube_lut.max_size_3d }),
+        error.Truncated => "file ends early",
+        error.TooMuchData => "more values than its size",
+        error.InvalidNumber => "value not a number",
+        error.FileTooBig => gui.print("over {d} MB", .{minilab.look.max_cube_bytes >> 20}),
+        error.NoLibrary => "no library open",
+        else => @errorName(err),
+    };
 }
