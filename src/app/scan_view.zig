@@ -66,6 +66,11 @@ const queue_row_padding_x = 10;
 const progress_height = 6;
 const cancel_height = 34;
 const number_column = 20;
+/// The scanner settings window: its option names' column and its drop-downs.
+const setting_label_width = 150;
+const setting_value_width = 260;
+/// The most values one scanner setting offers.
+const max_setting_values = 64;
 const preview_note_width = 120;
 const frame_view_height = 200;
 const frame_view_padding = 20;
@@ -336,6 +341,8 @@ pub const State = struct {
     /// the scanner.
     queue_turns: u2 = 0,
     scanning: bool = false,
+    /// Whether the scanner settings window is open.
+    settings_open: bool = false,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         if (state.worker) |w| w.stop();
@@ -370,9 +377,15 @@ pub const State = struct {
     }
 
     fn deviceName(state: *const State) ?[]const u8 {
+        const device = state.openDevice() orelse return null;
+        return device.model;
+    }
+
+    /// The device that's open or being opened.
+    fn openDevice(state: *const State) ?scan.Device {
         const index = state.device orelse return null;
         if (index >= state.devices.len) return null;
-        return state.devices[index].model;
+        return state.devices[index];
     }
 };
 
@@ -433,6 +446,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.device = opened.device;
             state.problem = null;
             state.dpi = chooseDpi(opened.capabilities, state.dpi);
+            sendRaw(state, ctx);
             return;
         },
         .failed => |failed| {
@@ -521,9 +535,8 @@ fn addToRoll(state: *State, ctx: context.Context, done: scan_worker.Scanned) !us
     try r.saveFrame(ctx.io, frame);
     if (r.info.dpi == null or r.info.scanner == null) {
         r.info.dpi = done.dpi;
-        if (r.info.scanner == null) if (state.device) |d| if (d < state.devices.len) {
-            const device = state.devices[d];
-            r.info.scanner = try std.fmt.allocPrint(r.arena.allocator(), "{s} {s}", .{ device.vendor, device.model });
+        if (r.info.scanner == null) if (state.openDevice()) |device| {
+            r.info.scanner = try r.arena.allocator().dupe(u8, scannerName(device));
         };
         r.saveInfo(ctx.io) catch |err| std.log.err("can't save the roll: {t}", .{err});
     }
@@ -576,6 +589,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
+    drawScannerSettings(state, ctx);
     if (state.boxes_dirty and !c.ImGui_IsAnyItemActive()) savePreviewSettings(state, ctx);
     return next;
 }
@@ -666,7 +680,12 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
 
     // What the scanner is set up for, or why there isn't one.
     if (state.capabilities) |caps| {
-        y += drawProfile(list, x, y, width, caps) + gui.px(scanner_gap);
+        y += drawProfile(list, x, y, width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
+        if (caps.options != null) {
+            c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+            if (gui.buttonOf(.normal, "Scanner settings", gui.vec2(0, pill_height))) state.settings_open = true;
+            y += gui.px(pill_height) + gui.px(scanner_gap);
+        }
         y += paragraphAt(list, x, y, width, theme.text_tertiary, filmAreaNote(caps, ctx, roll_index)) + gui.px(scanner_gap);
     } else if (!busy) {
         if (phase == .unavailable) {
@@ -822,21 +841,179 @@ fn setupStep(list: *c.ImDrawList, x: f32, top: f32, width: f32, number: [:0]cons
     return y + gui.px(group_gap);
 }
 
-/// Draws "Profile: …" with a tick, or a note that the scanner doesn't have one.
-fn drawProfile(list: *c.ImDrawList, x: f32, y: f32, width: f32, caps: scan.Capabilities) f32 {
+/// Draws "Profile: …" or what raw setup sets (`raw`), with a tick when the data comes out
+/// linear, or a note that it may not.
+fn drawProfile(list: *c.ImDrawList, x: f32, y: f32, width: f32, caps: scan.Capabilities, raw: scan.RawReport) f32 {
     const pad_x = gui.px(10);
     const pad_y = gui.px(8);
     const icon = gui.px(14);
     const text_x = x + pad_x + icon + gui.px(8);
     const text_width = width - (text_x - x) - pad_x;
-    const message = if (caps.profile) |p| gui.print("Profile: {s}", .{p.summary}) else gui.print("No profile · data may not be linear", .{});
+    var raw_buffer: [96]u8 = undefined;
+    const message = if (caps.profile) |p| gui.print("Profile: {s}", .{p.summary}) else gui.print("{s}", .{raw.label(&raw_buffer)});
     const text_height = paragraphHeight(message, text_width);
     const height = text_height + 2 * pad_y;
     c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.raised), gui.px(5), 0);
     const icon_at = gui.vec2(x + pad_x, y + (height - icon) / 2);
-    if (caps.profile != null) drawTick(list, icon_at, theme.ready) else drawInfo(list, icon_at, gui.px(14), theme.text_secondary);
+    if (caps.profile != null or raw.linear) drawTick(list, icon_at, theme.ready) else drawInfo(list, icon_at, gui.px(14), theme.text_secondary);
     _ = paragraphAt(list, text_x, y + pad_y, text_width, theme.text_secondary, message);
     return height;
+}
+
+// The scanner settings.
+
+/// The scanner's name as rolls record it: its vendor and model. It lasts for this frame.
+fn scannerName(device: scan.Device) []const u8 {
+    return gui.print("{s} {s}", .{ device.vendor, device.model });
+}
+
+/// The open scanner's changes to raw setup, from the library.
+fn rawChanges(state: *const State, ctx: context.Context) []const scan.RawSetting {
+    const device = state.openDevice() orelse return &.{};
+    return ctx.library.scanner_settings.raw(scannerName(device), device.driver);
+}
+
+/// How raw setup leaves the open scanner, with its changes.
+fn rawReport(state: *const State, ctx: context.Context) scan.RawReport {
+    const caps = state.capabilities orelse return .{};
+    const options = caps.options orelse return .{};
+    return scan.rawSetup(options.items, rawChanges(state, ctx)).report;
+}
+
+/// Hands the open scanner's changes to the scan thread, for the scans after this.
+fn sendRaw(state: *const State, ctx: context.Context) void {
+    const worker = state.worker orelse return;
+    var owned = scan.cloneSettings(ctx.gpa, rawChanges(state, ctx)) catch |err| return std.log.err("can't copy the scanner settings: {t}", .{err});
+    worker.submit(.{ .raw = owned }) catch owned.deinit();
+}
+
+/// The scanner settings window: each option raw setup sets, at Auto (what raw setup picks) or at
+/// another value. The changes are kept in the library, per scanner and driver.
+fn drawScannerSettings(state: *State, ctx: context.Context) void {
+    if (!state.settings_open) return;
+    const device = state.openDevice();
+    const options = if (state.capabilities) |caps| caps.options else null;
+    if (device == null or options == null) {
+        state.settings_open = false;
+        return;
+    }
+    const name = scannerName(device.?);
+    const driver = device.?.driver;
+    const settings = &ctx.library.scanner_settings;
+
+    if (!c.ImGui_IsPopupOpen("scanner settings", 0)) _ = c.ImGui_OpenPopup("scanner settings", 0);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(20), gui.px(16)));
+    defer c.ImGui_PopStyleVar();
+    if (!c.ImGui_BeginPopupModal("scanner settings", null, c.ImGuiWindowFlags_AlwaysAutoResize | c.ImGuiWindowFlags_NoTitleBar)) {
+        state.settings_open = false;
+        return;
+    }
+    defer c.ImGui_EndPopup();
+    gui.title("Scanner settings", 15);
+    gui.textColored(theme.text_tertiary, gui.print("{s} · {s}", .{ name, driver }));
+    const changes = settings.raw(name, driver);
+    var report_buffer: [96]u8 = undefined;
+    gui.textColored(theme.text_secondary, scan.rawSetup(options.?.items, changes).report.label(&report_buffer));
+    c.ImGui_Dummy(gui.vec2(0, gui.px(8)));
+
+    var changed = false;
+    const controls = scan.rawControls(options.?.items);
+    if (controls.len == 0) gui.textColored(theme.text_tertiary, "Nothing to set");
+    for (controls.all(), 0..) |control, i| {
+        c.ImGui_PushIDInt(@intCast(i));
+        defer c.ImGui_PopID();
+        const x = c.ImGui_GetCursorPosX();
+        c.ImGui_AlignTextToFramePadding();
+        gui.textColored(theme.text_secondary, settingLabel(control));
+        c.ImGui_SameLineEx(x + gui.px(setting_label_width), 0);
+
+        var values_buffer: [max_setting_values]scan.RawValue = undefined;
+        const values = settingValues(control, &values_buffer);
+        // Auto first, then the values, then a change whose value the scanner doesn't offer now.
+        var items: [max_setting_values + 2][]const u8 = undefined;
+        items[0] = gui.print("Auto · {s}", .{valueLabel(control, control.auto)});
+        for (values, 1..) |value, k| items[k] = valueLabel(control, value);
+        var count = values.len + 1;
+        var chosen: usize = 0;
+        if (scan.valueOf(changes, control.option.name)) |current| {
+            chosen = for (values, 1..) |value, k| {
+                if (value.eql(current)) break k;
+            } else extra: {
+                items[count] = valueLabel(control, current);
+                count += 1;
+                break :extra count - 1;
+            };
+        }
+        const picked = gui.combo("value", items[0..count], chosen, setting_value_width) orelse continue;
+        if (picked == chosen or picked > values.len) continue;
+        const value: ?scan.RawValue = if (picked == 0) null else values[picked - 1];
+        settings.set(ctx.io, name, driver, control.option.name, value) catch |err| {
+            std.log.err("can't save the scanner settings: {t}", .{err});
+            ctx.notice.set("Scanner settings not saved", .{});
+        };
+        changed = true;
+    }
+
+    c.ImGui_Dummy(gui.vec2(0, gui.px(8)));
+    c.ImGui_BeginDisabled(changes.len == 0);
+    if (gui.buttonOf(.normal, "Reset", gui.vec2(0, button_height))) {
+        settings.reset(ctx.io, name, driver) catch |err| {
+            std.log.err("can't save the scanner settings: {t}", .{err});
+            ctx.notice.set("Scanner settings not saved", .{});
+        };
+        changed = true;
+    }
+    c.ImGui_EndDisabled();
+    c.ImGui_SameLineEx(0, gui.px(8));
+    if (gui.buttonOf(.primary, "Done", gui.vec2(0, button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
+        state.settings_open = false;
+        c.ImGui_CloseCurrentPopup();
+    }
+    if (changed) sendRaw(state, ctx);
+}
+
+/// A scanner setting's name: the driver's name for the option.
+fn settingLabel(control: scan.RawControl) []const u8 {
+    return switch (control.role) {
+        .colour_matrix => "cct-1 to cct-9",
+        else => control.option.name,
+    };
+}
+
+/// The values a scanner setting offers besides Auto, ending with the driver's default.
+fn settingValues(control: scan.RawControl, buffer: *[max_setting_values]scan.RawValue) []const scan.RawValue {
+    var count: usize = 0;
+    switch (control.option.kind) {
+        .bool => {
+            buffer[0] = .{ .number = 1 };
+            buffer[1] = .{ .number = 0 };
+            count = 2;
+        },
+        .string => for (control.option.choices) |choice| {
+            if (count == buffer.len - 1) break;
+            buffer[count] = .{ .choose = choice };
+            count += 1;
+        },
+        .table, .matrix => {
+            buffer[0] = .straight;
+            count = 1;
+        },
+        // A number is either raw setup's or the driver's.
+        .number, .other => {},
+    }
+    buffer[count] = .leave;
+    return buffer[0 .. count + 1];
+}
+
+/// A setting's value as its drop-down shows it.
+fn valueLabel(control: scan.RawControl, value: scan.RawValue) []const u8 {
+    return switch (value) {
+        .leave => "Driver default",
+        .film => scan.filmChoice(control.option.choices, scanner_film) orelse "Positive",
+        .choose => |choice| choice,
+        .number => |n| if (control.option.kind == .bool) (if (n != 0) "On" else "Off") else gui.print("{d}", .{n}),
+        .straight => if (control.option.kind == .matrix) "Identity" else "Straight",
+    };
 }
 
 /// A note on what fits on the scanner's film area. A frame fits when its size across the film

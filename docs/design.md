@@ -183,7 +183,8 @@ low-resolution scan of the whole area.
   own configuration.
 - Options are set by name. SANE's standard names (`source`, `mode`, `depth`, `resolution`,
   `tl-x`, `tl-y`, `br-x`, `br-y`, `preview`) work with every backend. Backend-specific ones, like
-  epkowa's `film-type` and `gamma-correction`, come from a scanner profile (below).
+  epkowa's `film-type` and `gamma-correction`, come from a scanner profile or from raw setup
+  (both below).
 - Cancel calls `sane_cancel`. On the V200 the plugin then reads the rest of the scan anyway, so
   that the scanner stays usable. That takes as long as the rest of the scan would have, so the UI
   shows "finishing" until it's done.
@@ -226,10 +227,37 @@ The V200's backend offers 300, 2400 and 4800 dpi. We checked the profile on the 
 strip: `minilab scan` gives the same values as `scanimage` with the same options, within 2% in
 every channel.
 
-**Scanners without a profile.** minilab scans in colour at the deepest bit depth the scanner has,
-and says plainly that the data isn't known to be linear. A scanner that can't give linear data
-could still be used if we undid its curve: a scan of a transmission step wedge (a strip of known
-densities, such as a Stouffer T2115) would measure that curve. That isn't built yet.
+**Scanners without a profile: raw setup.** minilab scans in colour at the deepest bit depth the
+scanner has, and works out the rest from the options the backend lists (`rawControls` in
+`src/scan/root.zig`). Backends use SANE's standard names where there is one (`saneopts.h`), and
+we read the others' names and values from the drivers' own strings. In this order:
+
+- the film type: an option with "film" in its name and a value that says positive, set to
+  positive film, first, for the same reason as with a profile;
+- gamma: SANE's `custom-gamma` switched on and its gamma tables (`gamma-table`,
+  `red-gamma-table` and so on) filled with a straight line; or a gamma choice that says 1.0 or
+  linear, like epson2's `User defined (Gamma=1.0)`; or one that takes your own table, and then
+  the tables. Coolscans have tables and no switch, so their tables are always on and get filled
+  too. Gamma numbers (`gamma`, `analog-gamma`) are set to 1.0;
+- colour correction off: an option with "color correction" in its name set to none or off, or
+  epkowa's matrix set to the identity. Shading correction is left alone, since it evens out the
+  lamp;
+- brightness and contrast set to 0, but only where 0 is in the middle of their range.
+
+On the V200's options this gives exactly what its profile sets (there's a test for it). An option
+the scanner won't take is skipped and logged, and the scan still goes ahead. The Scan screen says
+how it all left the scanner: "Raw · gamma 1.0 · colour correction off", or that the data may not
+be linear.
+
+When raw setup guesses wrong, the Scanner settings window shows each of those options, at Auto
+(what raw setup picks) or at another of its values, or at the driver's default. The changes are
+kept in the library's `scanners.json`, per scanner and driver, since the same scanner has other
+option names on another driver (epson2 and epkowa both drive Epsons). The scan thread gets a copy
+of the open scanner's changes and applies them on every scan. Reset clears a scanner's changes.
+
+A scanner that can't give linear data at all could still be used if we undid its curve: a scan of
+a transmission step wedge (a strip of known densities, such as a Stouffer T2115) would measure
+that curve. That isn't built yet.
 
 ### Camera scans
 
@@ -645,6 +673,7 @@ A library is a folder of rolls, and a roll is a folder:
 ```
 Rolls/
   calibration.json       scanner calibrations (section 9)
+  scanners.json          changes to raw setup, per scanner (section 5)
   Looks/                 imported LUTs and fitted looks
   2026-10-22 Portra 400 Ghent/
     roll.json            film type, stock, format, camera, lens, dates, notes, scanner, own fields
@@ -784,8 +813,8 @@ The work was planned in phases, each ending with something usable:
    scans.
 2. **Frame detection** and `minilab detect`. Done.
 3. **GUI on files:** roll browser, viewer, develop panel, histogram, before and after. Done.
-4. **Scanning:** SANE with the V200 profile, preview, detection, batch scan. Done. TWAIN is
-   written but hasn't been tried yet (section 5).
+4. **Scanning:** SANE with the V200 profile and raw setup for other scanners, preview,
+   detection, batch scan. Done. TWAIN is written but hasn't been tried yet (section 5).
 5. **Presets:** film types, tone and white balance modes, stock presets. Done.
 6. **Looks:** Frontier emulation (section 10), imported .cube LUTs, the bundled film looks, and
    the tool for fitting looks to lab scans. Done.

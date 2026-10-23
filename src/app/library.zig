@@ -30,6 +30,8 @@ pub const Library = struct {
     looks: minilab.look.Catalog,
     /// The scanners calibrated against the film makers' datasheets, for Stock balance.
     calibrations: minilab.calibration.Calibrations,
+    /// The user's changes to raw setup, per scanner.
+    scanner_settings: minilab.scanner_settings.Settings,
     /// Thumbnails dropped during a frame. ImGui may still draw them in that frame, so they're only
     /// released once it has been drawn (`releaseRetired`).
     retired: std.ArrayList(Texture) = .empty,
@@ -50,12 +52,15 @@ pub const Library = struct {
         errdefer looks.deinit(gpa);
         var calibrations: minilab.calibration.Calibrations = try .load(gpa, io, path);
         errdefer calibrations.deinit();
+        var scanner_settings: minilab.scanner_settings.Settings = try .load(gpa, io, path);
+        errdefer scanner_settings.deinit();
         return .{
             .path = owned_path,
             .home = owned_home,
             .label = label,
             .looks = looks,
             .calibrations = calibrations,
+            .scanner_settings = scanner_settings,
             .rolls = try roll.listRolls(gpa, io, path),
             .gpa = gpa,
         };
@@ -81,6 +86,7 @@ pub const Library = struct {
         library.rolls.deinit(gpa);
         library.looks.deinit(gpa);
         library.calibrations.deinit();
+        library.scanner_settings.deinit();
         gpa.free(library.path);
         if (library.home) |h| gpa.free(h);
         gpa.free(library.label);
