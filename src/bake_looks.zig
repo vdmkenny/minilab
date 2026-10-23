@@ -13,6 +13,9 @@ const png = @import("io/png.zig");
 /// The largest collection file we'll read. Street Monochrome's 64³ .cube files are 7 MB.
 const max_file_bytes = 64 << 20;
 
+/// The exit status for a command line it doesn't understand, as minilab's own.
+const usage_status = 2;
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
@@ -20,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
     const packs = comptime std.enums.values(bundled.Pack);
     if (args.len != 2 + packs.len) {
         std.log.err("usage: bake_looks <out file> <the folder of each collection: {d}>", .{packs.len});
-        std.process.exit(2);
+        std.process.exit(usage_status);
     }
     const folders = args[2..];
     const out = try gpa.alloc(u8, bundled.looks.len * bundled.lut_bytes);
@@ -92,8 +95,9 @@ test "an identity HaldCLUT bakes to the identity" {
     const values = try gpa.alloc([3]f32, bundled.lut_values / 3);
     defer gpa.free(values);
     sample(&lut, values);
-    const top: f32 = bundled.size - 1;
-    for ([_][3]usize{ .{ 0, 0, 0 }, .{ 32, 0, 0 }, .{ 0, 32, 0 }, .{ 5, 17, 29 }, .{ 32, 32, 32 } }) |point| {
+    const last = bundled.size - 1;
+    const top: f32 = last;
+    for ([_][3]usize{ .{ 0, 0, 0 }, .{ last, 0, 0 }, .{ 0, last, 0 }, .{ 5, 17, 29 }, .{ last, last, last } }) |point| {
         const v = values[(point[2] * bundled.size + point[1]) * bundled.size + point[0]];
         for (v, point) |x, p| try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(p)) / top, x, 1e-5);
     }

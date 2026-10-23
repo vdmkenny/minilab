@@ -15,9 +15,9 @@ here. For what minilab does and why, see [docs/design.md](docs/design.md).
 - Run `make hooks` once. It installs a pre-commit hook that stops scans and other files that don't
   belong from getting committed. `make help` lists the other `make` targets.
 - `make run` opens the app on your library (`~/Pictures/Rolls`), or on another folder with
-  `ARGS='open --library <folder>'`. To scan you need SANE on macOS and Linux, or the scanner
-  maker's TWAIN driver on Windows. On a Mac, `scripts/build-sane-macos.sh arm64 zig-out/bin/sane`
-  builds the SANE the releases carry and puts it next to the program.
+  `ARGS='open --library <folder>'`. To scan you need SANE on macOS and Linux (the README's
+  "Building it yourself" has how to build it on a Mac), or the scanner maker's TWAIN driver on
+  Windows.
 
 ## Where things are
 
@@ -83,8 +83,8 @@ Before you open a pull request, run:
 make check
 ```
 
-It checks the formatting, the repository's files and the tests. CI runs the same thing on Linux,
-macOS and Windows, and runs the tests in ReleaseFast as well.
+It checks the formatting, the repository's files and the tests. CI runs the tests on Linux, macOS
+and Windows, in ReleaseFast as well, and checks the formatting and the files once, on Linux.
 
 ## Commits and pull requests
 

@@ -147,11 +147,6 @@ pub fn button(label: [:0]const u8) bool {
     return buttonOf(.normal, label, vec2(0, 0));
 }
 
-/// A button that shows whether it's chosen, for a row of choices.
-pub fn choice(label: [:0]const u8, selected: bool) bool {
-    return buttonOf(if (selected) .selected else .unselected, label, vec2(0, 0));
-}
-
 /// A set of choices in one grey box with the chosen one marked, like the viewer's Split /
 /// Negative / Positive. Returns the one that was clicked.
 pub fn segmented(id: [:0]const u8, labels: []const [:0]const u8, chosen: usize) ?usize {

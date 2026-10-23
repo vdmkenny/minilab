@@ -31,8 +31,8 @@ pub const licences = [_][]const u8{
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    // The C libraries are always built optimised, whatever the mode, like OpenReliant's are, so a
-    // debug build still decodes a camera file in moments. They all ask for zlib and libjpeg-turbo
+    // The C libraries are always built optimised, whatever the mode, so a debug build still
+    // decodes a camera file in moments. They all ask for zlib and libjpeg-turbo
     // with these same options, so the program links only one copy of each.
     const libraries: std.lang.Optimize = .fast;
 

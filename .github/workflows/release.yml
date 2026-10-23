@@ -138,7 +138,12 @@ jobs:
         working-directory: dist
         env:
           TAG: ${{ needs.release-please.outputs.tag }}
-        run: sha256sum -- *.tar.gz *.tar.bz2 *.zip > "minilab-$TAG-sha256sums.txt"
+        shell: bash
+        # A pattern that matches nothing is left out rather than passed on as it is.
+        run: |
+          shopt -s nullglob
+          archives=(*.tar.gz *.tar.bz2 *.zip)
+          sha256sum -- "${archives[@]}" > "minilab-$TAG-sha256sums.txt"
       # Each change a contributor made gets their handle in the notes (`release-credits.sh`).
       - name: Attach the builds to the release, and credit the contributors
         shell: bash
@@ -147,7 +152,10 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag }}
         run: |
           gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
-          changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | scripts/release-credits.sh)"
+          body="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+          # Run again, the job finds its note there already, and leaves the notes as they are.
+          case "$body" in "The macOS builds come with scanner drivers"*) exit 0 ;; esac
+          changelog="$(printf '%s\n' "$body" | scripts/release-credits.sh)"
           note="The macOS builds come with scanner drivers (SANE). On Linux you need SANE, and on Windows your scanner maker's TWAIN driver (see the README). The macOS builds aren't signed, so macOS blocks them the first time you open one: run \`xattr -dr com.apple.quarantine .\` once in the folder you unpacked to let it through. The source of the SANE they carry is attached here too. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
 

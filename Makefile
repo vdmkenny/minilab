@@ -1,6 +1,6 @@
 # minilab's workflows. `make help` lists them.
 
-.PHONY: help build run test check fmt release check-files hooks
+.PHONY: help build run test check fmt fmt-check release check-files hooks
 
 help:
 	@echo "make build        build minilab into zig-out/bin"
@@ -9,6 +9,7 @@ help:
 	@echo "make check        run the checks CI runs: formatting, files, tests"
 	@echo "make check-files  check that no scans or other files that stay out are in the repository"
 	@echo "make fmt          format the Zig code"
+	@echo "make fmt-check    check the Zig code's formatting, as CI does"
 	@echo "make release      build optimised for speed, as the releases are"
 	@echo "make hooks        install the pre-commit hook that keeps scans and other files out"
 
@@ -21,12 +22,14 @@ run:
 test:
 	zig build test --summary all
 
-check: check-files
-	zig fmt --check src build.zig
+check: check-files fmt-check
 	zig build test --summary all
 
 fmt:
-	zig fmt src build.zig
+	zig fmt src build.zig deps
+
+fmt-check:
+	zig fmt --check src build.zig deps
 
 release:
 	zig build --release=fast -Dstrip

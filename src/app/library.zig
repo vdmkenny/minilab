@@ -76,7 +76,7 @@ pub const Library = struct {
     }
 
     pub fn deinit(library: *Library, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
-        library.forgetThumbnails(gpa);
+        library.forgetThumbnails();
         library.releaseRetired(gpu);
         library.retired.deinit(gpa);
         library.failed.deinit(gpa);
@@ -102,13 +102,12 @@ pub const Library = struct {
         }
     }
 
-    fn forgetThumbnails(library: *Library, gpa: std.mem.Allocator) void {
+    fn forgetThumbnails(library: *Library) void {
         var each = library.thumbnails.valueIterator();
         while (each.next()) |t| library.retire(t.*);
         library.thumbnails.clearRetainingCapacity();
         library.wanted.clearRetainingCapacity();
         library.failed.clearRetainingCapacity();
-        _ = gpa;
     }
 
     /// Keeps `texture` until the frame has been drawn. If there's no memory to keep it, it stays on
@@ -127,24 +126,20 @@ pub const Library = struct {
     pub fn reload(library: *Library, gpa: std.mem.Allocator, io: std.Io) !void {
         // Read the new list first, so if that fails the old one is still good.
         const rolls = try roll.listRolls(gpa, io, library.path);
-        library.forgetThumbnails(gpa);
+        library.forgetThumbnails();
         for (library.rolls.items) |*r| r.close();
         library.rolls.deinit(gpa);
         library.rolls = rolls;
     }
 
     /// Reads the rolls again if the library changed on disk since the last look, say from rolls
-    /// added by `minilab import` or in the Finder, or frames added to one. Returns whether it did.
-    pub fn refresh(library: *Library, gpa: std.mem.Allocator, io: std.Io) bool {
-        const now = library.fingerprint(io) catch return false;
+    /// added by `minilab import` or in the Finder, or frames added to one.
+    pub fn refresh(library: *Library, gpa: std.mem.Allocator, io: std.Io) void {
+        const now = library.fingerprint(io) catch return;
         const before = library.on_disk;
         library.on_disk = now;
-        if (before == null or before.? == now) return false;
-        library.reload(gpa, io) catch |err| {
-            std.log.err("can't read the library again: {t}", .{err});
-            return false;
-        };
-        return true;
+        if (before == null or before.? == now) return;
+        library.reload(gpa, io) catch |err| std.log.err("can't read the library again: {t}", .{err});
     }
 
     /// A fingerprint of the library's folders: the times of the library's folder, and of each

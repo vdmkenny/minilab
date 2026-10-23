@@ -1561,7 +1561,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
     gui.endSection(true);
 
-    drawBase(state, library);
+    drawBase(state);
 
     gui.beginSection("density");
     gui.heading("DENSITY");
@@ -1675,7 +1675,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.
-fn drawBase(state: *State, library: *Library) void {
+fn drawBase(state: *State) void {
     const frame = &state.frame.?;
     gui.beginSection("base");
     const list = c.ImGui_GetWindowDrawList();
@@ -1706,7 +1706,6 @@ fn drawBase(state: *State, library: *Library) void {
     shortcuts.tooltip("Pick the film base · rebate or gap", .base);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x, corner.y + row_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
-    _ = library;
     gui.endSection(true);
 }
 

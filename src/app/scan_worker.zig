@@ -62,6 +62,7 @@ pub const FrameJob = struct {
         format: frames.Format,
         kind: frames.Kind,
         axis: frames.Axis,
+        holder: frames.Holder = .strip,
         /// How much to take off each side of the detected frame, as a share of its size.
         inset: f32,
     };
@@ -269,7 +270,7 @@ pub const Worker = struct {
             worker.running = false;
             worker.mutex.unlock(worker.io);
         }
-        if (worker.scanner) |*s| s.close(worker.gpa);
+        if (worker.scanner) |*s| s.close();
         if (worker.raw) |*r| r.deinit();
         scan.freeDevices(worker.gpa, worker.devices);
         if (worker.library) |*l| l.unload();
@@ -299,7 +300,7 @@ pub const Worker = struct {
         switch (job) {
             .list => {
                 worker.phase.store(.listing, .release);
-                if (worker.scanner) |*s| s.close(gpa);
+                if (worker.scanner) |*s| s.close();
                 worker.scanner = null;
                 const found = library.devices(gpa) catch |err| return worker.post(.{ .failed = .{ .stage = .list, .err = err } });
                 scan.freeDevices(gpa, worker.devices);
@@ -309,7 +310,7 @@ pub const Worker = struct {
             },
             .open => |index| {
                 worker.phase.store(.opening, .release);
-                if (worker.scanner) |*s| s.close(gpa);
+                if (worker.scanner) |*s| s.close();
                 worker.scanner = null;
                 if (index >= worker.devices.len) return worker.post(.{ .failed = .{ .stage = .open, .err = error.NotFound } });
                 worker.scanner = library.open(gpa, worker.devices[index]) catch |err| return worker.post(.{ .failed = .{ .stage = .open, .err = err } });
@@ -425,7 +426,7 @@ fn refineCrop(gpa: std.mem.Allocator, whole: image.Scan, dpi: f32, planned: imag
     defer reduced.deinit(gpa);
     // The whole-number factor `downscale` actually reduced by, which may be more than `factor`.
     const scale: f32 = @floatFromInt(image.reductionFactor(whole.width, whole.height, longest));
-    var detection = frames.detect.detect(gpa, reduced, dpi / scale, refine.format, refine.kind, .{ .axis = refine.axis }) catch return null;
+    var detection = frames.detect.detect(gpa, reduced, dpi / scale, refine.format, refine.kind, .{ .axis = refine.axis, .holder = refine.holder }) catch return null;
     defer detection.deinit(gpa);
 
     const planned_centre = centreOf(planned);
@@ -507,7 +508,7 @@ test "the scan thread's jobs preview and scan frames on SANE's test backend" {
     worker.devices = try gpa.alloc(scan.Device, 1);
     worker.devices[0] = try test_device.clone(gpa);
     defer {
-        if (worker.scanner) |*s| s.close(gpa);
+        if (worker.scanner) |*s| s.close();
         scan.freeDevices(gpa, worker.devices);
     }
 

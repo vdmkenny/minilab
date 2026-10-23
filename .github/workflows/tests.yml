@@ -8,6 +8,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:
@@ -20,11 +23,10 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: 0.17.0
-      # The formatting and the files are the same on every system, so they're checked once.
+      # The formatting and the files are the same on every system, so they're checked once, the
+      # way `make check` does.
       - if: runner.os == 'Linux'
-        run: zig fmt --check src build.zig
-      - if: runner.os == 'Linux'
-        run: scripts/check-files.sh
+        run: make fmt-check check-files
       - run: zig build --summary all
       - run: zig build test --summary all
       # Releases are built ReleaseFast, without the safety checks, so the tests run in that mode too.

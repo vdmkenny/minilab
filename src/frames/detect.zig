@@ -1,32 +1,11 @@
-//! Frame detection on a strip preview (design section 6).
+//! Frame detection on a strip preview. Design section 6 walks through the steps: classify the
+//! scan, fit the opening, find the gaps, snap each frame to the format, and fill in weak frames
+//! from the pitch. Positives turn the gap test around, and mounted slides are found by their
+//! apertures (`Holder.mounted`).
 //!
 //! The scan is reduced to one value per pixel (the geometric mean of its channels) and read in
 //! strip coordinates: `u` counts lines along the strip and `v` counts samples across it, whichever
 //! image axis the strip runs along. Positions are continuous, so sample `i` covers `[i, i + 1)`.
-//! For negatives:
-//!
-//! 1. Classify. The holder lets almost no light through, the film base between frames is the
-//!    clearest part of the film, and the pictures sit somewhere in between. A level between the
-//!    darkest and lightest parts of the scan separates the holder from the film. The film base
-//!    itself is measured in step 3.
-//! 2. Opening. Fit lines to the two long edges of the light band. They give the strip's angle and
-//!    the frame height. Where 135's perforations show, their bands are left out.
-//! 3. Gaps. Walk along the strip and sample each line across the band, at right angles to the
-//!    strip. A line counts as gap when its median is at base density and it's flat (even a thin
-//!    picture still shows some texture). Each run of content between gaps has two ends. An end is
-//!    sharp when the density steps up within half a millimetre, soft when it doesn't, or cut off
-//!    by the end of the film or the scan.
-//! 4. Snap. Each frame gets the opening's height minus the inset, and its length from the format's
-//!    ratio, centred between its gaps. If the measured length is far off, the frame keeps its
-//!    measured box and is marked for checking. One sharp end is enough to place a frame whose
-//!    other end doesn't show.
-//! 5. Weak frames. Frames whose edges don't show at all (dark scenes close to base density, say)
-//!    are filled in from the pitch: measured between sharp edges where they repeat, or else the
-//!    format's fixed pitch. They're marked for checking.
-//!
-//! Positives take the same steps with the gap test turned around, because the unexposed film
-//! between frames is opaque. Mounted slides are found by their apertures instead, each one
-//! measured on its own.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
@@ -64,6 +43,13 @@ pub const Holder = enum {
     strip,
     /// Mounted slides. Each mount is opaque, and its aperture is the frame.
     mounted,
+
+    pub fn label(holder: Holder) [:0]const u8 {
+        return switch (holder) {
+            .strip => "Strip",
+            .mounted => "Mounted",
+        };
+    }
 };
 
 /// The image axis the strip runs along.
@@ -92,9 +78,6 @@ pub const Options = struct {
     /// The image axis the strip runs along, or null to detect it.
     axis: ?Axis = null,
     holder: Holder = .strip,
-    /// How much to take off each long side of the opening, in mm. It's for an opening that's
-    /// wider than the picture, like a mask for narrower film.
-    inset_mm: f32 = 0,
     /// A frame whose measured length is off from the format's by more than this fraction is
     /// marked for checking.
     length_tolerance: f32 = 0.12,
@@ -108,7 +91,7 @@ pub const Detection = struct {
     axis: Axis,
     /// The strip's skew, with the same sign as `Frame.rotation_degrees`.
     rotation_degrees: f32,
-    /// The opening's height across the strip, before the inset.
+    /// The opening's height across the strip.
     opening_mm: f32,
     frames: []Frame,
 
@@ -256,8 +239,7 @@ pub fn detect(
     var profile: Profile = try .measure(gpa, view, opening, levels.threshold);
     defer profile.deinit(gpa);
 
-    const inset = options.inset_mm * px_per_mm;
-    const frame_height = @max(opening.height(middle) - 2 * inset, 1);
+    const frame_height = @max(opening.height(middle), 1);
     const context: Context = .{
         .view = view,
         .opening = opening,
@@ -266,17 +248,12 @@ pub fn detect(
         .kind = kind,
         .gap_tolerance = options.gap_tolerance orelse kind.defaultGapTolerance(),
         .length_tolerance = options.length_tolerance,
-        .ratio_lock = format.ratio_lock,
         .frame_height = frame_height,
-        .frame_length = switch (format.ratio_lock) {
-            .locked => frame_height * format.ratio(),
-            .free => format.width_mm * px_per_mm,
-        },
+        .frame_length = frame_height * format.ratio(),
         .nominal_length = format.width_mm * px_per_mm,
         .nominal_height = nominal_height,
         .nominal_pitch = if (format.pitch_mm) |pitch| pitch * px_per_mm else null,
         .nominal_gap = format.gapMm() * px_per_mm,
-        .inset = inset,
         .px_per_mm = px_per_mm,
     };
 
@@ -815,9 +792,8 @@ const Context = struct {
     kind: Kind,
     gap_tolerance: f32,
     length_tolerance: f32,
-    ratio_lock: formats.RatioLock,
-    /// The frame's size. The height is the opening's height minus the inset. The length comes
-    /// from the format's ratio, or is the nominal length when the ratio is free.
+    /// The frame's size. The height is the opening's height, and the length comes from the
+    /// format's ratio.
     frame_height: f32,
     frame_length: f32,
     /// The format's size.
@@ -826,7 +802,6 @@ const Context = struct {
     /// The format's fixed pitch, if it has one, and its gap.
     nominal_pitch: ?f32,
     nominal_gap: f32,
-    inset: f32,
     px_per_mm: f32,
 };
 
@@ -1172,8 +1147,7 @@ const Strip = struct {
         if (count > 1) return strip.fillRun(gpa, frames, content, count);
 
         if (@abs(measured - strip.length) <= strip.context.length_tolerance * strip.length) {
-            const along = if (strip.context.ratio_lock == .free) measured else strip.length;
-            return frames.append(gpa, strip.frame(run.middle(), along, .confident));
+            return frames.append(gpa, strip.frame(run.middle(), strip.length, .confident));
         }
         if (measured < strip.length) {
             // One edge doesn't show, so the frame runs on from the edge that does.
@@ -1314,7 +1288,7 @@ fn placeMounted(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Pr
         const local = try fitOpening(gpa, c.view, c.edge_threshold, lines, band, c.px_per_mm, max_skew_degrees);
         const middle = run.middle();
         const length = run.len() * local.alongScale();
-        const height = @max(local.height(middle) - 2 * c.inset, 1);
+        const height = @max(local.height(middle), 1);
         const off_length = @abs(length - c.nominal_length) > c.length_tolerance * c.nominal_length;
         const off_height = @abs(height - c.nominal_height) > c.length_tolerance * c.nominal_height;
         try out.append(gpa, .{
@@ -1515,19 +1489,6 @@ test "a frame cut off by the end of the scan is marked for checking" {
     var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
     defer detection.deinit(testing_gpa);
     try expectFrames(detection, strip, &.{ .confident, .confident, .check }, 0.3);
-}
-
-test "the inset narrows the frame and shortens it by the ratio" {
-    var frames: [strip_135_frames]synthetic.Frame = undefined;
-    const strip = synthetic.strip135(&frames);
-    var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{ .inset_mm = 0.5 });
-    defer detection.deinit(testing_gpa);
-    const px_per_mm = strip.dpi / formats.mm_per_inch;
-    const height = (strip.opening_mm - 1) * px_per_mm;
-    for (detection.frames) |f| {
-        try std.testing.expectApproxEqAbs(height, @as(f32, @floatFromInt(f.area.width)), 1.5);
-        try std.testing.expectApproxEqAbs(1.5 * height, @as(f32, @floatFromInt(f.area.height)), 2);
-    }
 }
 
 test "a scan with no light band has no opening" {

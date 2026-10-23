@@ -1,5 +1,5 @@
-//! Finds the frame on a scan of one frame: frame detection's best box, trimmed to the format's
-//! size.
+//! Finds the frames on a scan as the app uses them: on a scan of one frame, frame detection's best
+//! box, trimmed to the format's size, and on a strip, each whole frame (`findAll`).
 
 const std = @import("std");
 const image = @import("image.zig");

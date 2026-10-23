@@ -48,4 +48,5 @@ pub const codecs = struct {
 test {
     std.testing.refAllDecls(@This());
     _ = @import("core/scans_test.zig");
+    _ = @import("frames/check_scans.zig");
 }

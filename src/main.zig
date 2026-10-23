@@ -247,7 +247,7 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         std.process.exit(1);
     };
     var scanner = try library.open(gpa, device);
-    defer scanner.close(gpa);
+    defer scanner.close();
     var capabilities = try scanner.capabilities(gpa, if (flatbed) .flatbed else .transparency);
     defer capabilities.deinit(gpa);
     const resolution = capabilities.resolutionFrom(dpi) orelse return error.NoResolutions;

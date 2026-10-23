@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
     check.dependOn(&b.addTest(.{ .root_module = core }).step);
     check.dependOn(&b.addTest(.{ .root_module = app }).step);
+    check.dependOn(&b.addTest(.{ .root_module = looks.tool }).step);
     check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = app }).step);
 }
 

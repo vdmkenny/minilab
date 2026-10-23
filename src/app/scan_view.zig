@@ -79,6 +79,8 @@ const slider_label_column = 110;
 const slider_value_column = 56;
 const button_height = 32;
 const slider_row_height = 20;
+/// How round a slide mount's corners are drawn, as a share of its side.
+const slide_mount_rounding = 0.06;
 /// How much film base to draw beside the frames of film with no set width, in mm.
 const plain_film_margin_mm = 2;
 /// The smallest a drag can make a box, in preview pixels.
@@ -294,6 +296,7 @@ const Saved = struct {
     opening: ?f32 = null,
     opening_middle: ?f32 = null,
     detected: bool = false,
+    holder: frames.Holder = .strip,
     boxes: []const Box = &.{},
 };
 
@@ -312,12 +315,13 @@ pub const State = struct {
     /// The device that's open or being opened.
     device: ?usize = null,
     capabilities: ?scan.Capabilities = null,
-    /// Whether the device list has come back at least once.
-    listed: bool = false,
     /// The last failure, for the panel. It's a static string.
     problem: ?[]const u8 = null,
 
     film: FilmType = .colour_negative,
+    /// How positives sit in the holder: as a strip, or as mounted slides. Negatives are always
+    /// strips (`holder`).
+    holder_choice: frames.Holder = .strip,
     dpi: u32 = default_dpi,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
@@ -380,6 +384,11 @@ pub const State = struct {
         };
     }
 
+    /// How the film sits in the holder, for finding its frames.
+    fn holder(state: *const State) frames.Holder {
+        return if (state.film == .positive) state.holder_choice else .strip;
+    }
+
     fn deviceName(state: *const State) ?[]const u8 {
         const device = state.openDevice() orelse return null;
         return device.model;
@@ -433,7 +442,6 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
         .devices => |list| {
             scan.freeDevices(gpa, state.devices);
             state.devices = list;
-            state.listed = true;
             state.device = null;
             if (state.capabilities) |*caps| caps.deinit(gpa);
             state.capabilities = null;
@@ -715,12 +723,24 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     y += lineAt(list, x, y, theme.text_secondary, "Film type") + gui.px(group_gap);
     c.ImGui_PushID("film");
     {
-        var labels_: [3][:0]const u8 = undefined;
+        var labels_: [std.enums.values(FilmType).len][:0]const u8 = undefined;
         for (std.enums.values(FilmType), 0..) |f, i| labels_[i] = f.label();
         if (pills(&labels_, @backingInt(state.film), x, &y, width, false)) |picked| state.film = @fromBackingInt(@intCast(picked));
     }
     c.ImGui_PopID();
     y += gui.px(group_gap);
+    // Slides can come as a strip or in mounts, which detection finds differently.
+    if (state.film == .positive) {
+        c.ImGui_PushID("holder");
+        var labels_: [std.enums.values(frames.Holder).len][:0]const u8 = undefined;
+        for (std.enums.values(frames.Holder), 0..) |h, i| labels_[i] = h.label();
+        if (pills(&labels_, @backingInt(state.holder_choice), x, &y, width, false)) |picked| {
+            state.holder_choice = @fromBackingInt(@intCast(picked));
+            state.boxes_dirty = true;
+        }
+        c.ImGui_PopID();
+        y += gui.px(group_gap);
+    }
     const film_note = if (state.capabilities) |caps| blk: {
         if (!caps.film_setting) break :blk gui.print("No film mode on this scanner", .{});
         break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, ctx, caps), state.film.why() });
@@ -1199,8 +1219,11 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     const room = top + height - y - below;
     // Once there are frames, the strip is drawn as straight film, as in the design: the film's
     // own width, and the length the preview covers. Before that, we draw the scan as it lies.
+    // Mounted slides are drawn in their mounts instead.
     const as_film = if (state.preview) |p| state.boxes.items.len > 0 and p.texture != null else false;
-    const film_mm = if (as_film) gui.vec2(filmWidthMm(state, &state.preview.?, film), state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
+    const mounted = state.holder() == .mounted;
+    const across_mm: f32 = if (mounted) formats.slide_mount_mm else if (as_film) filmWidthMm(state, &state.preview.?, film) else area.width;
+    const film_mm = if (as_film) gui.vec2(across_mm, state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
     const shown = gui.vec2(@round(room * film_mm.x / film_mm.y), @round(room));
     const corner = gui.vec2(x, y);
     const far = gui.vec2(x + shown.x, y + shown.y);
@@ -1208,7 +1231,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     if (state.preview) |*p| {
         if (as_film) {
             const map: StripMap = .film(p, corner, shown, film_mm.x);
-            drawFilm(state, p, map, film, list);
+            if (mounted) drawMounts(state, p, map, list) else drawFilm(state, p, map, film, list);
             drawBoxesOnStrip(state, p, map, list);
         } else if (p.texture) |t| c.ImDrawList_AddImage(list, t.ref(), corner, far) else c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
     } else {
@@ -1273,6 +1296,21 @@ fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmS
 /// Draws the film as it looks on a light table: the base in its own colour, the film's holes if it
 /// has any (rows along both edges, or a few per frame), and each frame's picture straight and
 /// centred.
+/// Draws mounted slides down the column: each frame's picture in a slide mount, on the dark of the
+/// holder. The column is one mount wide.
+fn drawMounts(state: *const State, preview: *const Preview, map: StripMap, list: *c.ImDrawList) void {
+    const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
+    c.ImDrawList_AddRectFilled(list, map.corner, far, theme.imU32(theme.film));
+    const side = map.shown.x;
+    for (state.boxes.items) |box| {
+        const middle = map.corner.y + box.along * map.along;
+        const top = std.math.clamp(middle - side / 2, map.corner.y, far.y);
+        const bottom = std.math.clamp(middle + side / 2, map.corner.y, far.y);
+        if (bottom > top) c.ImDrawList_AddRectFilledEx(list, gui.vec2(map.corner.x, top), gui.vec2(far.x, bottom), theme.imU32(theme.slide_mount), side * slide_mount_rounding, 0);
+    }
+    drawPictures(state, preview, map, list);
+}
+
 fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
     const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
     const base = preview.base_colour orelse theme.rgba8(theme.raised);
@@ -1771,7 +1809,7 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const preview = if (state.preview) |*p| p else return;
     const r = roll_index orelse return;
     const format = ctx.library.rolls.items[r].info.format.format();
-    var detection = frames.detect.detect(ctx.gpa, preview.scan, preview.dpi[0], format, state.film.detectKind(), .{}) catch |err| {
+    var detection = frames.detect.detect(ctx.gpa, preview.scan, preview.dpi[0], format, state.film.detectKind(), .{ .holder = state.holder() }) catch |err| {
         state.detect_note = switch (err) {
             error.NoOpening => "No film on the preview · check the strip and holder",
             error.BadResolution => "Preview resolution unknown · preview again",
@@ -1865,7 +1903,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
             .index = i,
             .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area },
             .crop = crop,
-            .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .inset = box.inset / 100 },
+            .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .inset = box.inset / 100 },
         };
     }
     state.queue.clearRetainingCapacity();
@@ -2128,6 +2166,7 @@ fn savePreviewSettings(state: *State, ctx: context.Context) void {
         .opening = preview.opening,
         .opening_middle = preview.opening_middle,
         .detected = preview.detected,
+        .holder = state.holder_choice,
         .boxes = state.boxes.items,
     };
     const bytes = std.json.Stringify.valueAlloc(ctx.gpa, saved, .{ .whitespace = .indent_2 }) catch return;
@@ -2159,6 +2198,7 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
         .opening_middle = saved.opening_middle,
         .detected = saved.detected,
     };
+    state.holder_choice = saved.holder;
     try state.boxes.appendSlice(gpa, saved.boxes);
     state.selected = if (state.boxes.items.len > 0) 0 else null;
     uploadPreview(state, ctx);
