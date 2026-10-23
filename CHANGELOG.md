@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.0](https://github.com/vdmkenny/minilab/compare/v0.1.0...v0.2.0) (2026-10-23)
+
+
+### Features
+
+* A loupe in Develop, at the scan's full resolution ([#12](https://github.com/vdmkenny/minilab/issues/12)) ([d57bb00](https://github.com/vdmkenny/minilab/commit/d57bb007d42b03251ffd274a9e4a8e1635891231))
+* Delete a roll from Rolls, to the Trash, after confirming ([#15](https://github.com/vdmkenny/minilab/issues/15)) ([742d65c](https://github.com/vdmkenny/minilab/commit/742d65cf97f03e4174cc4517c119bc40ff0b118d))
+* Finished scans in rolls, folder imports, and rolls added on disk show up ([#10](https://github.com/vdmkenny/minilab/issues/10)) ([39f6a5e](https://github.com/vdmkenny/minilab/commit/39f6a5e415af983174ec1b2903233830874a8071))
+* Step-by-step scanner driver setup on Scan ([#13](https://github.com/vdmkenny/minilab/issues/13)) ([3e418ea](https://github.com/vdmkenny/minilab/commit/3e418ea889d5f4cb40cd70de19386d842a51aecb))
+
+
+### Fixes
+
+* Dragging Develop's split no longer stretches the picture ([#14](https://github.com/vdmkenny/minilab/issues/14)) ([12f19ca](https://github.com/vdmkenny/minilab/commit/12f19ca5242b42899b4ecf0294363f286f5476db))
+
 ## [0.1.0](https://github.com/vdmkenny/minilab/compare/v0.0.1...v0.1.0) (2026-10-23)
 
 
