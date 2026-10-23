@@ -554,7 +554,7 @@ pub const State = struct {
         }
         c.ImGui_Separator();
         if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("A 3D or 1D LUT that expects sRGB or Rec. 709 input. It's copied into the library's Looks folder.");
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("3D or 1D LUT · sRGB or Rec. 709 input · copied to the library's Looks folder");
     }
 
     /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
@@ -599,23 +599,23 @@ pub const State = struct {
         if (rl.info.kind != .colour_negative or labels.stockGamma(rl.info.stock) == null) return;
         gui.rowLabel("");
         const scanner = Library.scannerOf(rl.info) orelse {
-            gui.paragraph(theme.text_tertiary, "Stock balance needs to know the roll's scanner, and this roll doesn't say.");
+            gui.paragraph(theme.text_tertiary, "Stock balance · no scanner on this roll");
             return;
         };
         const measured = library.calibrations.rolls(scanner);
         var included = false;
         for (measured) |m| included = included or std.mem.eql(u8, m.roll, rl.info.name);
         const status = if (measured.len == 0)
-            gui.print("Stock balance needs the {s} calibrated once, from a roll of a stock with a preset and {d} frames or more.", .{ scanner, minilab.calibration.min_frames })
+            gui.print("{s} not calibrated · needs a roll of {d}+ frames of a stock with a preset", .{ scanner, minilab.calibration.min_frames })
         else
-            gui.print("The {s} is calibrated from {d} {s}{s}.", .{ scanner, measured.len, if (measured.len == 1) "roll" else "rolls", if (included) ", this one among them" else "" });
+            gui.print("{s} calibrated from {d} {s}{s}", .{ scanner, measured.len, if (measured.len == 1) "roll" else "rolls", if (included) " · this one included" else "" });
         gui.paragraph(theme.text_tertiary, status);
         gui.rowLabel("");
         c.ImGui_BeginDisabled(rl.frames.items.len < minilab.calibration.min_frames);
         const label: [:0]const u8 = if (measured.len == 0) "Calibrate from this roll" else if (included) "Measure this roll again" else "Add this roll";
         if (gui.button(label)) state.calibrate(gpa, io, library, r, scanner);
         c.ImGui_EndDisabled();
-        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Measures every frame's neutral balance; their median against the stock's datasheet is the scanner's. Any stock with a preset calibrates it for all stocks.");
+        if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Median neutral balance of the frames against the datasheet · one preset stock calibrates all");
         if (state.calibration_note.len > 0) {
             gui.rowLabel("");
             gui.paragraph(theme.text_tertiary, state.calibration_note.text());
@@ -637,14 +637,14 @@ pub const State = struct {
             slopes.append(gpa, s) catch return;
         }
         const factors = minilab.calibration.measure(slopes.items, gamma) orelse {
-            state.calibration_note.set("Only {d} frames could be measured; it takes {d}.", .{ slopes.items.len, minilab.calibration.min_frames });
+            state.calibration_note.set("Measured {d} of {d} frames needed", .{ slopes.items.len, minilab.calibration.min_frames });
             return;
         };
         library.calibrations.add(io, scanner, .{ .roll = rl.info.name, .stock = rl.info.stock.?, .frames = @intCast(slopes.items.len), .factors = factors }) catch |err| {
-            state.calibration_note.set("The calibration couldn't be saved: {t}.", .{err});
+            state.calibration_note.set("Calibration not saved: {t}", .{err});
             return;
         };
-        state.calibration_note.set("Measured {d} frames: against the datasheet, this scanner's red is ×{d:.2} and its blue ×{d:.2}.", .{ slopes.items.len, factors[0], factors[2] });
+        state.calibration_note.set("Measured {d} frames · red ×{d:.2}, blue ×{d:.2} against the datasheet", .{ slopes.items.len, factors[0], factors[2] });
         state.applyStock(gpa, io, library, r);
     }
 
@@ -764,18 +764,18 @@ pub const State = struct {
         if (keys.contains(.sync) and state.rollIndex(library) != null) state.ask_sync = true;
         if (keys.contains(.copy_settings)) {
             state.clipboard = .of(frame);
-            return gui.print("Copied the settings of {s}.", .{frame.name});
+            return gui.print("Copied settings of {s}", .{frame.name});
         }
         if (keys.contains(.paste_settings)) {
-            const copied = state.clipboard orelse return "Nothing copied yet: copy a frame's settings first.";
+            const copied = state.clipboard orelse return "Nothing copied yet";
             state.paste(copied);
         }
         if (keys.contains(.paste_previous)) {
             const r = state.rollIndex(library) orelse return null;
             const index = state.selected orelse return null;
-            if (index == 0) return "There is no frame before this one.";
+            if (index == 0) return "No previous frame";
             const previous = library.rolls.items[r].frames.items[index - 1];
-            if (!previous.developed) return "The frame before this one isn't developed.";
+            if (!previous.developed) return "Previous frame not developed";
             state.paste(.{ .look = previous.look, .settings = previous.settings });
         }
         return null;
@@ -870,14 +870,14 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
     c.ImGui_Dummy(gui.vec2(0, gui.px(10) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
     if (roll_index == null) {
-        if (total == 0) gui.paragraph(theme.text_tertiary, "Drop a scan on the window to open it.");
+        if (total == 0) gui.paragraph(theme.text_tertiary, "No scans · drop one on the window");
         for (state.loose.items, 0..) |path, i| {
             c.ImGui_PushIDInt(@intCast(i));
             if (c.ImGui_SelectableEx(gui.print("{s}", .{std.fs.path.basename(path)}), state.selected == i, 0, gui.vec2(0, 0))) clicked = i;
             c.ImGui_PopID();
         }
     } else if (total == 0) {
-        gui.paragraph(theme.text_tertiary, "Drop scans on the window to add them to this roll.");
+        gui.paragraph(theme.text_tertiary, "No frames · drop scans on the window");
     } else {
         const r = roll_index.?;
         const list = c.ImGui_GetWindowDrawList();
@@ -920,12 +920,12 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
         gui.paragraph(theme.text_tertiary, labels.rollFormatNote(library.rolls.items[r].info.format));
         const base = if (state.frame) |f| f.settings.base_source else .measured;
         gui.paragraph(theme.text_tertiary, switch (base) {
-            .measured => "Base measured on each frame.",
-            .gaps => "Base from the gaps between frames.",
-            .picked => "Base picked on this frame.",
+            .measured => "Base measured per frame",
+            .gaps => "Base from the gaps between frames",
+            .picked => "Base picked on this frame",
         });
     } else {
-        gui.paragraph(theme.text_tertiary, "Scans opened on their own aren't saved.");
+        gui.paragraph(theme.text_tertiary, "Loose scans · not saved");
     }
     return clicked;
 }
@@ -950,13 +950,13 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         state.zoom = .fit;
         state.pan = .{ .x = 0, .y = 0 };
     }
-    shortcuts.tooltip("The whole frame in the viewer", .zoom_out);
+    shortcuts.tooltip("Whole frame", .zoom_out);
     c.ImGui_SameLineEx(0, gui.px(8));
     if (gui.button("100%")) state.zoom = .actual;
-    shortcuts.tooltip("One pixel of the preview to one of the screen; drag to move", .zoom_in);
+    shortcuts.tooltip("Actual pixels · drag to move", .zoom_in);
     c.ImGui_SameLineEx(0, gui.px(12));
     if (gui.checkbox("Clipping", &state.clipping)) state.shown_stale = true;
-    shortcuts.tooltip("Marks clipped highlights red and clipped shadows blue", .clipping);
+    shortcuts.tooltip("Clipped highlights red, shadows blue", .clipping);
     c.ImGui_SameLineEx(0, gui.px(12));
     c.ImGui_BeginDisabled(state.frame == null);
     const crop_corner = c.ImGui_GetCursorScreenPos();
@@ -965,7 +965,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     c.ImGui_PopStyleVar();
     drawCropIcon(list, gui.vec2(crop_corner.x + gui.px(10), crop_corner.y + (c.ImGui_GetFrameHeight() - gui.px(14)) / 2));
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Crop and turn the frame; the box keeps the roll's format", .crop);
+    shortcuts.tooltip("Crop and turn · keeps the roll's format", .crop);
     if (crop_clicked) {
         if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err}) else state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
     }
@@ -974,10 +974,10 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         c.ImGui_BeginDisabled(state.frame == null);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (turnButton(list, "turn left", false)) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("A quarter turn anticlockwise", .turn_left);
+        shortcuts.tooltip("Rotate left", .turn_left);
         c.ImGui_SameLineEx(0, gui.px(4));
         if (turnButton(list, "turn right", true)) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("A quarter turn clockwise", .turn_right);
+        shortcuts.tooltip("Rotate right", .turn_right);
         c.ImGui_EndDisabled();
     }
     if (state.cropping != null) {
@@ -990,16 +990,16 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
                 state.cropping.?.max = .{ @as(f32, @floatFromInt(area.x + area.width)) / scale, @as(f32, @floatFromInt(area.y + area.height)) / scale };
             } else |_| {}
         }
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Finds the frame on the scan.");
+        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Detect the frame");
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.button("Turn left")) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("A quarter turn anticlockwise, applied after the crop", .turn_left);
+        shortcuts.tooltip("Rotate left, after crop", .turn_left);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.button("Turn right")) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
-        shortcuts.tooltip("A quarter turn clockwise, applied after the crop", .turn_right);
+        shortcuts.tooltip("Rotate right, after crop", .turn_right);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.buttonOf(if (state.cropping.?.mirrored) .selected else .normal, "Mirror", gui.vec2(0, 0))) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
-        shortcuts.tooltip("Left to right, for a scan made from the wrong side of the film", .mirror);
+        shortcuts.tooltip("Flip left to right · for scans from the wrong side", .mirror);
         c.ImGui_SameLineEx(0, gui.px(8));
         if (gui.buttonOf(.primary, "Done", gui.vec2(0, 0))) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
         shortcuts.tooltip("Keeps the crop", .confirm);
@@ -1054,7 +1054,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     const frame = if (state.frame) |*f| f else {
         if (state.failed) |index| {
             c.ImGui_SetCursorScreenPos(gui.vec2(area_min.x + gui.px(24), area_min.y + gui.px(24)));
-            gui.textColored(theme.text_tertiary, gui.print("Frame {d} couldn't be loaded; the log says why.", .{index + 1}));
+            gui.textColored(theme.text_tertiary, gui.print("Frame {d} failed to load", .{index + 1}));
         }
         return;
     };
@@ -1133,7 +1133,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
         tag(list, gui.vec2(max.x - gui.px(10), min.y + gui.px(10)), "Positive", .right);
     }
     if (state.picking != .none) {
-        const what = if (state.picking == .base) "Click the film base: the rebate, or between frames. Esc cancels." else "Click something that should be neutral gray. Esc cancels.";
+        const what = if (state.picking == .base) "Click the film base · rebate or gap · Esc to cancel" else "Click something neutral gray · Esc to cancel";
         const size = c.ImGui_CalcTextSize(what);
         tag(list, gui.vec2((min.x + max.x) / 2 + size.x / 2 + gui.px(8), max.y - gui.px(10) - size.y - gui.px(4)), what, .right);
     }
@@ -1329,7 +1329,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         state.drawLook(gpa, io, library);
         if (state.import_failed) |err| {
             gui.rowLabel("");
-            gui.paragraph(theme.text_tertiary, gui.print("That LUT didn't import: {s}.", .{importError(err)}));
+            gui.paragraph(theme.text_tertiary, gui.print("LUT not imported: {s}", .{importError(err)}));
         }
         gui.rowLabel("Tone");
         c.ImGui_BeginDisabled(fitted);
@@ -1356,7 +1356,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         }
         if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
     }
-    if (fitted) gui.paragraph(theme.text_tertiary, "A fitted look makes its own tones from the density, so Tone and Inversion don't apply.");
+    if (fitted) gui.paragraph(theme.text_tertiary, "Fitted look · no Tone or Inversion");
     gui.endSection(true);
 
     drawBase(state, library);
@@ -1392,7 +1392,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
             defer c.ImGui_PopStyleVar();
             if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}", .{
                 .default = (develop.Settings{}).saturation,
-                .help = "After the look, for the whole frame: 0 is gray, 1 leaves the color as it is",
+                .help = "After the look · 0 gray, 1 unchanged",
             })) state.changed();
         }
         const gap = gui.px(4);
@@ -1421,7 +1421,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var mired = 1e6 / kelvin.*;
     var changed = gui.slider("slider", &mired, 1e6 / @as(f32, develop.min_kelvin), 1e6 / @as(f32, develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(1e6 / mired / kelvin_step) * kelvin_step;
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("The light it was shot in: 5500 K is daylight, which the balance is set for. Lower cools the picture, as for warm light; higher warms it.");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Light it was shot in · 5500 K daylight · lower cools, higher warms");
     const shown = gui.print("{d:.0} K", .{kelvin.*});
     gui.valueText(shown);
     c.ImGui_SameLineEx(0, gui.px(gui.reset_space - gui.reset_size));
@@ -1460,7 +1460,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     const choice = labels.findStock(info.stock orelse "") orelse return;
     if (choice.preset) |preset| {
         if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
-    } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No preset: the maker publishes no numbers for this stock.");
+    } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No datasheet numbers");
     // Only a stock with a preset has something to correct by. With corrections off, the stock
     // is just the roll's metadata.
     if (choice.preset == null) return;
@@ -1469,7 +1469,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Straightens each layer by the stock's datasheet curve, and on a calibrated scanner balances by the stock. Off, the stock is only the roll's metadata.");
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Datasheet curve per layer · stock balance once calibrated · off: metadata only");
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.
@@ -1490,7 +1490,7 @@ fn drawBase(state: *State, library: *Library) void {
     c.ImDrawList_AddText(list, gui.vec2(text_x, corner.y + row_height / 2 - c.ImGui_GetTextLineHeight() * 1.2), theme.imU32(theme.text), "Film base");
     fonts.pop();
     const source = switch (frame.settings.base_source) {
-        .measured => "The thinnest film in this frame",
+        .measured => "Thinnest film in this frame",
         .gaps => if (frame.base_from_roll) "From the gaps between the roll's frames" else "From the gaps beside this frame",
         .picked => "Picked on this frame",
     };
@@ -1501,7 +1501,7 @@ fn drawBase(state: *State, library: *Library) void {
     if (gui.buttonOf(if (state.picking == .base) .selected else .normal, pick_label, gui.vec2(0, 0))) {
         state.picking = if (state.picking == .base) .none else .base;
     }
-    shortcuts.tooltip("Click the film base in the frame: the rebate, or between frames", .base);
+    shortcuts.tooltip("Pick the film base · rebate or gap", .base);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x, corner.y + row_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
     _ = library;
@@ -1522,7 +1522,7 @@ fn drawMatrix(state: *State) void {
     if (!c.ImGui_BeginPopup("matrix", 0)) return;
     defer c.ImGui_EndPopup();
     gui.heading("DENSITY MATRIX");
-    gui.paragraph(theme.text_tertiary, "Each output channel's density from the scan's three, for crosstalk between the dyes.");
+    gui.paragraph(theme.text_tertiary, "Output density from the scan's three channels · for dye crosstalk");
     for (&s.matrix, [_][]const u8{ "R", "G", "B" }) |*row, name| {
         c.ImGui_AlignTextToFramePadding();
         gui.textColored(theme.text_secondary, name);
@@ -1546,10 +1546,10 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     if (gui.buttonOf(.primary, "Sync to roll…", gui.vec2(sync_width / gui.scale, bottom_bar_height)) or state.ask_sync) _ = c.ImGui_OpenPopup("sync", 0);
     state.ask_sync = false;
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Gives the roll's other frames this frame's look, balance or more", .sync);
+    shortcuts.tooltip("Copy settings to the roll's other frames", .sync);
     c.ImGui_SameLineEx(0, gui.px(8));
     if (gui.buttonOf(.outline, "Reset", gui.vec2(reset_width / gui.scale, bottom_bar_height))) state.reset(io, library);
-    shortcuts.tooltip("Back to the automatic settings; the frame counts as undeveloped again", .reset);
+    shortcuts.tooltip("Automatic settings · frame back to undeveloped", .reset);
 
     const r = roll_index orelse return;
     if (!c.ImGui_BeginPopup("sync", 0)) return;
@@ -1557,7 +1557,7 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
     const rl = &library.rolls.items[r];
     gui.heading("SYNC TO ROLL");
     const others = rl.frames.items.len -| 1;
-    gui.text(gui.print("Give the {d} other {s} of {s} this frame's", .{ others, if (others == 1) "frame" else "frames", rl.info.name }));
+    gui.text(gui.print("To the {d} other {s} of {s}", .{ others, if (others == 1) "frame" else "frames", rl.info.name }));
     const groups = [_]struct { *bool, [:0]const u8 }{
         .{ &state.sync.look, "Look, tone and saturation" },
         .{ &state.sync.balance, "White balance" },
@@ -1566,7 +1566,7 @@ fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Li
         .{ &state.sync.geometry, "Crop, turns and mirror" },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
-    gui.textColored(theme.text_tertiary, "The rest each frame keeps, or measures for itself. An automatic white balance is worked out on each frame.");
+    gui.textColored(theme.text_tertiary, "Unchecked settings stay per frame · automatic white balance per frame");
     if (gui.buttonOf(.primary, "Sync", gui.vec2(0, 0))) {
         var failed: usize = 0;
         for (0..rl.frames.items.len) |i| {
@@ -1704,13 +1704,13 @@ fn drawHistogram(frame: *Frame) void {
 /// Why a .cube file didn't import, in words for the user.
 fn importError(err: anyerror) []const u8 {
     return switch (err) {
-        error.NotACube => "it isn't a .cube LUT",
-        error.BadSize => "its size isn't one minilab reads (2 to 129 points a side)",
-        error.Truncated => "it ends early",
-        error.TooMuchData => "it has more values than its size says",
-        error.InvalidNumber => "a value in it isn't a number",
-        error.FileTooBig => "it's larger than 64 MB",
-        error.NoLibrary => "there's no library to keep it in",
+        error.NotACube => "not a .cube LUT",
+        error.BadSize => "size outside 2 to 129 points a side",
+        error.Truncated => "file ends early",
+        error.TooMuchData => "more values than its size",
+        error.InvalidNumber => "value not a number",
+        error.FileTooBig => "over 64 MB",
+        error.NoLibrary => "no library open",
         else => @errorName(err),
     };
 }

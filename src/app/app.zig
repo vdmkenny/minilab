@@ -140,7 +140,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
         c.ImGui_PushIDInt(@intCast(@backingInt(workspace)));
         switch (workspace) {
             .rolls => switch (rolls_view.draw(&rolls, &library, gpa, io, drop)) {
-                .none => if (drop != null) notice.set("Drop scans on a roll's row to add them to that roll.", .{}),
+                .none => if (drop != null) notice.set("Drop scans on a roll's row", .{}),
                 .open => |at| {
                     try develop.openRoll(gpa, io, &library, library.rolls.items[at.roll].path);
                     if (at.frame < library.rolls.items[at.roll].frames.items.len) develop.select(gpa, io, &library, at.frame);
@@ -209,9 +209,9 @@ fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *de
         const added = library.rolls.items[r].frames.items.len - imported.first;
         const name = library.rolls.items[r].info.name;
         if (added == imported.files) {
-            notice.set("Added {d} of {d} scans to {s}.", .{ added, paths.len, name });
+            notice.set("Added {d} of {d} scans to {s}", .{ added, paths.len, name });
         } else {
-            notice.set("Added {d} frames from {d} of {d} scans to {s}.", .{ added, imported.files, paths.len, name });
+            notice.set("Added {d} frames from {d} of {d} scans to {s}", .{ added, imported.files, paths.len, name });
         }
         if (added > 0) develop.select(gpa, io, library, imported.first);
         return;

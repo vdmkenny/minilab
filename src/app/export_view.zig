@@ -176,14 +176,14 @@ pub const State = struct {
             const batch = running.batch;
             if (batch.failure) |failure| {
                 if (failure.number == 0)
-                    ctx.notice.set("Export failed: can't make the folder ({t}).", .{failure.err})
+                    ctx.notice.set("Export failed · can't create folder ({t})", .{failure.err})
                 else
-                    ctx.notice.set("Exported {d} of {d} files; frame {d} failed: {t}.", .{ batch.written.load(.acquire), batch.jobs.len, failure.number, failure.err });
+                    ctx.notice.set("Exported {d} of {d} files · frame {d} failed ({t})", .{ batch.written.load(.acquire), batch.jobs.len, failure.number, failure.err });
             } else if (batch.written.load(.acquire) < batch.jobs.len) {
-                ctx.notice.set("Export cancelled after {d} of {d} files.", .{ batch.written.load(.acquire), batch.jobs.len });
+                ctx.notice.set("Export canceled · {d} of {d} files", .{ batch.written.load(.acquire), batch.jobs.len });
             } else {
                 const written = batch.written.load(.acquire);
-                ctx.notice.set("Exported {d} {s} to {s}.", .{ written, if (written == 1) "file" else "files", relativeToLibrary(ctx.library, batch.folder) });
+                ctx.notice.set("Exported {d} {s} to {s}", .{ written, if (written == 1) "file" else "files", relativeToLibrary(ctx.library, batch.folder) });
             }
             batch.destroy(ctx.gpa);
             state.running = null;
@@ -220,13 +220,13 @@ fn summarise(running: *const Running) Summary {
     const total = batch.jobs.len;
     if (batch.failure) |failure| {
         if (failure.number == 0)
-            summary.line.set("Export failed: the folder couldn't be made ({t})", .{failure.err})
+            summary.line.set("Export failed · can't create folder ({t})", .{failure.err})
         else
-            summary.line.set("Last export: {d} of {d} files, {s}; frame {d} failed ({t})", .{ written, total, running.what.text(), failure.number, failure.err });
+            summary.line.set("Last export · {d} of {d} files · {s} · frame {d} failed ({t})", .{ written, total, running.what.text(), failure.number, failure.err });
     } else if (written < total) {
-        summary.line.set("Export cancelled: {d} of {d} files, {s}", .{ written, total, running.what.text() });
+        summary.line.set("Export canceled · {d} of {d} files · {s}", .{ written, total, running.what.text() });
     } else {
-        summary.line.set("Last export: {d} {s}, {s}", .{ written, if (written == 1) "file" else "files", running.what.text() });
+        summary.line.set("Last export · {d} {s} · {s}", .{ written, if (written == 1) "file" else "files", running.what.text() });
     }
     const shown = std.fs.path.basename(batch.folder);
     const extension = batch.options.format.extension();
@@ -282,7 +282,7 @@ fn drawNoRoll() ?context.Workspace {
     c.ImDrawList_AddText(list, at, theme.imU32(theme.text), "Export");
     fonts.pop();
     at.y += gui.px(title_size * 1.4 + block_gap);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), "No roll is open. Open one in Rolls, then come back here to export its frames.");
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), "No roll open");
     at.y += gui.px(line + block_gap);
     c.ImGui_SetCursorScreenPos(at);
     const width = c.ImGui_CalcTextSize("Go to Rolls").x / gui.scale + 24 + 2;
@@ -364,7 +364,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
     const list = c.ImGui_GetWindowDrawList();
     const origin = c.ImGui_GetCursorScreenPos();
     if (total == 0) {
-        c.ImDrawList_AddText(list, origin, theme.imU32(theme.text_tertiary), "No frames in this roll yet: scan into it, or drop scans on it in Rolls.");
+        c.ImDrawList_AddText(list, origin, theme.imU32(theme.text_tertiary), "No frames yet · scan or drop scans in Rolls");
         return;
     }
     const width = c.ImGui_GetContentRegionAvail().x;
@@ -388,7 +388,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         const hovered = c.ImGui_IsItemHovered(0);
         const frame = r.frames.items[i];
         if (hovered) {
-            c.ImGui_SetTooltip("%s", gui.print("Frame {d} · {s}", .{ i + 1, if (!frame.developed) "not developed: exports with automatic settings" else frame.look.label() }).ptr);
+            c.ImGui_SetTooltip("%s", gui.print("Frame {d} · {s}", .{ i + 1, if (!frame.developed) "not developed · automatic settings" else frame.look.label() }).ptr);
         }
         if (clicked) {
             if (shift and state.anchor != null) {
@@ -453,11 +453,11 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         const job = batch.jobs[current];
         const cancelling = batch.cancel.load(.acquire);
         const status = if (cancelling)
-            gui.print("Cancelling after frame {d}…", .{job.number})
+            gui.print("Canceling after frame {d}…", .{job.number})
         else
-            gui.print("Exporting {d} of {d}: {s}.{s}, {s}", .{ current + 1, batch.jobs.len, job.stem, batch.options.format.extension(), batch.stage.load(.acquire).label() });
+            gui.print("Exporting {d} of {d} · {s}.{s} · {s}", .{ current + 1, batch.jobs.len, job.stem, batch.options.format.extension(), batch.stage.load(.acquire).label() });
         if (!cancelling and link(gui.vec2(right, first_top), "Cancel")) batch.cancel.store(true, .release);
-        shortcuts.tooltip("Stops after the frame under way", .cancel);
+        shortcuts.tooltip("Stops after the current frame", .cancel);
         c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text), gui.elideEnd(status, right - x - gui.px(80)));
         // The progress bar, on the second line.
         const bar_y = second_top + (gui.px(small_line) - gui.px(4)) / 2;
@@ -468,7 +468,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
     }
 
     const summary = if (state.last) |*s| s else {
-        c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text_secondary), "Nothing exported yet. Choose the frames, then Export.");
+        c.ImDrawList_AddText(list, gui.vec2(x, first_y), theme.imU32(theme.text_secondary), "Nothing exported yet");
         fonts.pushSized(.mono, 12);
         c.ImDrawList_AddText(list, gui.vec2(x, second_top + (gui.px(small_line) - c.ImGui_GetFontSize()) / 2), theme.imU32(theme.text_tertiary), gui.elideStart(std.mem.sliceTo(&state.folder, 0), right - x));
         fonts.pop();
@@ -548,7 +548,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     y += gui.px(small_line + block_gap);
     y = drawMetadata(state, r.info, x, y, width);
     y += gui.px(block_gap);
-    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "Written as EXIF and XMP, and as an XMP file beside each image.");
+    y += wrapped(list, gui.vec2(x, y), width, theme.text_tertiary, "EXIF and XMP · XMP sidecar beside each file");
 
     // Export, at the bottom.
     const button_y = @max(y + gui.px(block_gap), origin.y + height - gui.px(panel_padding + export_height));
@@ -561,7 +561,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     if (gui.buttonOf(.primary, gui.print("{s}##export", .{label}), gui.vec2(width / gui.scale, export_height))) start(state, ctx, r);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        const why: ?[]const u8 = if (running) "An export is under way." else if (count == 0) "Choose some frames first." else if (!pattern_ok) "The file names' pattern needs fixing." else if (!folder_ok) "Choose a folder first." else null;
+        const why: ?[]const u8 = if (running) "Export under way" else if (count == 0) "No frames selected" else if (!pattern_ok) "Invalid file name pattern" else if (!folder_ok) "No folder chosen" else null;
         if (why) |text| c.ImGui_SetTooltip("%s", gui.print("{s}", .{text}).ptr);
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, button_y + gui.px(export_height + panel_padding)));
@@ -616,7 +616,7 @@ fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
         c.ImGui_SetCursorScreenPos(at);
         if (choice == .heic) {
             drawUnavailable(label, gui.vec2(pill_width, height));
-            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("HDR with a gain map. Not available yet: the codecs don't write HEIC.");
+            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("HDR with gain map · no HEIC encoder yet");
         } else {
             if (gui.buttonOf(if (state.file == choice) .selected else .unselected, label, gui.vec2(pill_width / gui.scale, pill_height))) state.file = choice;
         }
@@ -640,12 +640,12 @@ fn drawUnavailable(label: [:0]const u8, size: gui.Vec2) void {
 fn formatNote(state: *const State) []const u8 {
     const options = state.options();
     const base = switch (state.file) {
-        .tiff16 => "16-bit, ZIP compressed, ICC profile embedded.",
-        .tiff8 => "8-bit, ZIP compressed, ICC profile embedded.",
-        .jpeg => gui.print("8-bit, quality {d}, ICC profile embedded.", .{options.quality}),
-        .heic => "HDR with a gain map. Not available yet.",
+        .tiff16 => "16-bit · ZIP · ICC profile",
+        .tiff8 => "8-bit · ZIP · ICC profile",
+        .jpeg => gui.print("8-bit · quality {d} · ICC profile", .{options.quality}),
+        .heic => "HDR with gain map · not available yet",
     };
-    const banding = if (options.space == .prophoto and options.bits() == .eight) " ProPhoto RGB is wide for 8 bits: smooth skies may band." else "";
+    const banding = if (options.space == .prophoto and options.bits() == .eight) " · risk of banding in 8-bit ProPhoto RGB" else "";
     return gui.print("{s}{s}", .{ base, banding });
 }
 
@@ -692,15 +692,15 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PopStyleVar();
     fonts.pop();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip("{roll} the roll's name for a file, {name} as it is, {frame} the frame's number\n({frame:02} with two digits), {stock} the film, {date} when it was shot");
+        c.ImGui_SetTooltip("{roll} roll name, lower case, no spaces · {name} roll name as is\n{frame} frame number · {frame:02} two digits\n{stock} film stock · {date} date shot (or made)");
     }
     y += row;
     if (exporting.checkPattern(std.mem.sliceTo(&state.pattern, 0))) |_| {} else |err| {
         y += gui.px(4);
         const problem = switch (err) {
-            error.NoFrameNumber => "Add {frame}: without it every frame writes the same file.",
-            error.UnknownField => "Unknown field in braces. Hover for the ones there are.",
-            error.UnclosedBrace => "A brace is opened and not closed.",
+            error.NoFrameNumber => "{frame} missing · every frame would get the same name",
+            error.UnknownField => "Unknown field · hover for the list",
+            error.UnclosedBrace => "Unclosed brace",
         };
         y += wrapped(list, gui.vec2(control_x, y), control_width, theme.accent, problem);
         y -= gui.px(line) - c.ImGui_GetFontSize();
@@ -713,7 +713,7 @@ fn drawFileGrid(state: *State, ctx: context.Context, x: f32, top: f32, width: f3
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(10), (row - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField("folder", &state.folder, "Roll/exports", (control_width - choose_width - gui.px(6)) / gui.scale);
     c.ImGui_PopStyleVar();
-    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("From the library's folder, or a whole path");
+    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Relative to the library folder, or a full path");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x + control_width - choose_width, y));
     c.ImGui_BeginDisabled(state.dialog.isShowing());
     if (gui.buttonOf(.normal, "Choose", gui.vec2(choose_width / gui.scale, control_height))) chooseFolder(state, ctx);
@@ -793,12 +793,12 @@ fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
         .folder = folder,
         .stock_curves = ctx.library.stockCurves(r, r.info.kind),
     }) catch |err| {
-        ctx.notice.set("Can't export: {t}.", .{err});
+        ctx.notice.set("Can't export · {t}", .{err});
         return;
     };
     const future = ctx.io.concurrent(exporting.Batch.run, .{ batch, ctx.gpa, ctx.io }) catch |err| {
         batch.destroy(ctx.gpa);
-        ctx.notice.set("Can't start the export: {t}.", .{err});
+        ctx.notice.set("Can't start export · {t}", .{err});
         return;
     };
     var running: Running = .{ .batch = batch, .future = future };

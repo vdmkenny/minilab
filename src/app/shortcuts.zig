@@ -290,7 +290,7 @@ pub fn drawHelp() bool {
     defer c.ImGui_PopStyleColor();
     if (c.ImGui_Begin("Keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
         gui.title("Keyboard shortcuts", 15);
-        gui.textColored(theme.text_tertiary, "As in Lightroom and Bridge.");
+        gui.textColored(theme.text_tertiary, "As in Lightroom and Bridge");
         c.ImGui_Dummy(gui.vec2(0, gui.px(4)));
         const column = (c.ImGui_GetContentRegionAvail().x - gui.px(24)) / 2;
         for (groups, 0..) |group, g| {
