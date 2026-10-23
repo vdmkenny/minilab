@@ -714,8 +714,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     y += gui.px(group_gap);
     const film_note = if (state.capabilities) |caps| blk: {
         if (!caps.film_setting) break :blk gui.print("No film mode on this scanner", .{});
-        const mode = if (caps.profile) |p| p.positive else "Positive";
-        break :blk gui.print("Scanner mode: {s} · {s}", .{ mode, state.film.why() });
+        break :blk gui.print("Scanner mode: {s} · {s}", .{ filmMode(state, ctx, caps), state.film.why() });
     } else gui.print("Scanner mode: Positive Film · {s}", .{state.film.why()});
     y += paragraphAt(list, x, y, width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
 
@@ -970,6 +969,18 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
         c.ImGui_CloseCurrentPopup();
     }
     if (changed) sendRaw(state, ctx);
+}
+
+/// The scanner's film mode as its driver names it, such as "Positive Film".
+fn filmMode(state: *const State, ctx: context.Context, caps: scan.Capabilities) []const u8 {
+    if (caps.profile) |p| return p.positive;
+    const options = caps.options orelse return "Positive";
+    const setup = scan.rawSetup(options.items, rawChanges(state, ctx));
+    for (scan.rawControls(options.items).all()) |control| {
+        if (control.role != .film) continue;
+        return valueLabel(control, scan.valueOf(setup.settings(), control.option.name) orelse .leave);
+    }
+    return "Positive";
 }
 
 /// A scanner setting's name: the driver's name for the option.

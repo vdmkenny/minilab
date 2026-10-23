@@ -323,7 +323,7 @@ pub const profiles = [_]Profile{
     .{
         .driver = "epkowa",
         .model = "Perfection V200",
-        .summary = "Transparency Unit, 48-bit, gamma 1.0, no colour matrix (raw)",
+        .summary = "Transparency Unit, 48-bit, gamma 1.0, no color matrix (raw)",
         .options = &.{
             .{ .name = "mode", .value = .{ .string = "Color" } },
             .{ .name = "gamma-correction", .value = .{ .string = "User defined (Gamma=1.0)" } },
@@ -445,10 +445,10 @@ pub const RawReport = struct {
     /// A film setting, so positive film can keep the scanner from inverting.
     film: bool = false,
 
-    /// The report as a label, such as "Raw · gamma 1.0 · colour correction off".
+    /// The report as a label, such as "Raw · gamma 1.0 · color correction off".
     pub fn label(report: RawReport, buffer: []u8) []const u8 {
         if (!report.linear) return "No profile · data may not be linear";
-        return std.fmt.bufPrint(buffer, "Raw · gamma 1.0{s}", .{if (report.colour_off) " · colour correction off" else ""}) catch "Raw · gamma 1.0";
+        return std.fmt.bufPrint(buffer, "Raw · gamma 1.0{s}", .{if (report.colour_off) " · color correction off" else ""}) catch "Raw · gamma 1.0";
     }
 };
 

@@ -244,9 +244,13 @@ we read the others' names and values from the drivers' own strings. In this orde
   lamp;
 - brightness and contrast set to 0, but only where 0 is in the middle of their range.
 
-On the V200's options this gives exactly what its profile sets (there's a test for it). An option
-the scanner won't take is skipped and logged, and the scan still goes ahead. The Scan screen says
-how it all left the scanner: "Raw · gamma 1.0 · colour correction off", or that the data may not
+On the V200 it picks the profile's gamma choice and colour matrix (there's a test for it), and also
+fills the gamma tables with a straight line and sets brightness and contrast to 0. We scanned a
+colour strip on the V200 with the profile and then with raw setup (the profile switched off): the
+two agree within 1.2% in every channel. That's closer than two scans with the profile, because
+the first scan after the scanner wakes up comes out about 4% brighter. An option the scanner won't
+take is skipped and logged, and the scan still goes ahead. The Scan screen says
+how it all left the scanner: "Raw · gamma 1.0 · color correction off", or that the data may not
 be linear.
 
 When raw setup guesses wrong, the Scanner settings window shows each of those options, at Auto
