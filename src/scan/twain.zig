@@ -384,7 +384,9 @@ pub const Library = struct {
         if (comptime !supported) return error.Unavailable;
         const module = win.LoadLibraryW(std.unicode.utf8ToUtf16LeStringLiteral(manager_name)) orelse return error.Unavailable;
         errdefer _ = win.FreeLibrary(module);
-        const entry: EntryFn = @ptrCast(win.GetProcAddress(module, "DSM_Entry") orelse return error.Unavailable);
+        // GetProcAddress returns an untyped pointer, and on Arm64 a function pointer has to be
+        // 4-byte aligned, so the cast needs the alignment asserted too.
+        const entry: EntryFn = @ptrCast(@alignCast(win.GetProcAddress(module, "DSM_Entry") orelse return error.Unavailable));
         const window = win.CreateWindowExW(0, std.unicode.utf8ToUtf16LeStringLiteral("STATIC"), std.unicode.utf8ToUtf16LeStringLiteral("minilab"), 0, 0, 0, 0, 0, win.hwnd_message, null, null, null) orelse return error.Unavailable;
         errdefer _ = win.DestroyWindow(window);
 
