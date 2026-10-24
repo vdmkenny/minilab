@@ -568,8 +568,11 @@ const InflateJob = struct {
             const pixels = job.scan.pixels[y * width ..][0 .. @min(job.rows_per_strip, job.scan.height - y) * width];
             const data = std.mem.sliceAsBytes(pixels);
             const strip = job.strips[index];
-            var length: c.uLongf = @intCast(data.len);
-            const result = c.uncompress(data.ptr, &length, strip.ptr, @intCast(strip.len));
+            // zlib counts in `uLong`, which is 32 bits on Windows. A strip bigger than that goes to
+            // LibTIFF.
+            const strip_length = std.math.cast(c.uLong, strip.len);
+            var length = std.math.cast(c.uLongf, data.len) orelse 0;
+            const result = if (strip_length != null and length != 0) c.uncompress(data.ptr, &length, strip.ptr, strip_length.?) else c.Z_BUF_ERROR;
             job.whole[index] = result == c.Z_OK and length == data.len;
             if (!job.whole[index]) continue;
             var row: usize = 0;
