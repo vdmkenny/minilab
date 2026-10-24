@@ -753,7 +753,7 @@ pub const State = struct {
         }
         c.ImGui_Separator();
         if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("3D or 1D · sRGB or Rec. 709");
+        gui.tooltip("3D or 1D · sRGB or Rec. 709");
     }
 
     /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
@@ -1064,7 +1064,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
         c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - c.ImGui_CalcTextSize(counted).x, 0);
         c.ImGui_SetCursorPosY(header_y);
         gui.textColored(theme.text_tertiary, counted);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Developed of all frames");
+        gui.tooltip("Developed of all frames");
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(frames_heading_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
@@ -1228,7 +1228,7 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
                 state.cropping.?.max = .{ @as(f32, @floatFromInt(area.x + area.width)) / scale, @as(f32, @floatFromInt(area.y + area.height)) / scale };
             } else |_| {}
         }
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Detect the frame");
+        gui.tooltip("Detect the frame");
         nextControl(toolbar.button_gap, controls_y);
         if (gui.button("Turn left")) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
         shortcuts.tooltip("Rotate left", .turn_left);
@@ -1868,7 +1868,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var mired = develop.mired(kelvin.*);
     var changed = gui.slider("slider", &mired, develop.mired(develop.min_kelvin), develop.mired(develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(develop.kelvinOfMired(mired) / kelvin_step) * kelvin_step;
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Lower for warm light, like tungsten · higher for shade");
+    gui.tooltip("Lower for warm light, like tungsten · higher for shade");
     if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
         changed = true;
@@ -1902,8 +1902,8 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     }
     const choice = labels.findStock(info.stock orelse "") orelse return;
     if (choice.preset) |preset| {
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
-    } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No datasheet numbers");
+        gui.tooltip(preset.source);
+    } else gui.tooltip("No datasheet numbers");
     // Only a stock with a preset has something to correct by. With corrections off, the stock
     // is just the roll's metadata.
     if (choice.preset == null) return;
@@ -1912,7 +1912,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Per-layer datasheet curves");
+    gui.tooltip("Per-layer datasheet curves");
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.

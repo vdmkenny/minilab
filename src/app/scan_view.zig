@@ -1057,7 +1057,7 @@ fn drawDriverSetup(ctx: context.Context, list: *c.ImDrawList, x: f32, top: f32, 
             if (!has_homebrew) {
                 c.ImGui_SetCursorScreenPos(gui.vec2(x + gui.px(step_indent), y));
                 if (gui.buttonOf(.normal, "Get Homebrew", gui.vec2(0, pill_height))) gui.openUrl(homebrew_url);
-                if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("brew.sh");
+                gui.tooltip("brew.sh");
                 y += gui.px(pill_height) + gui.px(scanner_gap);
             }
             y = setupStep(list, x, y, width, "2", "SANE", sane_install);
@@ -2389,7 +2389,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             const hovered = c.ImGui_IsItemHovered(0);
             if (hovered) {
                 c.ImGui_SetMouseCursor(c.ImGuiMouseCursor_Hand);
-                c.ImGui_SetTooltip("Edges not found");
+                gui.showTooltip("Edges not found");
             }
             c.ImDrawList_AddText(list, link_at, theme.imU32(if (hovered) theme.text else theme.accent), link);
         },
@@ -2635,7 +2635,7 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     const slider_width = width - gui.px(slider_label_column + 2 * slider_spacing + slider_value_column + gui.reset_space);
     c.ImGui_SetCursorScreenPos(gui.vec2(slider_x, y.*));
     var changed = gui.slider(gui.print("{s}", .{label}), value, min, max, slider_width / gui.scale);
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
+    gui.tooltip(help);
     fonts.push(.mono);
     const shown = gui.formatSigned(format, value.*);
     const shown_width = c.ImGui_CalcTextSize(shown).x;

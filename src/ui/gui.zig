@@ -656,6 +656,27 @@ pub fn valueText(shown: []const u8) void {
     fonts.pop();
 }
 
+/// Shows `value` as a tooltip while the last item is hovered.
+pub fn tooltip(value: []const u8) void {
+    if (c.ImGui_IsItemHovered(0)) showTooltip(value);
+}
+
+/// Shows `value` as a tooltip now, for a caller that knows when it should show.
+pub fn showTooltip(value: []const u8) void {
+    if (!beginTooltip()) return;
+    defer c.ImGui_EndTooltip();
+    text(value);
+}
+
+/// Starts a tooltip with the design's padding, whatever padding the window it's over has set.
+/// Returns false when there's nothing to draw; otherwise end it with `c.ImGui_EndTooltip`.
+pub fn beginTooltip() bool {
+    // The tooltip takes its padding when it starts, so it can go back straight away.
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, vec2(px(theme.window_padding), px(theme.window_padding)));
+    defer c.ImGui_PopStyleVar();
+    return c.ImGui_BeginTooltip();
+}
+
 /// A labelled slider row with its value, the most common row in a settings grid. Returns true when
 /// it moved.
 pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format: []const u8, options: SliderOptions) bool {
@@ -663,7 +684,7 @@ pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format
     defer c.ImGui_PopID();
     rowLabel(label);
     var changed = slider("slider", v, min, max, 0);
-    if (options.help) |help| if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
+    if (options.help) |help| tooltip(help);
     if (valueAndReset(options.shown(format, v.*, max), options.shown(format, options.default, max))) {
         v.* = options.default;
         changed = true;
@@ -706,7 +727,7 @@ pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown:
     const clicked = c.ImGui_InvisibleButton(id, vec2(size, size), 0);
     c.ImGui_EndDisabled();
     const hovered = !disabled and c.ImGui_IsItemHovered(0);
-    if (hovered) c.ImGui_SetTooltip("Reset to %s", print("{s}", .{default_shown}).ptr);
+    if (hovered) showTooltip(print("Reset to {s}", .{default_shown}));
     const ink = if (disabled) theme.text_tertiary else if (hovered) theme.text else theme.text_secondary;
     turnIcon(c.ImGui_GetWindowDrawList(), vec2(at.x + size / 2, at.y + size / 2), px(reset_icon_radius), false, ink);
     return clicked and !at_default;

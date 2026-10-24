@@ -376,7 +376,7 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
         if (c.ImGui_InvisibleButton("delete", gui.vec2(size, size), 0)) state.startDeleting(gpa, r.path);
         const on_button = c.ImGui_IsItemHovered(0);
         if (on_button) {
-            c.ImGui_SetTooltip("Delete roll");
+            gui.showTooltip("Delete roll");
             c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.control_hover), gui.px(gui.choice_rounding), 0);
         }
         drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(bin_half), if (on_button) theme.red else theme.text_tertiary);
