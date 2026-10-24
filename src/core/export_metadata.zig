@@ -1,11 +1,10 @@
 //! The metadata an exported file carries besides its pixels: the roll's camera, lens, film stock,
 //! date and copyright, how the frame was developed, its resolution and its colour space.
 //!
-//! We write it two ways. XMP (an XML packet) goes in a sidecar file next to the export, and inside
-//! the export too: a TIFF holds it in tag 700, a JPEG in an APP1 segment. EXIF (a small TIFF
-//! directory of numbered tags) goes inside both. In a TIFF its tags join the file's own directory,
-//! and in a JPEG it's another APP1 segment. The codecs write neither, so we add both to the bytes
-//! the codecs produce.
+//! We write it two ways, both inside the export. XMP (an XML packet) goes in TIFF tag 700, or a
+//! JPEG's APP1 segment. EXIF (a small TIFF directory of numbered tags) goes inside both. In a
+//! TIFF its tags join the file's own directory, and in a JPEG it's another APP1 segment. The
+//! codecs write neither, so we add both to the bytes the codecs produce.
 //!
 //! EXIF has no fields for the film stock or the develop settings, so those only go in the XMP, in
 //! minilab's own namespace.
@@ -70,8 +69,7 @@ pub const namespace = "urn:minilab:xmp:1.0/";
 
 // XMP ------------------------------------------------------------------------------------------
 
-/// Returns the XMP packet for `metadata`. It's the same for the sidecar file and for embedding.
-/// The caller owns the bytes.
+/// Returns the XMP packet for `metadata`, to embed. The caller owns the bytes.
 pub fn xmp(gpa: std.mem.Allocator, metadata: Metadata) error{OutOfMemory}![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();

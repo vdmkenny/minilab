@@ -706,7 +706,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     y += gui.px(small_line + block_gap);
     y = drawMetadata(state, ctx, roll_index, x, y, width);
     y += gui.px(block_gap);
-    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "EXIF and XMP · sidecar per file");
+    y += gui.paragraphAt(list, x, y, width, theme.text_tertiary, "EXIF and XMP in each file");
 
     // Export, at the bottom.
     const button_y = @max(y + gui.px(block_gap), origin.y + height - gui.px(panel_padding + export_height));
