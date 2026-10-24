@@ -38,6 +38,9 @@ pub const Frame = struct {
     mirrored: bool = false,
     /// What the viewer shows: `full` cropped and turned.
     preview: image.Scan,
+    /// `preview` with its dust removed, and the settings it was removed with, so moving another
+    /// slider doesn't look for the dust again.
+    cleaned: ?Cleaned = null,
     /// Statistics for the middle of the frame (`centre`) and all of it (`whole`), for the
     /// automatic settings.
     centre: develop.Statistics,
@@ -100,13 +103,34 @@ pub const Frame = struct {
         frame.* = undefined;
     }
 
+    const Cleaned = struct { scan: image.Scan, with: minilab.dust.Settings, finished: bool };
+
     fn dropPreview(frame: *Frame, gpa: std.mem.Allocator) void {
+        frame.dropCleaned(gpa);
         gpa.free(frame.preview.pixels);
         gpa.free(frame.rendered);
         gpa.free(frame.negative);
         frame.preview = .{ .width = 0, .height = 0, .pixels = &.{} };
         frame.rendered = &.{};
         frame.negative = &.{};
+    }
+
+    fn dropCleaned(frame: *Frame, gpa: std.mem.Allocator) void {
+        if (frame.cleaned) |*c| c.scan.deinit(gpa);
+        frame.cleaned = null;
+    }
+
+    /// The viewer's copy with its dust removed as the settings ask. It's worked out again only
+    /// when the dust settings or the crop change.
+    fn withoutDust(frame: *Frame, gpa: std.mem.Allocator) !image.Scan {
+        const s = frame.settings;
+        if (frame.cleaned) |c| {
+            if (std.meta.eql(c.with, s.dust) and c.finished == s.finished) return c.scan;
+            frame.dropCleaned(gpa);
+        }
+        const cleaned = try s.withoutDust(gpa, frame.preview, @max(frame.preview.width, frame.preview.height)) orelse return frame.preview;
+        frame.cleaned = .{ .scan = cleaned, .with = s.dust, .finished = s.finished };
+        return cleaned;
     }
 
     /// How many of the scan's pixels there are per pixel of `full`.
@@ -223,7 +247,7 @@ pub const Frame = struct {
         const started = std.Io.Clock.awake.now(io);
         defer std.log.scoped(.develop).debug("rendered {d} × {d} in {d} ms", .{ frame.preview.width, frame.preview.height, @divTrunc(started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds(), std.time.ns_per_ms) });
         frame.histogram = std.mem.zeroes(Histogram);
-        var linear = try look.render(gpa, frame.preview, frame.settings, try catalog.resolve(gpa, io, frame.look));
+        var linear = try look.render(gpa, try frame.withoutDust(gpa), frame.settings, try catalog.resolve(gpa, io, frame.look));
         defer linear.deinit(gpa);
         var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
@@ -262,7 +286,8 @@ pub const Frame = struct {
     /// `at` on the preview, cut and turned like the frame. It's developed with the frame's
     /// settings and look, or shown as the negative when `negative`. The square stays inside the
     /// crop, and is smaller if the crop is. The full scan is read the first time. Free the pixels
-    /// with `gpa`.
+    /// with `gpa`. Dust is looked for on a bigger square around it, so the specks found near its
+    /// edge are the ones an export finds.
     pub fn loupe(frame: *Frame, gpa: std.mem.Allocator, io: std.Io, catalog: *look.Catalog, at: [2]f32, side: usize, negative: bool) !Patch {
         if (frame.full_scan == null) frame.full_scan = (try minilab.input.read(gpa, io, frame.path)).scan;
         const scan = frame.full_scan.?;
@@ -278,6 +303,17 @@ pub const Frame = struct {
         };
         var square = try scan.crop(gpa, area);
         defer square.deinit(gpa);
+        if (!negative and frame.settings.dust.remove) {
+            const longest = @max(bounds.width, bounds.height);
+            const around = grown(area, minilab.dust.margin(longest, frame.settings.dust), bounds);
+            var context = try scan.crop(gpa, around);
+            defer context.deinit(gpa);
+            if (try frame.settings.withoutDust(gpa, context, longest)) |cleaned| {
+                var clean = cleaned;
+                defer clean.deinit(gpa);
+                for (0..square.height) |y| @memcpy(square.row(y), clean.row(area.y - around.y + y)[area.x - around.x ..][0..square.width]);
+            }
+        }
         var turned = try square.orient(gpa, frame.quarter_turns, frame.mirrored);
         defer turned.deinit(gpa);
         const pixels = try gpa.alloc([4]u8, turned.pixels.len);
@@ -307,9 +343,9 @@ pub const Frame = struct {
     }
 };
 
-/// Keeps the user's own choices through a fresh measurement: the tone, temperature and tint. It
-/// also keeps the roll's stock curves and the camera's colour, since those belong to the film and
-/// the scan.
+/// Keeps the user's own choices through a fresh measurement: the tone, temperature, tint and dust
+/// removal. It also keeps the roll's stock curves and the camera's colour, since those belong to
+/// the film and the scan.
 fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.tone = keep.tone;
     settings.temperature = keep.temperature;
@@ -317,6 +353,14 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.stock_curves = keep.stock_curves;
     settings.slide_colour = keep.slide_colour;
     settings.finished = keep.finished;
+    settings.dust = keep.dust;
+}
+
+/// `area` grown by `by` on every side, but no further than `bounds`, which holds it.
+fn grown(area: image.Area, by: usize, bounds: image.Area) image.Area {
+    const x = @max(bounds.x, area.x -| by);
+    const y = @max(bounds.y, area.y -| by);
+    return .{ .x = x, .y = y, .width = @min(bounds.x + bounds.width, area.x + area.width + by) - x, .height = @min(bounds.y + bounds.height, area.y + area.height + by) - y };
 }
 
 /// Where a run `length` long, centred on `centre`, starts so that it stays inside the run from

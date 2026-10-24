@@ -62,6 +62,7 @@ What's in:
 - linear TIFFs from other scanning software (VueScan, SilverFast raw output);
 - all common film sizes and formats, with one format per roll;
 - automatic frame detection that keeps the format's aspect ratio, plus boxes drawn by hand;
+- dust removal from the scan itself, for any scanner or camera, without an infrared channel;
 - macOS, Linux and Windows, each on x86-64 and Arm.
 
 What's out, at least for now:
@@ -149,7 +150,7 @@ The steps for a roll on a scanner:
 5. **Refine.** Detect the frame again on each full-resolution scan, tighten the crop, and measure
    the film base in that scan's own margin.
 6. **Develop.** minilab works out automatic settings for each frame. Adjust them, pick a look,
-   and sync settings across the roll.
+   remove dust if you want, and sync settings across the roll.
 7. **Export.** TIFF (16 or 8 bit) or JPEG. HEIC with a gain map will come later; Export already
    shows it, greyed out.
 
@@ -406,7 +407,8 @@ apart from giving blue more levels.
 
 ### What minilab does
 
-Each stage has its own settings.
+Each stage has its own settings. Dust removal, when it's on, works on the frame's scan before stage
+2 (see Dust, below).
 
 1. **Linearise.** Scans from a scanner with a profile are linear already, because the profile sets
    the scanner up that way. Camera scans are divided by the flat field here, on import. The flat
@@ -502,6 +504,57 @@ negative side of the viewer it shows the negative. The full scan is read the fir
 is used on a frame, and kept while the frame is open. The loupe renders again only when the point
 or the settings change. A pick (film base or neutral) still works with it on, at its centre.
 
+### Dust
+
+Dust on the film blocks light, so on a raw scan a speck is a small spot that's denser than the film
+around it, on a negative or a slide alike. Develop's Dust section turns dust removal on for a
+frame. It's off to begin with, it's saved with the frame's settings, and Sync copies it with the
+rest (section 8). Without an infrared channel there's no sure way to tell dust from the picture,
+so it's something you turn on where it helps, with three limits to keep the picture's own small
+highlights:
+
+- **Threshold:** how far above the grain around it a spot has to stand, from 6 to 20 times the
+  grain. Lower finds fainter specks. Below 6, the clumps of a fast film's grain start to look like
+  dust, so the slider stops there.
+- **Max size:** the widest speck, as a share of the frame's longer side, from 0.2% to 1.2%. The
+  default, 0.8%, is about 0.3 mm on 35mm film. A smaller size only ever leaves more alone.
+- **Max density:** the most a speck can stand above the film around it, from 0.2 D up to Any (no
+  limit), the default. The bulbs in a string of fairy lights usually stand further above the film
+  than dust does, so a lower limit keeps lights, stars and the like.
+
+How it works (`core/dust.zig`), on the frame's scan, cropped and turned:
+
+1. Each pixel's density, averaged over the channels. A speck adds about the same density wherever
+   it lands, on thin film or dense.
+2. A grey opening (the minimum over a square as wide as Max size, then the maximum over the same
+   square) takes away every bump narrower than the square and keeps the edges of anything bigger.
+   The density minus its opening (the top hat) is just the small bumps.
+3. The grain around each pixel is the top hat's mean and spread in a ring around it. The ring
+   leaves out a square the size of a speck, so a speck doesn't count towards its own grain. A bump
+   that stands Threshold times the spread above the mean is a speck, and its fainter edge goes
+   with it.
+4. Specks close together are grouped, and a group bigger than Max size is texture, so it stays. A
+   thin fibre can be twice as long. A speck also stays if it's denser than Max density, if the film
+   beside it is much denser on one side than another (it's a highlight on an edge), or if it's the
+   peak of a bigger clump, like a lamp's bulb in its glow.
+5. Each speck, and a pixel or two round it for its soft edge, is filled with the plane through the
+   film around it plus the grain of a patch nearby whose grain matches the film around the speck.
+   So the grain carries on through the speck, fine or coarse. Where no patch matches, the speck is
+   filled smoothly from its edge inwards. Nothing away from the specks changes.
+
+The sizes are shares of the frame's longer side, so the same specks go at any resolution, from any
+scanner or camera. Develop removes the dust from its reduced copy, and keeps the result until the
+dust settings or the crop change. The loupe removes it from the full scan around its square, and
+export from the frame at the size it's saved at. Thumbnails are usually too small to show dust, and
+then they stay as they are. A finished picture, such as a lab's scan, is already a positive,
+usually of a negative, so there dust is lighter than around it, and that's what it looks for.
+
+The idea comes from Tea and Tech Time's [automatic sensor dust
+removal](https://teaandtechtime.com/automatic-sensor-dust-removal/), for digital camera pictures:
+threshold against the neighbourhood, merge busy areas into big blobs, and fill the small blobs that
+are left. Its code is GPL-3.0 and uses OpenCV, so minilab's is written from the idea, not from the
+code.
+
 ## 8. Settings and sync
 
 Every frame has a settings file of its own. It holds the crop, the turns, the film base, the look
@@ -516,8 +569,8 @@ and rejected frames start out unchosen. A frame whose rating changes in Develop 
 the filter; frames you pick by hand otherwise stay picked.
 
 Sync copies some of one frame's settings to the roll's other frames. You choose the groups: the
-look (with tone and saturation) and the white balance are on by default; density, film base, and
-crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
+look (with tone and saturation), the white balance and dust removal are on by default; density,
+film base, and crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
 saved settings, or, if it was never developed, automatic ones measured on its thumbnail. An
 automatic white balance is always worked out again on each frame.
 

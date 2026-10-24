@@ -1726,7 +1726,50 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         if (temperatureRow(&s.temperature[which])) state.changed();
         if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
     }
+    gui.endSection(true);
+
+    drawDust(state);
+}
+
+/// Draws the Dust section: dust removal, how far above the grain a speck stands, and the limits
+/// that keep the picture's own small highlights.
+fn drawDust(state: *State) void {
+    const d = &state.frame.?.settings.dust;
+    const Dust = minilab.dust.Settings;
+    gui.beginSection("dust");
+    gui.heading("DUST");
+    {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
+        defer c.ImGui_PopStyleVar();
+        gui.rowLabel("");
+        if (gui.checkbox("Remove dust", &d.remove)) state.changed();
+        c.ImGui_BeginDisabled(!d.remove);
+        defer c.ImGui_EndDisabled();
+        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{ .default = Dust.default_threshold, .help = "Times the grain" })) state.changed();
+        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{ .default = Dust.default_max_size, .help = "Of the frame's long side" })) state.changed();
+        if (maxDensityRow(&d.max_density)) state.changed();
+    }
     gui.endSection(false);
+}
+
+/// The slider for the most a speck can stand above the film around it, in D. At the top of its
+/// range there's no limit, shown as Any.
+fn maxDensityRow(value: *f32) bool {
+    const Dust = minilab.dust.Settings;
+    c.ImGui_PushID("Max density");
+    defer c.ImGui_PopID();
+    gui.rowLabel("Max density");
+    var changed = gui.slider("slider", value, Dust.min_max_density, Dust.max_max_density, 0);
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Above the film around it");
+    if (gui.valueAndReset(densityLimit(value.*), densityLimit(Dust.default_max_density))) {
+        value.* = Dust.default_max_density;
+        changed = true;
+    }
+    return changed;
+}
+
+fn densityLimit(value: f32) []const u8 {
+    return if (value >= minilab.dust.Settings.max_max_density) "Any" else gui.print("{d:.2} D", .{value});
 }
 
 /// Draws the Preset section: the film type, stock, look, tone and white balance.
@@ -1956,6 +1999,7 @@ fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         .{ &state.sync.balance, "White balance" },
         .{ &state.sync.density, "Density: D max and offset" },
         .{ &state.sync.base, "Film base" },
+        .{ &state.sync.dust, "Dust removal" },
         .{ &state.sync.geometry, "Crop, turns and mirror" },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
@@ -1973,6 +2017,7 @@ const SyncGroups = struct {
     balance: bool = true,
     density: bool = false,
     base: bool = false,
+    dust: bool = true,
     geometry: bool = false,
 };
 
@@ -2022,6 +2067,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
         own.base = s.base;
         own.base_source = s.base_source;
     }
+    if (groups.dust) own.dust = s.dust;
     if (groups.balance) {
         own.white_balance = s.white_balance;
         own.temperature = s.temperature;
@@ -2110,12 +2156,16 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
     source.look = .frontier;
     source.settings.tone = .hard;
     source.settings.saturation = 1.3;
+    source.settings.dust = .{ .remove = true, .threshold = 12 };
 
     const other = try synced(gpa, io, &rl, 1, &source, rl.frames.items[0].scan, .{});
     try std.testing.expect(other.developed);
     try std.testing.expect(other.look.eql(&look.Id.frontier));
     try std.testing.expectEqual(develop.Tone.hard, other.settings.tone);
     try std.testing.expectEqual(@as(f32, 1.3), other.settings.saturation);
+    try std.testing.expectEqual(source.settings.dust, other.settings.dust);
+    const no_dust = try synced(gpa, io, &rl, 1, &source, rl.frames.items[0].scan, .{ .dust = false });
+    try std.testing.expectEqual(minilab.dust.Settings{}, no_dust.settings.dust);
     // It keeps its own density range, since its negative is thinner.
     try std.testing.expect(@abs(other.settings.density_range - source.settings.density_range) > 0.05);
 

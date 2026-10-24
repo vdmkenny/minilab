@@ -25,6 +25,8 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 - **One workflow:** scanning, inversion, colour correction and batch export in one app.
 - **Datasheet corrections:** the film's datasheet curves open up crushed shadows and keep them
   neutral.
+- **Dust removal:** finds dust on a scan and fills it in with the film's own grain, with limits
+  that keep small lights in the picture.
 - **Film looks:** Frontier lab emulation, 85 film looks from three free collections, and your own
   `.cube` LUTs (3D or 1D).
 - **Fitted looks:** a look that matches your lab, made from a few frames scanned by both.

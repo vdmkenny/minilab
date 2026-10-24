@@ -132,10 +132,10 @@ pub const ConvertError = error{
 } || icc.Error;
 
 /// Prepares `scan` the way `frame` says. It's cropped, turned and reduced to `options.long_edge`,
-/// then developed in `frame_look` (the look `frame` names), with its saved settings if it's been
-/// developed, or automatic ones for its film if not. Finally it's converted to `options.space` at
-/// the file's depth. Develop's preview and the thumbnails take the same steps, so the file looks
-/// like the screen.
+/// cleared of dust if the settings ask, then developed in `frame_look` (the look `frame` names),
+/// with its saved settings if it's been developed, or automatic ones for its film if not. Finally
+/// it's converted to `options.space` at the file's depth. Develop's preview and the thumbnails
+/// take the same steps, so the file looks like the screen.
 pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.FrameSettings, frame_look: look.Resolved, options: Options, cancel: ?*const Cancel) !Picture {
     // Each step makes a copy. We hold on to the latest one here and free the one before.
     var owned: ?image.Scan = null;
@@ -167,6 +167,14 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     }
     try check(cancel);
     const scale = @as(f64, @floatFromInt(current.width)) / @as(f64, @floatFromInt(full_width));
+    if (frame.developed) {
+        if (try frame.settings.withoutDust(gpa, current, @max(current.width, current.height))) |cleaned| {
+            if (owned) |*s| s.deinit(gpa);
+            owned = cleaned;
+            current = cleaned;
+        }
+        try check(cancel);
+    }
 
     var developed = if (frame.developed)
         try look.renderBanded(gpa, current, frame.settings, frame_look, cancel)
@@ -701,6 +709,29 @@ fn testScan(gpa: std.mem.Allocator, width: usize, height: usize) !image.Scan {
     const scan: image.Scan = try .init(gpa, width, height);
     for (scan.pixels, 0..) |*p, i| p.* = .{ @intCast(20000 + i * 7 % 30000), @intCast(12000 + i * 5 % 20000), @intCast(8000 + i * 3 % 10000) };
     return scan;
+}
+
+test "an export loses the dust when the frame's settings ask" {
+    const gpa = std.testing.allocator;
+    // Plain film with one speck of dust on it.
+    var scan: image.Scan = try .init(gpa, 600, 400);
+    defer scan.deinit(gpa);
+    @memset(scan.pixels, .{ 30000, 20000, 12000 });
+    for (199..202) |y| for (299..302) |x| {
+        scan.pixels[y * scan.width + x] = .{ 3000, 2000, 1200 };
+    };
+    var frame: roll.FrameSettings = .{ .scan = "01.ppm", .developed = true, .settings = .{ .base = .{ 0.6, 0.4, 0.25 } } };
+    var values: [2]u16 = undefined;
+    for (&values, [_]bool{ false, true }) |*value, remove| {
+        frame.settings.dust.remove = remove;
+        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .depth = .sixteen, .space = .srgb }, null);
+        defer picture.deinit(gpa);
+        const pixels = picture.pixels.sixteen;
+        value.* = pixels.pixels[200 * pixels.width + 300][1];
+        // With dust removal on, the speck's place comes out like the film around it.
+        if (remove) try std.testing.expectEqual(pixels.pixels[50 * pixels.width + 50][1], value.*);
+    }
+    try std.testing.expect(values[0] != values[1]);
 }
 
 test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" {

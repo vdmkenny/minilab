@@ -786,11 +786,13 @@ test "a roll's details and fields can change after it's made, and blank ones cle
     try std.testing.expectEqualStrings("Cinestill Cs41", again.info.fields[0].value);
 }
 
-test "a frame saved before ratings has none, and too many stars come down to five" {
+test "a frame saved before ratings and dust removal has neither, and too many stars come down to five" {
     const gpa = std.testing.allocator;
-    const old = try std.json.parseFromSlice(FrameSettings, gpa, "{\"scan\":\"01.ppm\",\"developed\":true}", .{ .ignore_unknown_fields = true });
+    const old = try std.json.parseFromSlice(FrameSettings, gpa, "{\"scan\":\"01.ppm\",\"developed\":true,\"settings\":{\"tone\":\"soft\"}}", .{ .ignore_unknown_fields = true });
     defer old.deinit();
     try std.testing.expectEqual(Rating{}, old.value.rating);
+    try std.testing.expectEqual(develop.Tone.soft, old.value.settings.tone);
+    try std.testing.expect(!old.value.settings.dust.remove);
     try std.testing.expectEqual(Rating{ .stars = 5 }, (Rating{ .stars = 9 }).valid());
     try std.testing.expectEqual(@as(i8, -1), (Rating{ .stars = 3, .rejected = true }).xmp());
     try std.testing.expectEqual(@as(i8, 3), (Rating{ .stars = 3 }).xmp());
