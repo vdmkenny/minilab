@@ -120,7 +120,9 @@ What's out, at least for now:
 The GUI has five workspaces. They're mocked up in the "minilab GUI" design canvas:
 
 - **Rolls:** a contact sheet per roll, with its film strip, date and how many frames are
-  developed. Frames you haven't developed yet show the raw scan.
+  developed. Frames you haven't developed yet show the raw scan. The strip carries the stock's
+  edge print the way its maker writes it (`KODAK PORTRA 400`, `FUJI SUPERIA X-TRA 400`), with
+  frame numbers, in the maker's ink. Scan's preview prints it on the negative too.
 - **Scan:** the scanner settings, the preview with the frames it found, the selected frame's crop,
   and the scan queue.
 - **Develop:** the roll's frames, a viewer that can split the negative and the positive, and the

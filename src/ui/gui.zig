@@ -26,6 +26,25 @@ pub fn vec2(x: f32, y: f32) Vec2 {
     return .{ .x = x, .y = y };
 }
 
+/// Which way `turnSince` turns what was drawn: to read upwards, or downwards.
+pub const Turn = enum { up, down };
+
+/// Turns everything drawn into `list` since its vertex `first` a quarter turn about `pivot`. Text
+/// is drawn level first, then turned, since ImGui only draws it level.
+pub fn turnSince(list: *c.ImDrawList, first: c_int, pivot: Vec2, turn: Turn) void {
+    const vertices = list.*.VtxBuffer.Data;
+    var i = first;
+    while (i < list.*.VtxBuffer.Size) : (i += 1) {
+        const v = &vertices[@intCast(i)];
+        const dx = v.pos.x - pivot.x;
+        const dy = v.pos.y - pivot.y;
+        v.pos = switch (turn) {
+            .up => vec2(pivot.x + dy, pivot.y - dx),
+            .down => vec2(pivot.x - dy, pivot.y + dx),
+        };
+    }
+}
+
 /// A line of text that's kept between frames, and cut short when it doesn't fit.
 pub fn Line(comptime capacity: usize) type {
     return struct {

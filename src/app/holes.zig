@@ -1,11 +1,23 @@
-//! The film's holes, drawn the same way on the Rolls cards and on Scan's preview.
+//! The film's holes and edge print, drawn the same way on the Rolls cards and on Scan's preview.
 
+const std = @import("std");
 const c = @import("c");
 const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
+const fonts = @import("../ui/fonts.zig");
 
 const formats = minilab.formats;
+
+/// The edge print's text as a share of the edge it's on, and the smallest size it's drawn at, in
+/// screen pixels. Smaller than that, it's just noise.
+const edge_text_share = 0.6;
+const min_edge_text = 3;
+/// Where a frame's number goes after the frame starts, and the space after it, in mm.
+const edge_lead_mm = 1;
+const edge_space_mm = 2;
+/// The longest stock name the edge print holds.
+const max_edge_name = 48;
 
 /// A strip of film on screen. Along is the film's length and across is its width.
 pub const Strip = struct {
@@ -32,6 +44,36 @@ pub const Strip = struct {
             .y => .{ gui.vec2(top, first), gui.vec2(bottom, last) },
         };
         c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(colour), rounding, 0);
+    }
+
+    /// Draws `text` in the current font, `size` high, from `at` along the film and centred on
+    /// `middle` across it, reading along the film. Returns its length. Text that would run past
+    /// the strip's ends isn't drawn.
+    fn label(strip: Strip, list: *c.ImDrawList, at: f32, middle: f32, size: f32, colour: u32, text: [:0]const u8) f32 {
+        const length = c.ImGui_CalcTextSize(text).x;
+        if (at < strip.start or at + length > strip.end) return length;
+        switch (strip.axis) {
+            .x => c.ImDrawList_AddText(list, gui.vec2(at, middle - size / 2), colour, text),
+            .y => {
+                // Drawn level, then turned to read down the film.
+                const pivot = gui.vec2(middle + size / 2, at);
+                const first = list.*.VtxBuffer.Size;
+                c.ImDrawList_AddText(list, pivot, colour, text);
+                gui.turnSince(list, first, pivot, .down);
+            },
+        }
+        return length;
+    }
+
+    /// Draws an arrow pointing along the film, `size` long, starting at `at` along it and centred
+    /// on `middle` across it.
+    fn arrow(strip: Strip, list: *c.ImDrawList, at: f32, middle: f32, size: f32, colour: u32) void {
+        if (at < strip.start or at + size > strip.end) return;
+        const half = size / 2;
+        switch (strip.axis) {
+            .x => c.ImDrawList_AddTriangleFilled(list, gui.vec2(at, middle - half), gui.vec2(at, middle + half), gui.vec2(at + size, middle), colour),
+            .y => c.ImDrawList_AddTriangleFilled(list, gui.vec2(middle + half, at), gui.vec2(middle - half, at), gui.vec2(middle, at + size), colour),
+        }
     }
 };
 
@@ -61,4 +103,88 @@ pub fn atFrame(list: *c.ImDrawList, strip: Strip, count: usize, start: f32, colo
         const offset = (@as(f32, @floatFromInt(k)) - @as(f32, @floatFromInt(count - 1)) / 2) * hole.spacing_mm * strip.along_per_mm;
         strip.fill(list, start + offset - side / 2, start + offset + side / 2, top, top + side, colour, side / 4);
     }
+}
+
+/// What a film's maker prints along its edge: the stock's name the way the maker writes it, and
+/// the colour it comes out on a contact print.
+pub const EdgePrint = struct {
+    buffer: [max_edge_name + 1]u8 = @splat(0),
+    len: usize = 0,
+    ink: theme.Color = theme.edge_plain,
+
+    /// The edge print for a roll of `stock`, or just the frame numbers when there's no stock.
+    /// Notes in brackets, like a push, aren't printed, and Fujifilm writes FUJI.
+    pub fn of(stock: ?[]const u8) EdgePrint {
+        var print: EdgePrint = .{};
+        const full = stock orelse return print;
+        const name = std.mem.trim(u8, full[0 .. std.mem.indexOfScalar(u8, full, '(') orelse full.len], " ");
+        const maker = name[0 .. std.mem.indexOfScalar(u8, name, ' ') orelse name.len];
+        const fuji = std.ascii.eqlIgnoreCase(maker, "Fujifilm");
+        const kodak = std.ascii.eqlIgnoreCase(maker, "Kodak") or std.ascii.eqlIgnoreCase(maker, "Eastman");
+        print.ink = if (kodak) theme.edge_kodak else if (fuji or std.ascii.eqlIgnoreCase(maker, "Fujichrome")) theme.edge_fuji else theme.edge_plain;
+        const written = if (fuji) "FUJI" else maker;
+        for ([_][]const u8{ written, name[maker.len..] }) |part| {
+            for (part) |ch| {
+                if (print.len == max_edge_name) break;
+                print.buffer[print.len] = std.ascii.toUpper(ch);
+                print.len += 1;
+            }
+        }
+        return print;
+    }
+
+    pub fn text(print: *const EdgePrint) [:0]const u8 {
+        return print.buffer[0..print.len :0];
+    }
+};
+
+/// How wide the edge print's edge is on film of `size`, in mm: between the film's edge and its
+/// holes, or the clear film beside a picture `picture_mm` high. Null for film with no edge to
+/// print on, like sheet film.
+pub fn edgeMm(size: formats.FilmSize, picture_mm: f32) ?f32 {
+    if (size.perforations()) |p| return p.inset_mm;
+    const film = size.filmWidthMm() orelse return null;
+    const edge = (film - picture_mm) / 2;
+    return if (edge > 0) edge else null;
+}
+
+/// Draws one frame's edge print along the far edge of `strip`, `edge_mm` wide, in `ink`: the
+/// frame's number where it starts, the stock's name after it, and its half-frame number after an
+/// arrow, halfway to the next frame `pitch` on.
+pub fn edgePrint(list: *c.ImDrawList, strip: Strip, print: *const EdgePrint, start: f32, pitch: f32, number: usize, edge_mm: f32, ink: theme.Color) void {
+    const edge = edge_mm * strip.across_per_mm;
+    const size = edge * edge_text_share;
+    if (size < min_edge_text) return;
+    const middle = strip.far - edge / 2;
+    fonts.pushPixels(.semibold, size);
+    defer fonts.pop();
+    const colour = theme.imU32(ink);
+    var at = start + edge_lead_mm * strip.along_per_mm;
+    at += strip.label(list, at, middle, size, colour, gui.print("{d}", .{number})) + edge_space_mm * strip.along_per_mm;
+    const half = start + pitch / 2;
+    const name = print.text();
+    if (name.len > 0 and at + c.ImGui_CalcTextSize(name).x < half - size) _ = strip.label(list, at, middle, size, colour, name);
+    strip.arrow(list, half - size, middle, size / 2, colour);
+    _ = strip.label(list, half, middle, size, colour, gui.print("{d}A", .{number}));
+}
+
+test "the edge print reads the way the maker writes it, in the maker's ink" {
+    const portra: EdgePrint = .of("Kodak Portra 800 (push 1, EI 1600)");
+    try std.testing.expectEqualStrings("KODAK PORTRA 800", portra.text());
+    try std.testing.expectEqual(theme.edge_kodak, portra.ink);
+    const superia: EdgePrint = .of("Fujifilm Superia X-TRA 400");
+    try std.testing.expectEqualStrings("FUJI SUPERIA X-TRA 400", superia.text());
+    try std.testing.expectEqual(theme.edge_fuji, superia.ink);
+    const hp5: EdgePrint = .of("Ilford HP5 Plus");
+    try std.testing.expectEqualStrings("ILFORD HP5 PLUS", hp5.text());
+    try std.testing.expectEqual(theme.edge_plain, hp5.ink);
+    // Without a stock, only the frame numbers are printed.
+    try std.testing.expectEqualStrings("", EdgePrint.of(null).text());
+}
+
+test "the edge print goes between the film's edge and its holes, or beside the picture" {
+    try std.testing.expectEqual(formats.FilmSize.@"135".perforations().?.inset_mm, edgeMm(.@"135", 24).?);
+    // 120 has no holes: the clear film beside a 56 mm picture.
+    const film_120 = formats.FilmSize.@"120".filmWidthMm().?;
+    try std.testing.expectApproxEqAbs((film_120 - 56) / 2, edgeMm(.@"120", 56).?, 1e-4);
 }

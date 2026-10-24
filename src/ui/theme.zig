@@ -37,6 +37,11 @@ pub const raised = hex(0x2A2A2D);
 pub const film = hex(0x0E0E0F);
 /// A slide's mount, on Scan's preview of mounted slides.
 pub const slide_mount = hex(0xC9C9C4);
+/// The film makers' edge print as it comes out on a contact print: Kodak's yellow, Fujifilm's
+/// green, and the plain light grey of the others.
+pub const edge_kodak = hex(0xE8B04A);
+pub const edge_fuji = hex(0x8FD08F);
+pub const edge_plain = hex(0xB9B9B4);
 /// The track of a slider to the right of its thumb.
 pub const track = hex(0x5A5A5F);
 /// The background behind labels drawn over an image.
@@ -50,9 +55,20 @@ pub fn withAlpha(color: Color, alpha: f32) Color {
     return .{ .x = color.x, .y = color.y, .z = color.z, .w = alpha };
 }
 
+/// Returns `color` with its red, green and blue times `factor`, so below 1 it's darker.
+pub fn scaled(color: Color, factor: f32) Color {
+    return .{ .x = color.x * factor, .y = color.y * factor, .z = color.z * factor, .w = color.w };
+}
+
 /// Returns `color` as 8-bit RGBA, for pixels.
 pub fn rgba8(color: Color) [4]u8 {
     return .{ channel8(color.x), channel8(color.y), channel8(color.z), channel8(color.w) };
+}
+
+/// Returns 8-bit RGBA `pixel` as a colour.
+pub fn fromRgba8(pixel: [4]u8) Color {
+    const max: f32 = std.math.maxInt(u8);
+    return .{ .x = @as(f32, @floatFromInt(pixel[0])) / max, .y = @as(f32, @floatFromInt(pixel[1])) / max, .z = @as(f32, @floatFromInt(pixel[2])) / max, .w = @as(f32, @floatFromInt(pixel[3])) / max };
 }
 
 fn channel8(v: f32) u8 {

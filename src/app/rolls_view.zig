@@ -421,6 +421,11 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
             .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.page),
             .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.page),
         }
+        // The maker's edge print, as it comes out on a contact print.
+        if (holes.edgeMm(format.size, format.height_mm)) |edge| {
+            const print: holes.EdgePrint = .of(r.info.stock);
+            for (0..shown) |i| holes.edgePrint(list, strip, &print, strip_x + leader + @as(f32, @floatFromInt(i)) * step, step, i + 1, edge, print.ink);
+        }
     }
 
     var x = strip_x + if (sheets) 0 else leader;

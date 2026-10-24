@@ -138,6 +138,8 @@ const baseline_share = 0.8;
 const slide_mount_rounding = 0.06;
 /// How much film base to draw beside the frames of film with no set width, in mm.
 const plain_film_margin_mm = 2;
+/// How much of the base's light the maker's edge print lets through on a negative.
+const edge_density = 0.5;
 /// The most holder openings a preview keeps. Flatbed film holders have up to four rows of 35mm.
 const max_openings = 8;
 /// The space between strips of film drawn side by side, for a holder with several openings.
@@ -1402,14 +1404,16 @@ fn drawMain(state: *State, ctx: context.Context, roll_index: usize) void {
     const x = origin.x + gui.px(main_padding_x);
     const y = origin.y + gui.px(main_padding_y);
     const height = size.y - gui.px(2 * main_padding_y);
-    const strip_width = drawPreviewColumn(state, list, x, y, height, ctx.library.rolls.items[roll_index].info.format.format().size);
+    const strip_width = drawPreviewColumn(state, list, x, y, height, ctx.library.rolls.items[roll_index].info);
     const section_x = x + strip_width + gui.px(main_gap);
     const section_width = origin.x + size.x - gui.px(main_padding_x) - section_x;
     drawFrameSection(state, ctx, roll_index, list, section_x, y, section_width);
 }
 
 /// Draws the preview with the frames on it. Returns the column's width.
-fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, film: formats.FilmSize) f32 {
+fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, info: minilab.roll.Info) f32 {
+    const format = info.format.format();
+    const film = format.size;
     var y = top;
     const dpi_shown: u32 = if (state.preview) |p| @intFromFloat(@round(p.dpi[0])) else if (state.capabilities) |caps| caps.resolutionFrom(preview_dpi) orelse preview_dpi else preview_dpi;
     const label = gui.print("Preview · {d} dpi", .{dpi_shown});
@@ -1436,7 +1440,7 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     if (state.preview) |*p| {
         if (as_film) {
             const map: StripMap = .film(p, corner, shown, across_mm, strips);
-            if (mounted) drawMounts(state, p, map, list) else drawFilm(state, p, map, film, list);
+            if (mounted) drawMounts(state, p, map, list) else drawFilm(state, p, map, format, info.stock, list);
             drawBoxesOnStrip(state, p, map, list);
         } else if (p.texture) |t| c.ImDrawList_AddImage(list, t.ref(), corner, far) else c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
     } else {
@@ -1561,11 +1565,15 @@ fn drawMounts(state: *const State, preview: *const Preview, map: StripMap, list:
 /// Draws the film as it looks on a light table: each strip's base in its own colour, the film's
 /// holes if it has any (rows along both edges, or a few per frame), and each frame's picture
 /// straight and centred.
-fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
+fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, format: formats.Format, stock: ?[]const u8, list: *c.ImDrawList) void {
+    const film = format.size;
     const bottom = map.corner.y + map.shown.y;
     const base = preview.base_colour orelse theme.rgba8(theme.raised);
     const per_mm = map.along * preview.alongPerMm();
     const across_per_mm = map.strip_width / filmWidthMm(state, preview, film);
+    // On the negative, the maker's edge print is exposed film, so it's denser than the base.
+    const print: holes.EdgePrint = .of(stock);
+    const ink = theme.scaled(theme.fromRgba8(base), edge_density);
     for (map.strips.openings[0..map.strips.len]) |opening| {
         const left = map.left(opening);
         const right = left + map.strip_width;
@@ -1583,6 +1591,11 @@ fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: f
                 if (box.opening == opening) holes.atFrame(list, strip, count, map.corner.y + box.start() * map.along, theme.viewer);
             },
         }
+        if (holes.edgeMm(film, format.height_mm)) |edge| for (state.boxes.items, 0..) |box, i| {
+            if (box.opening != opening) continue;
+            const pitch = format.pitch_mm orelse box.length / preview.alongPerMm() + format.gapMm();
+            holes.edgePrint(list, strip, &print, map.corner.y + box.start() * map.along, pitch * per_mm, i + 1, edge, ink);
+        };
     }
     drawPictures(state, preview, map, list);
 }
