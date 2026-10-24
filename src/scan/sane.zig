@@ -135,6 +135,25 @@ pub const Status = enum(c_int) {
     no_mem = 10,
     access_denied = 11,
     _,
+
+    /// What the status means, for the log.
+    fn text(status: Status) []const u8 {
+        return switch (status) {
+            .good => "success",
+            .unsupported => "not supported",
+            .cancelled => "cancelled",
+            .device_busy => "device busy",
+            .inval => "invalid argument",
+            .eof => "end of data",
+            .jammed => "feeder jammed",
+            .no_docs => "feeder empty",
+            .cover_open => "cover open",
+            .io_error => "device I/O error",
+            .no_mem => "out of memory",
+            .access_denied => "access denied",
+            _ => "unknown status",
+        };
+    }
 };
 
 const ValueType = enum(c_int) { bool = 0, int = 1, fixed = 2, string = 3, button = 4, group = 5, _ };
@@ -374,7 +393,11 @@ pub const Library = struct {
         const name = try gpa.dupeSentinel(u8, device.id, 0);
         defer gpa.free(name);
         var handle: ?Handle = null;
-        try check(library.api.open(name, &handle));
+        const status = library.api.open(name, &handle);
+        if (status != .good) {
+            std.log.warn("SANE can't open {s}: {s}", .{ device.id, status.text() });
+            return errorOf(status);
+        }
         return .{
             .api = &library.api,
             .handle = handle orelse return error.Failed,
@@ -419,7 +442,11 @@ pub const Scanner = struct {
         const size: usize = @intCast(@max(found.option.size, 0));
         if (size > buffer.len or value.len + 1 > size) return error.Unsupported;
         @memcpy(buffer[0..value.len], value);
-        try check(scanner.api.control_option(scanner.handle, found.index, .set_value, &buffer, null));
+        const status = scanner.api.control_option(scanner.handle, found.index, .set_value, &buffer, null);
+        if (status != .good) {
+            std.log.debug("the scanner refused {s} = {s}: {s}", .{ name, value, status.text() });
+            return errorOf(status);
+        }
         return true;
     }
 
@@ -442,7 +469,11 @@ pub const Scanner = struct {
             else => return false,
         }
         var word = found.option.word(value);
-        try check(scanner.api.control_option(scanner.handle, found.index, .set_value, &word, null));
+        const status = scanner.api.control_option(scanner.handle, found.index, .set_value, &word, null);
+        if (status != .good) {
+            std.log.debug("the scanner refused {s} = {d}: {s}", .{ name, value, status.text() });
+            return errorOf(status);
+        }
         return true;
     }
 
@@ -627,7 +658,11 @@ pub const Scanner = struct {
         const words = try gpa.alloc(Word, entries);
         defer gpa.free(words);
         for (words, values) |*w, v| w.* = option.word(v);
-        try check(scanner.api.control_option(scanner.handle, found.index, .set_value, words.ptr, null));
+        const status = scanner.api.control_option(scanner.handle, found.index, .set_value, words.ptr, null);
+        if (status != .good) {
+            std.log.debug("the scanner refused a straight {s}: {s}", .{ name, status.text() });
+            return errorOf(status);
+        }
         return true;
     }
 
@@ -729,13 +764,20 @@ pub const Scanner = struct {
     }
 
     /// Sets the scanner up for `request`: its source, its raw setup, the resolution and the area.
+    /// When the scanner refuses one, the log says which. With `--verbose` it also names the
+    /// option and SANE's status.
     fn prepare(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request) Error!void {
+        var step: []const u8 = "the light source";
+        errdefer std.log.warn("the scanner refused {s} for a {t} scan at {d} dpi", .{ step, request.source, request.dpi });
         if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
+        step = "the raw setup";
         try scanner.setUpRaw(gpa, request.film, request.raw, request.deep);
+        step = "the resolution";
         if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
 
         // Now the area. Move the far corner out of the way first, so the near corner can go
         // anywhere.
+        step = "the scan area";
         const full = scanner.fullArea();
         const area = if (request.area) |a| a.clip(full) orelse return error.Unsupported else full;
         _ = try scanner.setNumber("br-x", full.right());
@@ -772,10 +814,15 @@ pub const Scanner = struct {
         // Three-pass scanners send red, green and blue as separate frames.
         var frame: usize = 0;
         while (true) : (frame += 1) {
-            try check(scanner.api.start(scanner.handle));
+            const started = scanner.api.start(scanner.handle);
+            if (started != .good) {
+                std.log.warn("the scanner didn't start the scan: {s}", .{started.text()});
+                return errorOf(started);
+            }
             var parameters: Parameters = undefined;
             try scanner.checkOrFinish(scanner.api.get_parameters(scanner.handle, &parameters));
             const layout = Layout.of(parameters) catch |err| {
+                std.log.warn("minilab can't read the scanner's data: {d}-bit, format {d}", .{ parameters.depth, @backingInt(parameters.format) });
                 scanner.finish();
                 return err;
             };
@@ -949,6 +996,11 @@ fn errorOf(status: Status) Error {
         .no_mem => error.OutOfMemory,
         .cancelled, .io_error, _ => error.Failed,
     };
+}
+
+test "a SANE status reads as text in the log, even one SANE added later" {
+    try std.testing.expectEqualStrings("invalid argument", Status.inval.text());
+    try std.testing.expectEqualStrings("unknown status", @as(Status, @fromBackingInt(@intCast(42))).text());
 }
 
 test "the bundled SANE looks in its own folders first, then the system's" {
