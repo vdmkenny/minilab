@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/vdmkenny/minilab/compare/v0.4.0...v0.5.0) (2026-10-24)
+
+
+### Features
+
+* Dust removal in Develop ([#63](https://github.com/vdmkenny/minilab/issues/63)) ([1acba9a](https://github.com/vdmkenny/minilab/commit/1acba9a60936936a09f6d459700e2e29d97a5129))
+* Every slider says what it does, a loupe icon, an aligned toolbar and padded tooltips ([#64](https://github.com/vdmkenny/minilab/issues/64)) ([7fec5b0](https://github.com/vdmkenny/minilab/commit/7fec5b09e69de9aabab726e7c1a7534475cf6461))
+* Frames fit their pictures: the format's ratio inside, or the whole frame ([#59](https://github.com/vdmkenny/minilab/issues/59)) ([02ee2f1](https://github.com/vdmkenny/minilab/commit/02ee2f189c6ba34b6f812890a1144d2acf09761c))
+* Holders with several strips side by side ([#51](https://github.com/vdmkenny/minilab/issues/51)) ([0000fff](https://github.com/vdmkenny/minilab/commit/0000fff11c562e6ac9ee8221a21aefa8f47c82a2))
+* Scan this frame, to leave frames out of a scan ([#57](https://github.com/vdmkenny/minilab/issues/57)) ([354946e](https://github.com/vdmkenny/minilab/commit/354946e8ec24bf8faa8d180d2465a95071b5d623))
+
+
+### Fixes
+
+* Frame scans come out sure of their frame again ([#53](https://github.com/vdmkenny/minilab/issues/53)) ([f02e5c0](https://github.com/vdmkenny/minilab/commit/f02e5c0e3dfa310fd6319a49bc22ffa8ca881e41))
+* Frames can't grow past their opening ([#58](https://github.com/vdmkenny/minilab/issues/58)) ([8453e40](https://github.com/vdmkenny/minilab/commit/8453e40e8f6f1b702eee66234eefdadef52b2d5b))
+* No XMP sidecars next to exports ([#60](https://github.com/vdmkenny/minilab/issues/60)) ([446c1e3](https://github.com/vdmkenny/minilab/commit/446c1e35f70a997adfe5041b8405b93e30e0a485))
+* Say which step the scanner refused when a scan fails ([#56](https://github.com/vdmkenny/minilab/issues/56)) ([a0516b9](https://github.com/vdmkenny/minilab/commit/a0516b9d661dc844d50d6559ef57c633805bef1c))
+* Scan opens the scanner again after a failed preview or frame ([#55](https://github.com/vdmkenny/minilab/issues/55)) ([79283b1](https://github.com/vdmkenny/minilab/commit/79283b123ff5b98b63a1e21afcba7bd7262e9b9e))
+* Short strips with bare light past them, on any holder ([#54](https://github.com/vdmkenny/minilab/issues/54)) ([43198d2](https://github.com/vdmkenny/minilab/commit/43198d2fb1ace7a78cb9f77cb1f2808bee89fdf3))
+
 ## [0.4.0](https://github.com/vdmkenny/minilab/compare/v0.3.1...v0.4.0) (2026-10-23)
 
 
