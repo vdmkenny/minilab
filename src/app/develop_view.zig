@@ -1745,8 +1745,8 @@ fn drawDust(state: *State) void {
         if (gui.checkbox("Remove dust", &d.remove)) state.changed();
         c.ImGui_BeginDisabled(!d.remove);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{ .default = Dust.default_threshold, .help = "Times the grain" })) state.changed();
-        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{ .default = Dust.default_max_size, .help = "Of the frame's long side" })) state.changed();
+        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{ .default = Dust.default_threshold })) state.changed();
+        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{ .default = Dust.default_max_size })) state.changed();
         if (maxDensityRow(&d.max_density)) state.changed();
     }
     gui.endSection(false);
@@ -1760,7 +1760,6 @@ fn maxDensityRow(value: *f32) bool {
     defer c.ImGui_PopID();
     gui.rowLabel("Max density");
     var changed = gui.slider("slider", value, Dust.min_max_density, Dust.max_max_density, 0);
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Above the film around it");
     if (gui.valueAndReset(densityLimit(value.*), densityLimit(Dust.default_max_density))) {
         value.* = Dust.default_max_density;
         changed = true;
