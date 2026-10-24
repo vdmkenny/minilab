@@ -23,7 +23,6 @@ const page_padding_y = 16;
 const card_width = 210;
 const card_padding_x = 14;
 const card_padding_y = 12;
-const thumb_height = 64;
 const thumb_gap = 4;
 /// The film before the first frame and after the last, in mm.
 const leader_mm: f32 = 3;
@@ -320,14 +319,16 @@ fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Ro
     const list = c.ImGui_GetWindowDrawList();
     const card_height = gui.px(card_padding_y * 2 + card_title_line + card_date_line + 4 * card_row_gap + card_bar_gap + card_bar) + gui.lineHeight() * 3;
     const right = c.ImGui_GetWindowPos().x + c.ImGui_GetWindowWidth() - gui.px(page_padding_x);
+    // The frame numbers go under the filmstrip, below the card.
+    const row_height = card_height + gui.px(number_gap + number_height);
     var action = drawCard(state, gpa, r, index, list, origin, card_height);
     if (drawStrip(library, gpa, r, index, list, origin, card_height, right)) |clicked| action = clicked;
 
-    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + card_height));
+    c.ImGui_SetCursorScreenPos(gui.vec2(origin.x, origin.y + row_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
     if (action == null) {
         if (drop) |p| {
-            if (p.y >= origin.y and p.y < origin.y + card_height and p.x >= origin.x and p.x < right) action = .{ .dropped_on = index };
+            if (p.y >= origin.y and p.y < origin.y + row_height and p.x >= origin.x and p.x < right) action = .{ .dropped_on = index };
         }
     }
     return action;
@@ -390,17 +391,17 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
     var action: ?Action = null;
     const format = r.info.format.format();
     const total = r.frames.items.len;
-    // The film drawn to its own proportions, centred in the row's height, with the
-    // frame numbers under it.
-    const height = gui.px(thumb_height);
-    const per_mm = height / format.height_mm;
+    // The film as high as the card and drawn to its own proportions, with the frame numbers
+    // under it.
     const film_mm = format.size.filmWidthMm();
     const sheets = film_mm == null;
-    const band = @round((film_mm orelse format.height_mm + 2 * sheet_border_mm) * per_mm);
+    const band = @round(card_height);
+    const per_mm = band / (film_mm orelse format.height_mm + 2 * sheet_border_mm);
+    const height = @round(format.height_mm * per_mm);
     const gap = @max(format.size.typicalGapMm(), min_frame_gap_mm) * per_mm;
     const leader = (if (sheets) sheet_border_mm else leader_mm) * per_mm;
     const strip_x = origin.x + gui.px(card_width + strip_gap);
-    const strip_top = @round(origin.y + (card_height - band - gui.px(number_gap + number_height)) / 2);
+    const strip_top = @round(origin.y);
     const thumbs_top = strip_top + @round((band - height) / 2);
     const width = @round(height * format.ratio());
     const more_width = gui.px(2 * more_padding) + c.ImGui_CalcTextSize("+00 more").x;
