@@ -64,8 +64,11 @@ pub const Confidence = enum {
 };
 
 pub const Frame = struct {
-    /// The frame's place along the strip, counting from 0 at the start of the axis.
+    /// The frame's place in the order of the holder's openings, then along each one, counting
+    /// from 0.
     index: usize,
+    /// The opening it's in, in `Detection.openings`.
+    opening: usize = 0,
     /// The frame's box before rotation: centred on the frame, the size of the frame, and clipped
     /// to the scan.
     area: image.Area,
@@ -88,15 +91,31 @@ pub const Options = struct {
     max_skew_degrees: f32 = 3,
 };
 
+/// One of the holder's openings, which a strip of film lies in. A flatbed's film holder can have
+/// several side by side, like four rows of 35mm.
+pub const Opening = struct {
+    /// Its middle across the strip, halfway along, in scan pixels.
+    middle_px: f32,
+    /// Its height across the strip.
+    height_mm: f32,
+    /// Its skew, with the same sign as `Frame.rotation_degrees`.
+    rotation_degrees: f32,
+    /// Whether there's film in it. An empty opening shows bare light, and has no frames.
+    film: bool,
+};
+
 pub const Detection = struct {
     axis: Axis,
-    /// The strip's skew, with the same sign as `Frame.rotation_degrees`.
+    /// The skew and height of the first opening with film in it, or of the first opening when
+    /// none has film.
     rotation_degrees: f32,
-    /// The opening's height across the strip.
     opening_mm: f32,
+    /// The holder's openings, in order across the scan.
+    openings: []Opening,
     frames: []Frame,
 
     pub fn deinit(detection: *Detection, gpa: std.mem.Allocator) void {
+        gpa.free(detection.openings);
         gpa.free(detection.frames);
         detection.* = undefined;
     }
@@ -136,6 +155,12 @@ const plateau_quantile = 0.9;
 const band_fraction = 0.5;
 /// Dips in the band narrower than this are bridged.
 const band_bridge_mm = 1.0;
+/// A light band narrower than this share of the format's height isn't an opening, but something
+/// like a hole in the holder.
+const min_opening_share = 0.5;
+/// When a holder has several openings, one counts as having film when at least this share of its
+/// lit lines show texture. Bare light is flat.
+const min_film_lines = 0.05;
 
 /// This many light samples in a row make an edge.
 const edge_run = 3;
@@ -177,6 +202,11 @@ const flat_spread = 0.05;
 const gap_quantile = 0.98;
 /// The shortest stretch of flat lines, in mm, that's enough to give a gap level of its own.
 const min_flat_mm = 0.5;
+/// A strip shorter than the holder's opening lets bare light through past its ends. That light
+/// is at least this much lighter than the film, in density, and the holder's edge beyond it can
+/// be this soft.
+const min_base_density = 0.1;
+const soft_edge_mm = 1.0;
 
 /// Runs shorter than this are noise, and merge into their neighbours.
 const min_run_mm = 0.3;
@@ -228,53 +258,77 @@ pub fn detect(
     const view: View = .init(plane, scan.width, scan.height, axis);
     const all_lines: Range = .{ .start = 0, .end = view.along };
 
-    const band = try coarseBand(gpa, view, levels.threshold, all_lines, px_per_mm) orelse return error.NoOpening;
-    var opening = try fitOpening(gpa, view, levels.edge, all_lines, band, px_per_mm, options.max_skew_degrees);
+    const all_bands = try coarseBands(gpa, view, levels.threshold, all_lines, px_per_mm, nominal_height);
+    defer gpa.free(all_bands);
+    if (all_bands.len == 0) return error.NoOpening;
+    // Mounted slides are found in one opening, the widest.
+    const bands = if (options.holder == .mounted) widest(all_bands) else all_bands;
     const middle = @as(f32, @floatFromInt(view.along)) / 2;
-    if (format.size.perforationPitchMm()) |pitch| {
-        if (opening.height(middle) > perforation_band_ratio * nominal_height) {
-            try leaveOutPerforations(gpa, view, &opening, all_lines, pitch * px_per_mm);
-        }
-    }
 
-    var profile: Profile = try .measure(gpa, view, opening, levels.threshold);
-    defer profile.deinit(gpa);
-
-    const frame_height = @max(opening.height(middle), 1);
-    const context: Context = .{
-        .view = view,
-        .opening = opening,
-        .threshold = levels.threshold,
-        .edge_threshold = levels.edge,
-        .kind = kind,
-        .gap_tolerance = options.gap_tolerance orelse kind.defaultGapTolerance(),
-        .length_tolerance = options.length_tolerance,
-        .frame_height = frame_height,
-        .frame_length = frame_height * format.ratio(),
-        .nominal_length = format.width_mm * px_per_mm,
-        .nominal_height = nominal_height,
-        .nominal_pitch = if (format.pitch_mm) |pitch| pitch * px_per_mm else null,
-        .nominal_gap = format.gapMm() * px_per_mm,
-        .px_per_mm = px_per_mm,
-    };
-
+    var openings: std.ArrayList(Opening) = try .initCapacity(gpa, bands.len);
+    errdefer openings.deinit(gpa);
     var placed: std.ArrayList(Placed) = .empty;
     defer placed.deinit(gpa);
-    switch (options.holder) {
-        .strip => try placeStrip(gpa, &placed, profile, context),
-        .mounted => try placeMounted(gpa, &placed, profile, band, context, options.max_skew_degrees),
+    for (bands, 0..) |band, index| {
+        var edges = try fitOpening(gpa, view, levels.edge, all_lines, band, px_per_mm, options.max_skew_degrees);
+        if (format.size.perforationPitchMm()) |pitch| {
+            if (edges.height(middle) > perforation_band_ratio * nominal_height) {
+                try leaveOutPerforations(gpa, view, &edges, all_lines, pitch * px_per_mm);
+            }
+        }
+
+        var profile: Profile = try .measure(gpa, view, edges, levels.threshold);
+        defer profile.deinit(gpa);
+        // With one opening, film or not is for placing the frames to find out.
+        const film = bands.len == 1 or profile.showsFilm();
+        openings.appendAssumeCapacity(.{
+            .middle_px = edges.centre(middle),
+            .height_mm = edges.height(middle) / px_per_mm,
+            .rotation_degrees = rotationDegrees(axis, edges.slope()),
+            .film = film,
+        });
+        if (!film) continue;
+
+        const frame_height = @max(edges.height(middle), 1);
+        const context: Context = .{
+            .view = view,
+            .opening = edges,
+            .threshold = levels.threshold,
+            .edge_threshold = levels.edge,
+            .kind = kind,
+            .gap_tolerance = options.gap_tolerance orelse kind.defaultGapTolerance(),
+            .length_tolerance = options.length_tolerance,
+            .frame_height = frame_height,
+            .frame_length = frame_height * format.ratio(),
+            .nominal_length = format.width_mm * px_per_mm,
+            .nominal_height = nominal_height,
+            .nominal_pitch = if (format.pitch_mm) |pitch| pitch * px_per_mm else null,
+            .nominal_gap = format.gapMm() * px_per_mm,
+            .px_per_mm = px_per_mm,
+        };
+        const before = placed.items.len;
+        switch (options.holder) {
+            .strip => try placeStrip(gpa, &placed, profile, context),
+            .mounted => try placeMounted(gpa, &placed, profile, band, context, options.max_skew_degrees),
+        }
+        for (placed.items[before..]) |*p| p.opening = index;
     }
     std.mem.sortUnstable(Placed, placed.items, {}, Placed.before);
 
     const frames = try gpa.alloc(Frame, placed.items.len);
+    errdefer gpa.free(frames);
     for (frames, placed.items, 0..) |*frame, p, i| {
         frame.* = p.toFrame(axis, scan.width, scan.height);
         frame.index = i;
     }
+    const first = for (openings.items) |o| {
+        if (o.film) break o;
+    } else openings.items[0];
     return .{
         .axis = axis,
-        .rotation_degrees = rotationDegrees(axis, opening.slope()),
-        .opening_mm = opening.height(middle) / px_per_mm,
+        .rotation_degrees = first.rotation_degrees,
+        .opening_mm = first.height_mm,
+        .openings = try openings.toOwnedSlice(gpa),
         .frames = frames,
     };
 }
@@ -425,7 +479,10 @@ const Range = struct {
 /// first position and `far` is one past its last.
 const Band = struct { near: usize, far: usize };
 
-fn coarseBand(gpa: std.mem.Allocator, view: View, threshold: u16, lines: Range, px_per_mm: f32) !?Band {
+/// Finds the light bands across the strip: the holder's openings, in order across the scan. Bands
+/// much narrower than the format's height are left out. If that leaves none, the widest band is
+/// the opening.
+fn coarseBands(gpa: std.mem.Allocator, view: View, threshold: u16, lines: Range, px_per_mm: f32, nominal_height: f32) ![]Band {
     const counts = try gpa.alloc(u32, view.across);
     defer gpa.free(counts);
     @memset(counts, 0);
@@ -434,10 +491,11 @@ fn coarseBand(gpa: std.mem.Allocator, view: View, threshold: u16, lines: Range, 
             if (view.at(u, v) > threshold) count.* += 1;
         }
     }
+    var bands: std.ArrayList(Band) = .empty;
+    errdefer bands.deinit(gpa);
     const most = std.mem.max(u32, counts);
-    if (most == 0) return null;
+    if (most == 0) return bands.toOwnedSlice(gpa);
     const bridge: usize = @intFromFloat(band_bridge_mm * px_per_mm);
-    var best: ?Band = null;
     var current: ?Band = null;
     for (counts, 0..) |count, v| {
         if (@as(f32, @floatFromInt(count)) < band_fraction * @as(f32, @floatFromInt(most))) continue;
@@ -446,14 +504,36 @@ fn coarseBand(gpa: std.mem.Allocator, view: View, threshold: u16, lines: Range, 
                 c.far = v + 1;
                 continue;
             }
-            if (best == null or c.far - c.near > best.?.far - best.?.near) best = c.*;
+            try bands.append(gpa, c.*);
         }
         current = .{ .near = v, .far = v + 1 };
     }
-    if (current) |c| {
-        if (best == null or c.far - c.near > best.?.far - best.?.near) best = c;
+    if (current) |c| try bands.append(gpa, c);
+
+    const narrowest: f32 = min_opening_share * nominal_height;
+    var kept: usize = 0;
+    var widest_band: Band = bands.items[0];
+    for (bands.items) |band| {
+        if (band.far - band.near > widest_band.far - widest_band.near) widest_band = band;
+        if (@as(f32, @floatFromInt(band.far - band.near)) < narrowest) continue;
+        bands.items[kept] = band;
+        kept += 1;
     }
-    return best;
+    if (kept == 0) {
+        bands.items[0] = widest_band;
+        kept = 1;
+    }
+    bands.shrinkRetainingCapacity(kept);
+    return bands.toOwnedSlice(gpa);
+}
+
+/// The widest of `bands`, as a slice of one.
+fn widest(bands: []const Band) []const Band {
+    var best: usize = 0;
+    for (bands, 0..) |band, i| {
+        if (band.far - band.near > bands[best].far - bands[best].near) best = i;
+    }
+    return bands[best..][0..1];
 }
 
 /// A straight edge in strip coordinates: `v = offset + slope · u`.
@@ -466,27 +546,27 @@ const Line = struct {
     }
 };
 
-/// The opening between the holder's long edges.
-const Opening = struct {
+/// An opening's long edges: the holder on either side of the film.
+const Edges = struct {
     near: Line,
     far: Line,
 
-    fn slope(opening: Opening) f32 {
+    fn slope(opening: Edges) f32 {
         return (opening.near.slope + opening.far.slope) / 2;
     }
 
-    fn centre(opening: Opening, u: f32) f32 {
+    fn centre(opening: Edges, u: f32) f32 {
         return (opening.near.at(u) + opening.far.at(u)) / 2;
     }
 
     /// The height at right angles to the strip, in pixels.
-    fn height(opening: Opening, u: f32) f32 {
+    fn height(opening: Edges, u: f32) f32 {
         const s = opening.slope();
         return (opening.far.at(u) - opening.near.at(u)) / @sqrt(1 + s * s);
     }
 
     /// The distance along the strip, in pixels, that one line covers.
-    fn alongScale(opening: Opening) f32 {
+    fn alongScale(opening: Edges) f32 {
         const s = opening.slope();
         return @sqrt(1 + s * s);
     }
@@ -495,7 +575,7 @@ const Opening = struct {
 const Point = struct { u: f32, v: f32 };
 
 /// Step 2: fits lines to the long edges of the band, over `lines`.
-fn fitOpening(gpa: std.mem.Allocator, view: View, edge_threshold: u16, lines: Range, band: Band, px_per_mm: f32, max_skew_degrees: f32) !Opening {
+fn fitOpening(gpa: std.mem.Allocator, view: View, edge_threshold: u16, lines: Range, band: Band, px_per_mm: f32, max_skew_degrees: f32) !Edges {
     const max_slope = @tan(std.math.degreesToRadians(max_skew_degrees));
     const span: f32 = @floatFromInt(lines.len());
     const window: usize = @intFromFloat(@ceil(max_slope * span / 2 + edge_guard_mm * px_per_mm));
@@ -668,7 +748,7 @@ fn offsetWithSlope(points: []const Point, slope: f32, scratch: []f32) f32 {
 
 /// Where the film's edges show, 135's perforations repeat along the strip at their pitch. Columns
 /// that repeat like that are left out of the opening, along with everything outside them.
-fn leaveOutPerforations(gpa: std.mem.Allocator, view: View, opening: *Opening, lines: Range, pitch_px: f32) !void {
+fn leaveOutPerforations(gpa: std.mem.Allocator, view: View, opening: *Edges, lines: Range, pitch_px: f32) !void {
     const lag: usize = @intFromFloat(@round(pitch_px / opening.alongScale()));
     const half_lag = lag / 2;
     if (half_lag < 2 or lines.len() < 4 * lag) return;
@@ -732,7 +812,7 @@ const Profile = struct {
     /// The fraction of each line above the holder threshold.
     light: []f32,
 
-    fn measure(gpa: std.mem.Allocator, view: View, opening: Opening, threshold: u16) !Profile {
+    fn measure(gpa: std.mem.Allocator, view: View, opening: Edges, threshold: u16) !Profile {
         const median = try gpa.alloc(f32, view.along);
         errdefer gpa.free(median);
         const spread = try gpa.alloc(f32, view.along);
@@ -773,6 +853,19 @@ const Profile = struct {
         return .{ .median = median, .spread = spread, .light = light };
     }
 
+    /// Whether the opening shows film: enough of its lit lines have texture. Bare light, and
+    /// film with no pictures on it, are flat.
+    fn showsFilm(profile: Profile) bool {
+        var lit: usize = 0;
+        var textured: usize = 0;
+        for (profile.light, profile.spread) |light, spread| {
+            if (light < band_fraction) continue;
+            lit += 1;
+            if (spread >= flat_spread) textured += 1;
+        }
+        return @as(f32, @floatFromInt(textured)) >= min_film_lines * @as(f32, @floatFromInt(lit)) and textured > 0;
+    }
+
     fn deinit(profile: *Profile, gpa: std.mem.Allocator) void {
         gpa.free(profile.median);
         gpa.free(profile.spread);
@@ -784,7 +877,7 @@ const Profile = struct {
 /// What placing frames needs to know, in pixels.
 const Context = struct {
     view: View,
-    opening: Opening,
+    opening: Edges,
     threshold: u16,
     edge_threshold: u16,
     kind: Kind,
@@ -814,8 +907,11 @@ const Placed = struct {
     /// The strip's slope, dv/du, at this frame.
     slope: f32,
     confidence: Confidence,
+    /// The opening it's in.
+    opening: usize = 0,
 
     fn before(_: void, a: Placed, b: Placed) bool {
+        if (a.opening != b.opening) return a.opening < b.opening;
         return a.along < b.along;
     }
 
@@ -828,6 +924,7 @@ const Placed = struct {
         const y = clippedSpan(y_centre, y_size, height);
         return .{
             .index = 0,
+            .opening = placed.opening,
             .area = .{ .x = x.start, .y = y.start, .width = x.len(), .height = y.len() },
             .rotation_degrees = rotationDegrees(axis, placed.slope),
             .confidence = placed.confidence,
@@ -895,7 +992,7 @@ const Content = struct {
 
 /// Runs steps 3 to 5 for a strip.
 fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Profile, c: Context) !void {
-    const extent = filmExtent(profile.median, c.threshold) orelse return;
+    const extent = try leaveOutBareLight(gpa, profile, filmExtent(profile.median, c.threshold) orelse return, c);
     const level = try gapLevel(gpa, profile, extent, c);
     const scale = c.opening.alongScale();
 
@@ -967,6 +1064,55 @@ fn sideAt(density: []const f32, run: Run, end: End, extent: Range, depth: usize,
         },
     };
     return if (std.mem.max(f32, window) >= sharp_step) .sharp else .soft;
+}
+
+/// Leaves out the bare light at either end of `extent`, where the strip is shorter than the
+/// holder's opening: flat lines as light as the lightest one, up to the holder's soft edge. Light
+/// that isn't clearly lighter than the film is the film's own clear base, and stays.
+fn leaveOutBareLight(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !Range {
+    const medians = profile.median[extent.start..extent.end];
+    const spreads = profile.spread[extent.start..extent.end];
+    var lamp: f32 = 0;
+    for (medians, spreads) |m, spread| {
+        if (spread < flat_spread) lamp = @max(lamp, m);
+    }
+    if (lamp == 0) return extent;
+    const bare = struct {
+        fn at(m: f32, spread: f32, light: f32, tolerance: f32) bool {
+            return spread < flat_spread and std.math.log10(light / @max(m, level_floor)) < tolerance;
+        }
+    }.at;
+    const scale = c.opening.alongScale();
+    const soft: usize = @intFromFloat(@round(soft_edge_mm * c.px_per_mm / scale));
+    const shortest: usize = @intFromFloat(@max(@round(min_flat_mm * c.px_per_mm / scale), 1));
+
+    // From each end, past the holder's soft edge, then through the bare light.
+    var start: usize = 0;
+    const first = for (0..@min(soft, medians.len)) |i| {
+        if (bare(medians[i], spreads[i], lamp, c.gap_tolerance)) break i;
+    } else medians.len;
+    var i = first;
+    while (i < medians.len and bare(medians[i], spreads[i], lamp, c.gap_tolerance)) i += 1;
+    if (i - first >= shortest) start = i;
+
+    var end = medians.len;
+    const last = for (0..@min(soft, medians.len)) |k| {
+        const j = medians.len - 1 - k;
+        if (bare(medians[j], spreads[j], lamp, c.gap_tolerance)) break j + 1;
+    } else 0;
+    var j = last;
+    while (j > start and bare(medians[j - 1], spreads[j - 1], lamp, c.gap_tolerance)) j -= 1;
+    if (last >= j and last - j >= shortest) end = j;
+    if (start == 0 and end == medians.len) return extent;
+    if (end <= start) return extent;
+
+    // The film's lightest lines.
+    const sorted = try gpa.dupe(f32, medians[start..end]);
+    defer gpa.free(sorted);
+    std.mem.sortUnstable(f32, sorted, {}, std.sort.asc(f32));
+    const lightest = @max(quantile(f32, sorted, gap_quantile), level_floor);
+    if (std.math.log10(lamp / lightest) < min_base_density) return extent;
+    return .{ .start = extent.start + start, .end = extent.start + end };
 }
 
 /// The lines from the first to the last one that shows film rather than holder.
@@ -1487,6 +1633,113 @@ test "a frame cut off by the end of the scan is marked for checking" {
     var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
     defer detection.deinit(testing_gpa);
     try expectFrames(detection, strip, &.{ .confident, .confident, .check }, 0.3);
+}
+
+test "bare light past the end of a strip shorter than the opening" {
+    var frames: [strip_135_frames]synthetic.Frame = undefined;
+    var strip = synthetic.strip135(&frames);
+    // The film ends 1 mm after the last frame, then 40 mm of light before the holder.
+    strip.film_end_mm = strip.along_mm - synthetic.leader_135_mm + 1;
+    strip.bare_mm = 40;
+    strip.along_mm = strip.film_end_mm.? + strip.bare_mm + 5;
+    var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
+    defer detection.deinit(testing_gpa);
+    try expectFrames(detection, strip, &all_confident, 0.3);
+}
+
+test "a clear leader isn't bare light" {
+    var frames: [strip_135_frames]synthetic.Frame = undefined;
+    var strip = synthetic.strip135(&frames);
+    // 20 mm of unexposed film after the last frame.
+    strip.along_mm += 20;
+    strip.film_end_mm = strip.along_mm - 1;
+    var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
+    defer detection.deinit(testing_gpa);
+    try expectFrames(detection, strip, &all_confident, 0.3);
+}
+
+/// Renders `strips`, all running along y and as long as each other, side by side, the way a
+/// flatbed's holder lays out several openings. Returns the scan and each strip's left edge.
+fn sideBySide(strips: []const synthetic.Strip, lefts: []usize) !image.Scan {
+    var width: usize = 0;
+    for (strips, lefts) |strip, *left| {
+        left.* = width;
+        width += strip.size()[0];
+    }
+    const height = strips[0].size()[1];
+    var scan: image.Scan = try .init(testing_gpa, width, height);
+    errdefer scan.deinit(testing_gpa);
+    for (strips, lefts) |strip, left| {
+        var part = try strip.render(testing_gpa);
+        defer part.deinit(testing_gpa);
+        for (0..height) |y| @memcpy(scan.row(y)[left..][0..part.width], part.row(y));
+    }
+    return scan;
+}
+
+test "a holder with several openings: frames in each one with film" {
+    var frames: [strip_135_frames]synthetic.Frame = undefined;
+    const film = synthetic.strip135(&frames);
+    var short_frames: [4]synthetic.Frame = undefined;
+    var short = synthetic.strip135(&short_frames);
+    short.along_mm = film.along_mm;
+    short.film_end_mm = film.film_end_mm;
+    short.seed = 2;
+    // An opening with nothing in it shows bare light.
+    var empty = film;
+    empty.frames = &.{};
+    empty.base = empty.lamp;
+    empty.film_start_mm = 0;
+    empty.film_end_mm = null;
+    const strips = [_]synthetic.Strip{ film, empty, short, empty };
+    var lefts: [strips.len]usize = undefined;
+    var scan = try sideBySide(&strips, &lefts);
+    defer scan.deinit(testing_gpa);
+
+    var detection = try detect(testing_gpa, scan, film.dpi, formats.Standard.@"135_full_frame".format(), .negative, .{});
+    defer detection.deinit(testing_gpa);
+    try std.testing.expectEqual(Axis.y, detection.axis);
+    try std.testing.expectEqual(strips.len, detection.openings.len);
+    for (detection.openings, strips, lefts) |opening, strip, left| {
+        try std.testing.expectEqual(strip.frames.len > 0, opening.film);
+        try std.testing.expectApproxEqAbs(strip.opening_mm, opening.height_mm, 0.3);
+        const middle = @as(f32, @floatFromInt(left)) + @as(f32, @floatFromInt(strip.size()[0])) / 2;
+        try std.testing.expectApproxEqAbs(middle, opening.middle_px, 1.5);
+    }
+    // The first opening's frames, then the third's.
+    try std.testing.expectEqual(frames.len + short_frames.len, detection.frames.len);
+    const tolerance = 0.3 * film.dpi / formats.mm_per_inch;
+    for (detection.frames, 0..) |found, i| {
+        const in_first = i < frames.len;
+        const opening: usize = if (in_first) 0 else 2;
+        const expected = if (in_first) frames[i] else short_frames[i - frames.len];
+        try std.testing.expectEqual(i, found.index);
+        try std.testing.expectEqual(opening, found.opening);
+        try std.testing.expectEqual(Confidence.confident, found.confidence);
+        const want = strips[opening].centre(expected);
+        const got = areaCentre(found.area);
+        try std.testing.expectApproxEqAbs(want[0] + @as(f32, @floatFromInt(lefts[opening])), got[0], tolerance);
+        try std.testing.expectApproxEqAbs(want[1], got[1], tolerance);
+    }
+}
+
+test "a holder hole narrower than the film isn't an opening" {
+    var frames: [strip_135_frames]synthetic.Frame = undefined;
+    const film = synthetic.strip135(&frames);
+    var hole = film;
+    hole.frames = &.{};
+    hole.base = hole.lamp;
+    hole.opening_mm = 5;
+    hole.across_mm = 10;
+    const strips = [_]synthetic.Strip{ hole, film };
+    var lefts: [strips.len]usize = undefined;
+    var scan = try sideBySide(&strips, &lefts);
+    defer scan.deinit(testing_gpa);
+    var detection = try detect(testing_gpa, scan, film.dpi, formats.Standard.@"135_full_frame".format(), .negative, .{});
+    defer detection.deinit(testing_gpa);
+    try std.testing.expectEqual(1, detection.openings.len);
+    try std.testing.expectEqual(frames.len, detection.frames.len);
+    for (detection.frames) |f| try std.testing.expectEqual(0, f.opening);
 }
 
 test "a scan with no light band has no opening" {

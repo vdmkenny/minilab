@@ -98,7 +98,6 @@ pub fn Image(comptime Pixel: type) type {
             return result;
         }
 
-        /// Returns a copy of the part of the image inside `area`.
         /// Copies `area` out of the image. An area that reaches outside it, as a crop from a
         /// frame file edited by hand can, gives `error.CropOutsideImage`.
         pub fn crop(image: Self, gpa: std.mem.Allocator, area: Area) !Self {

@@ -442,6 +442,11 @@ fn refineCrop(gpa: std.mem.Allocator, whole: image.Scan, dpi: f32, planned: imag
             .height = @intFromFloat(@as(f32, @floatFromInt(frame.area.height)) * scale),
         };
         const centre = centreOf(area);
+        // A frame on a strip beside the planned one, in a holder with several openings, isn't it.
+        const across = if (refine.axis == .y) centre[0] else centre[1];
+        const near: f32 = @floatFromInt(if (refine.axis == .y) planned.x else planned.y);
+        const far = near + @as(f32, @floatFromInt(if (refine.axis == .y) planned.width else planned.height));
+        if (across < near or across > far) continue;
         const distance = @abs(if (refine.axis == .y) centre[1] - planned_centre[1] else centre[0] - planned_centre[0]);
         if (distance < best_distance) {
             best_distance = distance;

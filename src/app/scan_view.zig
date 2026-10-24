@@ -9,7 +9,8 @@
 //! 2. Preview: scan the scanner's whole film area at its lowest resolution of 300 dpi or more.
 //! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. By
 //!    default a frame takes the full height of the holder's opening, since holders hide the
-//!    film's edges.
+//!    film's edges. A holder can have several openings side by side, each with a strip of its
+//!    own, and the frames go in order of opening and then along each strip.
 //! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, and add, split
 //!    or delete them. Frames edited by hand are kept when frames are detected again.
 //! 5. Scan each frame at full resolution with a margin around it, on the scan thread
@@ -137,6 +138,10 @@ const baseline_share = 0.8;
 const slide_mount_rounding = 0.06;
 /// How much film base to draw beside the frames of film with no set width, in mm.
 const plain_film_margin_mm = 2;
+/// The most holder openings a preview keeps. Flatbed film holders have up to four rows of 35mm.
+const max_openings = 8;
+/// The space between strips of film drawn side by side, for a holder with several openings.
+const strip_gap_mm = 4;
 /// The smallest a drag can make a box, in preview pixels.
 const min_box_px = 8;
 
@@ -243,6 +248,8 @@ const Box = struct {
     check: ?Check = null,
     /// Edited by hand. It's kept when frames are detected again, and its crop isn't refined.
     hand: bool = false,
+    /// The holder opening it's in, in `Preview.openings`.
+    opening: u8 = 0,
 
     fn start(box: Box) f32 {
         return box.along - box.length / 2;
@@ -250,6 +257,12 @@ const Box = struct {
 
     fn end(box: Box) f32 {
         return box.along + box.length / 2;
+    }
+
+    /// Whether `a` comes before `b`: the openings in order across the preview, and along each one.
+    fn before(a: Box, b: Box) bool {
+        if (a.opening != b.opening) return a.opening < b.opening;
+        return a.along < b.along;
     }
 
     /// How much of the box's length and height the crop keeps.
@@ -276,6 +289,14 @@ const Box = struct {
     }
 };
 
+/// One of the holder's openings, across the strip in preview pixels.
+const Opening = struct {
+    height: f32,
+    middle: f32,
+    /// Whether there's film in it.
+    film: bool = true,
+};
+
 /// The preview, and what detection found on it.
 const Preview = struct {
     scan: image.Scan,
@@ -283,10 +304,9 @@ const Preview = struct {
     /// The area it covers on the scanner, in mm.
     area: scan.Area,
     axis: frames.Axis,
-    /// The holder opening's size across the strip, and its middle, in preview pixels. Null until
-    /// detection has found it.
-    opening: ?f32 = null,
-    opening_middle: ?f32 = null,
+    /// The holder's openings, in order across the strip. Empty until detection has found them.
+    /// The preview owns them.
+    openings: []const Opening = &.{},
     /// Whether frames have been detected on it, so a preview saved earlier only gets detected
     /// once.
     detected: bool = false,
@@ -297,6 +317,7 @@ const Preview = struct {
 
     fn deinit(preview: *Preview, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         preview.scan.deinit(gpa);
+        gpa.free(preview.openings);
         if (preview.texture) |*t| t.release(gpu);
         preview.* = undefined;
     }
@@ -323,6 +344,50 @@ const Preview = struct {
     /// Preview pixels per mm across the strip.
     fn acrossPerMm(preview: Preview) f32 {
         return preview.pxPerMm()[if (preview.axis == .y) 0 else 1];
+    }
+
+    /// Opening `index`, if detection found it.
+    fn opening(preview: Preview, index: u8) ?Opening {
+        return if (index < preview.openings.len) preview.openings[index] else null;
+    }
+
+    /// The first opening with film in it, which a new frame goes in.
+    fn firstFilm(preview: Preview) u8 {
+        for (preview.openings, 0..) |o, i| if (o.film) return @intCast(i);
+        return 0;
+    }
+
+    /// How far across the strip a scan of a frame in opening `index` reaches: halfway to the
+    /// openings on either side, or to the edge of the preview. In preview pixels.
+    fn lane(preview: Preview, index: u8) [2]f32 {
+        var near: f32 = 0;
+        var far = preview.acrossSize();
+        const own = preview.opening(index) orelse return .{ near, far };
+        if (index > 0) {
+            const previous = preview.openings[index - 1];
+            near = (previous.middle + previous.height / 2 + own.middle - own.height / 2) / 2;
+        }
+        if (index + 1 < preview.openings.len) {
+            const next = preview.openings[index + 1];
+            far = (own.middle + own.height / 2 + next.middle - next.height / 2) / 2;
+        }
+        return .{ near, far };
+    }
+
+    /// Where to measure the film's base: the first opening with film, in a holder with several,
+    /// so the bare light of the empty ones doesn't pass for the clearest film. Null with one
+    /// opening, where the whole preview does.
+    fn filmArea(preview: Preview) ?image.Area {
+        if (preview.openings.len < 2) return null;
+        const o = preview.openings[preview.firstFilm()];
+        if (!o.film) return null;
+        const r = preview.rect(.{ .along = preview.alongSize() / 2, .across = o.middle, .length = preview.alongSize(), .height = o.height });
+        const x0: usize = @intFromFloat(std.math.clamp(@round(r[0]), 0, @as(f32, @floatFromInt(preview.scan.width))));
+        const y0: usize = @intFromFloat(std.math.clamp(@round(r[1]), 0, @as(f32, @floatFromInt(preview.scan.height))));
+        const x1: usize = @intFromFloat(std.math.clamp(@round(r[2]), @as(f32, @floatFromInt(x0)), @as(f32, @floatFromInt(preview.scan.width))));
+        const y1: usize = @intFromFloat(std.math.clamp(@round(r[3]), @as(f32, @floatFromInt(y0)), @as(f32, @floatFromInt(preview.scan.height))));
+        if (x1 == x0 or y1 == y0) return null;
+        return .{ .x = x0, .y = y0, .width = x1 - x0, .height = y1 - y0 };
     }
 
     /// Converts a box in strip coordinates to an image rectangle: x0, y0, x1, y1.
@@ -373,6 +438,8 @@ const Saved = struct {
     dpi: [2]f32,
     area: scan.Area,
     axis: frames.Axis,
+    openings: []const Opening = &.{},
+    /// The one opening of previews saved before holders could have several.
     opening: ?f32 = null,
     opening_middle: ?f32 = null,
     detected: bool = false,
@@ -1182,8 +1249,14 @@ fn listedResolutions(state: *const State) []const u32 {
 /// How big each frame's scan will be at the chosen resolution.
 fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []const u8 {
     const dpi: f32 = @floatFromInt(state.dpi);
-    // Across the film it's the whole film area, and along it the frame plus its margins.
-    const across_mm = if (state.capabilities) |caps| caps.area.width else if (state.preview) |p| p.area.width else default_film_area.width;
+    // Across the film it's the whole film area, or the frame's lane in a holder with several
+    // openings, and along it the frame plus its margins.
+    var across_mm = if (state.capabilities) |caps| caps.area.width else if (state.preview) |p| p.area.width else default_film_area.width;
+    if (state.preview) |p| if (p.openings.len > 1) {
+        const opening = if (selectedBox(state)) |box| box.opening else p.firstFilm();
+        const lane = p.lane(opening);
+        across_mm = (lane[1] - lane[0]) / p.acrossPerMm();
+    };
     var estimate = true;
     var along_mm: f32 = formats.Standard.default.format().width_mm;
     if (roll_index) |r| along_mm = ctx.library.rolls.items[r].info.format.format().width_mm;
@@ -1293,15 +1366,17 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     // Mounted slides are drawn in their mounts instead.
     const as_film = if (state.preview) |p| state.boxes.items.len > 0 and p.texture != null else false;
     const mounted = state.holder() == .mounted;
+    // One strip of film for each opening with frames, side by side.
+    const strips: Strips = .of(state.boxes.items);
     const across_mm: f32 = if (mounted) formats.slide_mount_mm else if (as_film) filmWidthMm(state, &state.preview.?, film) else area.width;
-    const film_mm = if (as_film) gui.vec2(across_mm, state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
+    const film_mm = if (as_film) gui.vec2(strips.widthMm(across_mm), state.preview.?.alongSize() / state.preview.?.alongPerMm()) else gui.vec2(area.width, area.height);
     const shown = gui.vec2(@round(room * film_mm.x / film_mm.y), @round(room));
     const corner = gui.vec2(x, y);
     const far = gui.vec2(x + shown.x, y + shown.y);
 
     if (state.preview) |*p| {
         if (as_film) {
-            const map: StripMap = .film(p, corner, shown, film_mm.x);
+            const map: StripMap = .film(p, corner, shown, across_mm, strips);
             if (mounted) drawMounts(state, p, map, list) else drawFilm(state, p, map, film, list);
             drawBoxesOnStrip(state, p, map, list);
         } else if (p.texture) |t| c.ImDrawList_AddImage(list, t.ref(), corner, far) else c.ImDrawList_AddRectFilled(list, corner, far, theme.imU32(theme.header));
@@ -1325,28 +1400,74 @@ fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, heigh
     return @max(shown.x, mm_width);
 }
 
-/// Where a frame on the preview goes when the strip is drawn as film. Along the strip maps to
-/// along the column, and across the strip is centred, at the film's own scale.
+/// The openings that have frames, in order across the preview. Each one is drawn as a strip of
+/// film, side by side.
+const Strips = struct {
+    openings: [max_openings]u8 = undefined,
+    len: usize = 0,
+
+    fn of(boxes: []const Box) Strips {
+        var strips: Strips = .{};
+        for (boxes) |box| {
+            if (strips.len == max_openings) break;
+            if (std.mem.indexOfScalar(u8, strips.openings[0..strips.len], box.opening) != null) continue;
+            strips.openings[strips.len] = box.opening;
+            strips.len += 1;
+        }
+        if (strips.len == 0) {
+            strips.openings[0] = 0;
+            strips.len = 1;
+        }
+        std.mem.sortUnstable(u8, strips.openings[0..strips.len], {}, std.sort.asc(u8));
+        return strips;
+    }
+
+    /// Where opening `opening` is drawn, counting strips from the left.
+    fn slot(strips: Strips, opening: u8) usize {
+        return std.mem.indexOfScalar(u8, strips.openings[0..strips.len], opening) orelse strips.len - 1;
+    }
+
+    /// Their width side by side, for film `film_width_mm` wide.
+    fn widthMm(strips: Strips, film_width_mm: f32) f32 {
+        const count: f32 = @floatFromInt(strips.len);
+        return count * film_width_mm + (count - 1) * strip_gap_mm;
+    }
+};
+
+/// Where a frame on the preview goes when the strips are drawn as film. Along a strip maps to
+/// along the column, and across it the frame is centred on its strip, at the film's own scale.
 const StripMap = struct {
     corner: gui.Vec2,
     shown: gui.Vec2,
     /// Screen pixels per preview pixel, along and across the strip.
     along: f32,
     across: f32,
+    strips: Strips,
+    /// A strip's width on the screen, and the distance from one strip's left edge to the next.
+    strip_width: f32,
+    strip_pitch: f32,
 
-    fn film(preview: *const Preview, corner: gui.Vec2, shown: gui.Vec2, film_width_mm: f32) StripMap {
-        const across_per_mm = shown.x / film_width_mm;
+    fn film(preview: *const Preview, corner: gui.Vec2, shown: gui.Vec2, film_width_mm: f32, strips: Strips) StripMap {
+        const across_per_mm = shown.x / strips.widthMm(film_width_mm);
         return .{
             .corner = corner,
             .shown = shown,
             .along = shown.y / preview.alongSize(),
             .across = across_per_mm / preview.acrossPerMm(),
+            .strips = strips,
+            .strip_width = film_width_mm * across_per_mm,
+            .strip_pitch = (film_width_mm + strip_gap_mm) * across_per_mm,
         };
+    }
+
+    /// The left edge of the strip that opening `opening` is drawn as.
+    fn left(map: StripMap, opening: u8) f32 {
+        return map.corner.x + @as(f32, @floatFromInt(map.strips.slot(opening))) * map.strip_pitch;
     }
 
     /// The box's rectangle on the screen, as its top-left and bottom-right corners.
     fn rect(map: StripMap, box: Box) [2]gui.Vec2 {
-        const middle = map.corner.x + map.shown.x / 2;
+        const middle = map.left(box.opening) + map.strip_width / 2;
         const half = box.height * map.across / 2;
         const top = map.corner.y + box.start() * map.along;
         return .{ gui.vec2(middle - half, top), gui.vec2(middle + half, top + box.length * map.along) };
@@ -1367,32 +1488,42 @@ fn filmWidthMm(state: *const State, preview: *const Preview, film: formats.FilmS
 fn drawMounts(state: *const State, preview: *const Preview, map: StripMap, list: *c.ImDrawList) void {
     const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
     c.ImDrawList_AddRectFilled(list, map.corner, far, theme.imU32(theme.film));
-    const side = map.shown.x;
+    const side = map.strip_width;
     for (state.boxes.items) |box| {
         const middle = map.corner.y + box.along * map.along;
         const top = std.math.clamp(middle - side / 2, map.corner.y, far.y);
         const bottom = std.math.clamp(middle + side / 2, map.corner.y, far.y);
-        if (bottom > top) c.ImDrawList_AddRectFilledEx(list, gui.vec2(map.corner.x, top), gui.vec2(far.x, bottom), theme.imU32(theme.slide_mount), side * slide_mount_rounding, 0);
+        const left = map.left(box.opening);
+        if (bottom > top) c.ImDrawList_AddRectFilledEx(list, gui.vec2(left, top), gui.vec2(left + side, bottom), theme.imU32(theme.slide_mount), side * slide_mount_rounding, 0);
     }
     drawPictures(state, preview, map, list);
 }
 
-/// Draws the film as it looks on a light table: the base in its own colour, the film's holes if it
-/// has any (rows along both edges, or a few per frame), and each frame's picture straight and
-/// centred.
+/// Draws the film as it looks on a light table: each strip's base in its own colour, the film's
+/// holes if it has any (rows along both edges, or a few per frame), and each frame's picture
+/// straight and centred.
 fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, film: formats.FilmSize, list: *c.ImDrawList) void {
-    const far = gui.vec2(map.corner.x + map.shown.x, map.corner.y + map.shown.y);
+    const bottom = map.corner.y + map.shown.y;
     const base = preview.base_colour orelse theme.rgba8(theme.raised);
-    c.ImDrawList_AddRectFilled(list, map.corner, far, c.IM_COL32(base[0], base[1], base[2], base[3]));
-
     const per_mm = map.along * preview.alongPerMm();
-    const across_per_mm = map.shown.x / filmWidthMm(state, preview, film);
-    const strip: holes.Strip = .{ .axis = .y, .start = map.corner.y, .end = far.y, .near = map.corner.x, .far = far.x, .along_per_mm = per_mm, .across_per_mm = across_per_mm };
-    switch (film.holes()) {
-        .none => {},
-        // In step with the first frame.
-        .rows => |p| if (state.boxes.items.len > 0) holes.rows(list, strip, p, map.corner.y + state.boxes.items[0].start() * map.along, theme.viewer),
-        .per_frame => |count| for (state.boxes.items) |box| holes.atFrame(list, strip, count, map.corner.y + box.start() * map.along, theme.viewer),
+    const across_per_mm = map.strip_width / filmWidthMm(state, preview, film);
+    for (map.strips.openings[0..map.strips.len]) |opening| {
+        const left = map.left(opening);
+        const right = left + map.strip_width;
+        c.ImDrawList_AddRectFilled(list, gui.vec2(left, map.corner.y), gui.vec2(right, bottom), c.IM_COL32(base[0], base[1], base[2], base[3]));
+        const strip: holes.Strip = .{ .axis = .y, .start = map.corner.y, .end = bottom, .near = left, .far = right, .along_per_mm = per_mm, .across_per_mm = across_per_mm };
+        switch (film.holes()) {
+            .none => {},
+            // In step with the strip's first frame.
+            .rows => |p| for (state.boxes.items) |box| {
+                if (box.opening != opening) continue;
+                holes.rows(list, strip, p, map.corner.y + box.start() * map.along, theme.viewer);
+                break;
+            },
+            .per_frame => |count| for (state.boxes.items) |box| {
+                if (box.opening == opening) holes.atFrame(list, strip, count, map.corner.y + box.start() * map.along, theme.viewer);
+            },
+        }
     }
     drawPictures(state, preview, map, list);
 }
@@ -1597,7 +1728,7 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + total), theme.imU32(theme.page), gui.px(frame_view_rounding), 0);
 
     // The region to show: the frame plus a little past each end, and the whole opening across.
-    const across = @max(box.height, preview.opening orelse box.height);
+    const across = @max(box.height, if (preview.opening(box.opening)) |o| o.height else box.height);
     const along = box.length * (1 + 2 * view_overhang);
     const scale = @min(view_height / across, (width - 2 * pad) / along);
     const shown = gui.vec2(along * scale, across * scale);
@@ -1729,10 +1860,10 @@ fn markEdited(state: *State, box: *Box) void {
 /// Makes a box match its shape: the opening's height if it's full height, and the length from the
 /// ratio.
 fn reshape(box: *Box, preview: *const Preview, format: formats.Format) void {
-    if (box.full_height) {
-        if (preview.opening) |opening| box.height = opening;
-        if (preview.opening_middle) |middle| box.across = middle;
-    }
+    if (box.full_height) if (preview.opening(box.opening)) |o| {
+        box.height = o.height;
+        box.across = o.middle;
+    };
     switch (box.shape) {
         .roll => box.length = box.height * format.ratio(),
         .custom => box.length = box.height * box.ratio,
@@ -1761,23 +1892,29 @@ fn drawCheckNote(state: *const State, preview: *const Preview, index: usize, lis
     return height;
 }
 
-/// Explains why a weak frame sits where it does: the pitch of the confident frames around it.
+/// Explains why a weak frame sits where it does: the pitch of the confident frames around it on
+/// its strip.
 fn pitchNote(state: *const State, preview: *const Preview, index: usize) []const u8 {
     const boxes = state.boxes.items;
+    const opening = boxes[index].opening;
     var before: ?usize = null;
     var i = index;
     while (i > 0) {
         i -= 1;
+        if (boxes[i].opening != opening) break;
         if (boxes[i].check == null) {
             before = i;
             break;
         }
     }
     var after: ?usize = null;
-    for (boxes[index + 1 ..], index + 1..) |b, j| if (b.check == null) {
-        after = j;
-        break;
-    };
+    for (boxes[index + 1 ..], index + 1..) |b, j| {
+        if (b.opening != opening) break;
+        if (b.check == null) {
+            after = j;
+            break;
+        }
+    }
     if (before == null and after == null) return "Check · faint edges, placed from the format's pitch";
     const a = before orelse return "Check · faint edges, placed from the next frames' pitch";
     const b = after orelse return "Check · faint edges, placed from the previous frames' pitch";
@@ -1788,13 +1925,16 @@ fn pitchNote(state: *const State, preview: *const Preview, index: usize) []const
 fn addFrame(state: *State, gpa: std.mem.Allocator, preview: *const Preview, format: formats.Format) void {
     const per_mm = preview.alongPerMm();
     const across_per_mm = preview.acrossPerMm();
-    const height = preview.opening orelse format.height_mm * across_per_mm;
+    const opening = preview.firstFilm();
+    const found = preview.opening(opening);
+    const height = if (found) |o| o.height else format.height_mm * across_per_mm;
     var box: Box = .{
         .along = preview.alongSize() / 2,
-        .across = preview.opening_middle orelse preview.acrossSize() / 2,
+        .across = if (found) |o| o.middle else preview.acrossSize() / 2,
         .length = height * format.ratio(),
         .height = height,
         .hand = true,
+        .opening = opening,
     };
     const pitch = (format.pitch_mm orelse format.width_mm + format.gapMm()) * per_mm;
     if (selectedBox(state)) |selected| {
@@ -1830,15 +1970,15 @@ fn deleteFrame(state: *State, index: usize) void {
     state.boxes_dirty = true;
 }
 
-/// Puts the boxes back in order along the strip, keeping the same box selected. The queue scans
-/// the frames, and the roll numbers them, in this order.
+/// Puts the boxes back in order, by opening and then along the strip, keeping the same box
+/// selected. The queue scans the frames, and the roll numbers them, in this order.
 fn sortBoxes(state: *State) void {
     const boxes = state.boxes.items;
     if (boxes.len < 2) return;
     // Insertion sort: the boxes are few, and nearly always in order already.
     for (1..boxes.len) |i| {
         var j = i;
-        while (j > 0 and boxes[j - 1].along > boxes[j].along) : (j -= 1) {
+        while (j > 0 and boxes[j].before(boxes[j - 1])) : (j -= 1) {
             std.mem.swap(Box, &boxes[j - 1], &boxes[j]);
             if (state.selected) |s| {
                 if (s == j) state.selected = j - 1 else if (s == j - 1) state.selected = j;
@@ -1848,10 +1988,10 @@ fn sortBoxes(state: *State) void {
     }
 }
 
-/// Adds `box` in its place along the strip, and selects it.
+/// Adds `box` in its place, and selects it.
 fn insertBox(state: *State, gpa: std.mem.Allocator, box: Box) void {
     var at: usize = 0;
-    while (at < state.boxes.items.len and state.boxes.items[at].along < box.along) at += 1;
+    while (at < state.boxes.items.len and state.boxes.items[at].before(box)) at += 1;
     state.boxes.insert(gpa, at, box) catch return;
     state.selected = at;
     state.boxes_dirty = true;
@@ -1873,18 +2013,28 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
         return;
     };
     defer detection.deinit(ctx.gpa);
+    const count = @min(detection.openings.len, max_openings);
+    const openings = ctx.gpa.alloc(Opening, count) catch {
+        state.detect_note = "Detection out of memory";
+        keepHandBoxes(state);
+        return;
+    };
     preview.axis = detection.axis;
     preview.detected = true;
-    const across_per_mm = preview.acrossPerMm();
-    preview.opening = detection.opening_mm * across_per_mm;
 
     keepHandBoxes(state);
-    var middle_sum: f32 = 0;
+    // Each opening's middle is the middle of its frames, or where detection found it when it
+    // has none.
+    var middle_sums: [max_openings]f32 = @splat(0);
+    var frame_counts: [max_openings]usize = @splat(0);
     var added: usize = 0;
     for (detection.frames) |frame| {
+        if (frame.opening >= count) continue;
         var box = boxOf(frame, preview.*, format);
-        middle_sum += box.across;
+        middle_sums[frame.opening] += box.across;
+        frame_counts[frame.opening] += 1;
         for (state.boxes.items) |hand| {
+            if (hand.opening != box.opening) continue;
             const overlap = @min(hand.end(), box.end()) - @max(hand.start(), box.start());
             if (overlap > same_frame_overlap * @min(hand.length, box.length)) break;
         } else {
@@ -1893,11 +2043,26 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
             added += 1;
         }
     }
-    if (detection.frames.len > 0) preview.opening_middle = middle_sum / @as(f32, @floatFromInt(detection.frames.len));
+    const across_per_mm = preview.acrossPerMm();
+    for (openings, detection.openings[0..count], middle_sums[0..count], frame_counts[0..count]) |*o, found, sum, frame_count| {
+        o.* = .{
+            .height = found.height_mm * across_per_mm,
+            .middle = if (frame_count > 0) sum / @as(f32, @floatFromInt(frame_count)) else found.middle_px,
+            .film = found.film,
+        };
+    }
+    ctx.gpa.free(preview.openings);
+    preview.openings = openings;
+    // With several openings, the film's base is measured on the film, now detection has found it.
+    if (preview.openings.len > 1) if (preview.texture) |*t| {
+        t.release(ctx.gpu);
+        preview.texture = null;
+        uploadPreview(state, ctx);
+    };
     state.detect_note = if (detection.frames.len == 0) "No frames found" else null;
     state.selected = if (state.boxes.items.len > 0) 0 else null;
     state.boxes_dirty = true;
-    std.log.debug("detected {d} frames, {d} kept from hand edits; strip along {t}, opening {d:.1} mm", .{ detection.frames.len, state.boxes.items.len - added, detection.axis, detection.opening_mm });
+    std.log.debug("detected {d} frames in {d} openings, {d} kept from hand edits; strip along {t}, opening {d:.1} mm", .{ detection.frames.len, count, state.boxes.items.len - added, detection.axis, detection.opening_mm });
 }
 
 fn keepHandBoxes(state: *State) void {
@@ -1925,6 +2090,7 @@ fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format) Box {
         .height = if (vertical) w else h,
         .rotation = frame.rotation_degrees,
         .detected_rotation = frame.rotation_degrees,
+        .opening = @intCast(frame.opening),
     };
     if (@abs(box.length - box.height * format.ratio()) > ratio_tolerance * box.length) box.shape = .free;
     if (frame.confidence == .check) {
@@ -1946,12 +2112,14 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
     for (state.boxes.items, jobs, 0..) |box, *job, i| {
         const crop = preview.toScanner(preview.rect(box.crop()));
         // Along the strip, scan the crop plus the margin on each side. Across it, scan the whole
-        // film area, so the holder's edges show up for finding the frame again.
+        // film area, so the holder's edges show up for finding the frame again. With several
+        // openings, that's the frame's own and the holder halfway to the next ones.
         const margin = state.margin_mm;
+        const across = if (preview.openings.len > 1) preview.toScanner(preview.rect(laneBox(preview, box))) else caps.area;
         var area: scan.Area = if (preview.axis == .y)
-            .{ .x = caps.area.x, .y = crop.y - margin, .width = caps.area.width, .height = crop.height + 2 * margin }
+            .{ .x = across.x, .y = crop.y - margin, .width = across.width, .height = crop.height + 2 * margin }
         else
-            .{ .x = crop.x - margin, .y = caps.area.y, .width = crop.width + 2 * margin, .height = caps.area.height };
+            .{ .x = crop.x - margin, .y = across.y, .width = crop.width + 2 * margin, .height = across.height };
         area = area.clip(caps.area) orelse caps.area;
         job.* = .{
             .index = i,
@@ -1975,6 +2143,15 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         return;
     };
     state.scanning = true;
+}
+
+/// `box` stretched across to the lane of its opening.
+fn laneBox(preview: Preview, box: Box) Box {
+    const lane = preview.lane(box.opening);
+    var out = box;
+    out.across = (lane[0] + lane[1]) / 2;
+    out.height = lane[1] - lane[0];
+    return out;
 }
 
 // The queue, on the right.
@@ -2171,10 +2348,13 @@ fn uploadPreview(state: *State, ctx: context.Context) void {
     if (preview.texture != null) return;
     const pixels = ctx.gpa.alloc([4]u8, preview.scan.pixels.len) catch return;
     defer ctx.gpa.free(pixels);
-    const gain = minilab.light_table.gainForScan(preview.scan);
+    var film = if (preview.filmArea()) |area| preview.scan.crop(ctx.gpa, area) catch null else null;
+    defer if (film) |*f| f.deinit(ctx.gpa);
+    const measured = film orelse preview.scan;
+    const gain = minilab.light_table.gainForScan(measured);
     minilab.light_table.toScreen(preview.scan.pixels, gain, pixels);
     preview.texture = Texture.upload(ctx.gpu, @intCast(preview.scan.width), @intCast(preview.scan.height), pixels) catch null;
-    preview.base_colour = if (minilab.light_table.baseOfScan(preview.scan)) |base| colour: {
+    preview.base_colour = if (minilab.light_table.baseOfScan(measured)) |base| colour: {
         var raw: [1][3]u16 = undefined;
         for (&raw[0], base) |*r, b| r.* = @intFromFloat(@round(b * image.full_scale));
         var shown: [1][4]u8 = undefined;
@@ -2206,13 +2386,12 @@ fn savePreviewSettings(state: *State, ctx: context.Context) void {
         .dpi = preview.dpi,
         .area = preview.area,
         .axis = preview.axis,
-        .opening = preview.opening,
-        .opening_middle = preview.opening_middle,
+        .openings = preview.openings,
         .detected = preview.detected,
         .holder = state.holder_choice,
         .boxes = state.boxes.items,
     };
-    const bytes = std.json.Stringify.valueAlloc(ctx.gpa, saved, .{ .whitespace = .indent_2 }) catch return;
+    const bytes = std.json.Stringify.valueAlloc(ctx.gpa, saved, .{ .whitespace = .indent_2, .emit_null_optional_fields = false }) catch return;
     defer ctx.gpa.free(bytes);
     std.Io.Dir.cwd().writeFile(ctx.io, .{ .sub_path = path, .data = bytes }) catch |err| std.log.err("can't save the frames: {t}", .{err});
 }
@@ -2228,17 +2407,18 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
     defer gpa.free(json);
     const parsed = try std.json.parseFromSlice(Saved, gpa, json, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
+    const saved = parsed.value;
+    const openings = try savedOpenings(gpa, saved);
+    errdefer gpa.free(openings);
     const bytes = try cwd.readFileAlloc(ctx.io, image_path, gpa, .limited(max_preview_bytes));
     defer gpa.free(bytes);
     const picture = try minilab.pnm.read(gpa, bytes);
-    const saved = parsed.value;
     state.preview = .{
         .scan = picture,
         .dpi = saved.dpi,
         .area = saved.area,
         .axis = saved.axis,
-        .opening = saved.opening,
-        .opening_middle = saved.opening_middle,
+        .openings = openings,
         .detected = saved.detected,
     };
     state.holder_choice = saved.holder;
@@ -2249,6 +2429,15 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
         detect(state, ctx, roll_index);
         savePreviewSettings(state, ctx);
     }
+}
+
+/// The openings a saved preview holds. Previews saved before holders could have several openings
+/// have the one, when detection found frames on them.
+fn savedOpenings(gpa: std.mem.Allocator, saved: Saved) ![]const Opening {
+    if (saved.openings.len > 0) return gpa.dupe(Opening, saved.openings[0..@min(saved.openings.len, max_openings)]);
+    const height = saved.opening orelse return &.{};
+    const middle = saved.opening_middle orelse return &.{};
+    return gpa.dupe(Opening, &.{.{ .height = height, .middle = middle }});
 }
 
 // Drawing helpers.
@@ -2424,8 +2613,7 @@ const test_preview: Preview = .{
     .dpi = .{ 300, 300 },
     .area = default_film_area,
     .axis = .y,
-    .opening = 300,
-    .opening_middle = 195,
+    .openings = &.{.{ .height = 300, .middle = 195 }},
 };
 
 test "a box takes the opening's height and its shape's length" {
@@ -2500,6 +2688,69 @@ test "a frame placed from its neighbours says which ones" {
     try std.testing.expectEqualStrings("Check · faint edges, placed from the 38 mm pitch of frames 1 and 3", pitchNote(&state, &test_preview, 1));
     state.boxes.items[0].check = .pitch;
     try std.testing.expectEqualStrings("Check · faint edges, placed from the next frames' pitch", pitchNote(&state, &test_preview, 1));
+}
+
+test "boxes go in order of opening, then along the strip" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    for ([_]u8{ 1, 0, 1, 0 }, [_]f32{ 10, 30, 40, 20 }) |opening, along| {
+        try state.boxes.append(gpa, .{ .along = along, .across = 0, .length = 5, .height = 5, .opening = opening });
+    }
+    state.selected = 0;
+    sortBoxes(&state);
+    for (state.boxes.items, [_]u8{ 0, 0, 1, 1 }, [_]f32{ 20, 30, 10, 40 }) |box, opening, along| {
+        try std.testing.expectEqual(opening, box.opening);
+        try std.testing.expectEqual(along, box.along);
+    }
+    try std.testing.expectEqual(@as(?usize, 2), state.selected);
+    // A new frame goes after the frames of the openings before its own.
+    insertBox(&state, gpa, .{ .along = 5, .across = 0, .length = 5, .height = 5, .opening = 1 });
+    try std.testing.expectEqual(@as(?usize, 2), state.selected);
+}
+
+test "each opening with frames is drawn as a strip, in order across" {
+    const boxes = [_]Box{
+        .{ .along = 10, .across = 0, .length = 5, .height = 5, .opening = 2 },
+        .{ .along = 20, .across = 0, .length = 5, .height = 5, .opening = 0 },
+        .{ .along = 30, .across = 0, .length = 5, .height = 5, .opening = 2 },
+    };
+    const strips: Strips = .of(&boxes);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 2 }, strips.openings[0..strips.len]);
+    try std.testing.expectEqual(@as(usize, 1), strips.slot(2));
+    try std.testing.expectApproxEqAbs(@as(f32, 2 * 35 + strip_gap_mm), strips.widthMm(35), 1e-4);
+    const none: Strips = .of(&.{});
+    try std.testing.expectEqual(@as(usize, 1), none.len);
+}
+
+test "a frame scan in a holder with several openings covers its own lane" {
+    var preview = test_preview;
+    preview.scan.width = 1400;
+    preview.openings = &.{
+        .{ .height = 300, .middle = 200, .film = false },
+        .{ .height = 300, .middle = 650 },
+        .{ .height = 300, .middle = 1100 },
+    };
+    // Out to halfway across the holder between the openings: from 350 to 500, and 800 to 950.
+    try std.testing.expectEqual([2]f32{ 0, 425 }, preview.lane(0));
+    try std.testing.expectEqual([2]f32{ 425, 875 }, preview.lane(1));
+    try std.testing.expectEqual([2]f32{ 875, 1400 }, preview.lane(2));
+    try std.testing.expectEqual(@as(u8, 1), preview.firstFilm());
+    const box = laneBox(preview, .{ .along = 500, .across = 1100, .length = 450, .height = 300, .opening = 2 });
+    try std.testing.expectEqual(@as(f32, 875), box.across - box.height / 2);
+    try std.testing.expectEqual(@as(f32, 1400), box.across + box.height / 2);
+    try std.testing.expectEqual(@as(f32, 500), box.along);
+}
+
+test "a preview saved before several openings keeps its one" {
+    const gpa = std.testing.allocator;
+    const old: Saved = .{ .dpi = .{ 300, 300 }, .area = default_film_area, .axis = .y, .opening = 300, .opening_middle = 195 };
+    const openings = try savedOpenings(gpa, old);
+    defer gpa.free(openings);
+    try std.testing.expectEqual(@as(usize, 1), openings.len);
+    try std.testing.expectEqual(@as(f32, 195), openings[0].middle);
+    const none = try savedOpenings(gpa, .{ .dpi = .{ 300, 300 }, .area = default_film_area, .axis = .y });
+    try std.testing.expectEqual(@as(usize, 0), none.len);
 }
 
 test "detecting again keeps only the boxes edited by hand" {
