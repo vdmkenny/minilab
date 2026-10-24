@@ -63,6 +63,8 @@ pub const FrameJob = struct {
         kind: frames.Kind,
         axis: frames.Axis,
         holder: frames.Holder = .strip,
+        /// How the crop fits the frame's picture.
+        fit: frames.Fit = .format,
         /// How much to take off each side of the detected frame, as a share of its size.
         inset: f32,
     };
@@ -509,11 +511,12 @@ fn refineCrop(gpa: std.mem.Allocator, whole: image.Scan, dpi: f32, planned: imag
     var best_distance = refine_reach * length;
     for (detection.frames) |frame| {
         if (frame.confidence != .confident) continue;
+        const crop = refine.fit.crop(frame, refine.axis, refine.format.ratio());
         const area: image.Area = .{
-            .x = @intFromFloat(@as(f32, @floatFromInt(frame.area.x)) * scale),
-            .y = @intFromFloat(@as(f32, @floatFromInt(frame.area.y)) * scale),
-            .width = @intFromFloat(@as(f32, @floatFromInt(frame.area.width)) * scale),
-            .height = @intFromFloat(@as(f32, @floatFromInt(frame.area.height)) * scale),
+            .x = @intFromFloat(@as(f32, @floatFromInt(crop.x)) * scale),
+            .y = @intFromFloat(@as(f32, @floatFromInt(crop.y)) * scale),
+            .width = @intFromFloat(@as(f32, @floatFromInt(crop.width)) * scale),
+            .height = @intFromFloat(@as(f32, @floatFromInt(crop.height)) * scale),
         };
         const centre = centreOf(area);
         // A frame on a strip beside the planned one, in a holder with several openings, isn't it.

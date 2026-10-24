@@ -310,9 +310,12 @@ The pitch is the distance from one frame to the next. The V200's 33.02 mm window
 film (135 and 126), and narrower film (110 at 16 mm, APS at 24 mm, Minox at 9.2 mm) if a holder
 keeps it flat. 120 and anything wider needs another scanner or a camera.
 
-Film holders usually cover the edges of the film, so the scan doesn't show the rebate across the
-strip. So by default a frame gets the full height of the holder's opening, and only the gaps
-between frames decide where it starts and ends.
+Film holders usually cover the edges of the film, but a little clear film beside the picture
+still shows. So detection measures each picture: along the strip between the gaps either side of
+it, and across from where the exposure starts. Scan's Frame detection menu then fits each frame
+to its picture. Preserve aspect ratio puts the biggest box of the format's ratio inside it, and
+Detect full frame takes the picture's own edges, so frames that aren't quite the format's size
+need no cropping by hand.
 
 Detection on a strip preview works like this for negatives (`src/frames/detect.zig`):
 
@@ -332,10 +335,14 @@ Detection on a strip preview works like this for negatives (`src/frames/detect.z
    picture between gaps has two ends. An end is sharp when the density
    steps up within half a millimetre, soft when it doesn't, or cut off by the end of the film or
    the scan.
-4. **Snap to the roll's format.** Each frame gets the opening's full height, and its length comes
-   from the format's ratio, centred between its gaps. If the measured length is far from that,
-   the frame keeps its measured box and is marked for checking. One sharp end is enough to place a
-   frame whose other end doesn't show.
+4. **Measure the picture.** Along the strip, a frame's picture runs between its gaps. If its
+   length is far from the strip's other pictures, it's marked for checking. One sharp end is
+   enough to place a frame whose other end doesn't show. Across the strip, going in from the
+   holder, the film shows its clear edge and then the picture: the edge is halfway up that step,
+   so a blurry scanner doesn't make the picture bigger. The film sits in the same place across
+   the holder for a whole strip, so an edge that doesn't show, like a dark scene there, takes the
+   strip's usual one. This also finds pictures well short of the opening, like a compact
+   camera's masked panorama.
 5. **Weak frames.** A frame of a dark scene is close to base density, so its edges hardly show.
    Missing edges are filled in from the pitch: measured between sharp edges where they repeat,
    or else the format's fixed pitch. Those frames are marked for checking too. 120 and other films

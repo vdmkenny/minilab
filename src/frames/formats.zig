@@ -157,6 +157,7 @@ pub const Standard = enum {
     @"135_full_frame",
     @"135_half_frame",
     @"135_panorama",
+    @"135_masked_panorama",
     @"135_square",
     @"120_6x4.5",
     @"120_6x6",
@@ -196,6 +197,9 @@ pub const Standard = enum {
             .@"135_full_frame" => .{ .size = .@"135", .name = "full frame", .width_mm = 36, .height_mm = 24, .pitch_mm = full_frame_pitch_mm },
             .@"135_half_frame" => .{ .size = .@"135", .name = "half frame", .width_mm = 18, .height_mm = 24, .pitch_mm = half_frame_pitch_mm },
             .@"135_panorama" => .{ .size = .@"135", .name = "panorama", .width_mm = 65, .height_mm = 24 },
+            // The panorama mode of some compact cameras: a full frame with its top and bottom
+            // masked off.
+            .@"135_masked_panorama" => .{ .size = .@"135", .name = "masked panorama", .width_mm = 36, .height_mm = 13, .pitch_mm = full_frame_pitch_mm },
             .@"135_square" => .{ .size = .@"135", .name = "square", .width_mm = 24, .height_mm = 24 },
             .@"120_6x4.5" => .{ .size = .@"120", .name = "6×4.5", .width_mm = 41.5, .height_mm = 56 },
             .@"120_6x6" => .{ .size = .@"120", .name = "6×6", .width_mm = 56, .height_mm = 56 },
