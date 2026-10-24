@@ -10,6 +10,7 @@ pub const Format = formats.Format;
 pub const Standard = formats.Standard;
 pub const Kind = detect.Kind;
 pub const Holder = detect.Holder;
+pub const Fit = detect.Fit;
 pub const Axis = detect.Axis;
 pub const Confidence = detect.Confidence;
 pub const Frame = detect.Frame;

@@ -7,9 +7,9 @@
 //! 1. Pick the scanner and the settings: the film type, which sets the scanner's own film mode,
 //!    and the resolution. We use the transparency unit whenever the scanner has one.
 //! 2. Preview: scan the scanner's whole film area at its lowest resolution of 300 dpi or more.
-//! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. By
-//!    default a frame takes the full height of the holder's opening, since holders hide the
-//!    film's edges. A holder can have several openings side by side, each with a strip of its
+//! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. Each frame
+//!    fits its picture the way the Frames menu says: a box of the format's ratio inside it, or the
+//!    whole picture. A holder can have several openings side by side, each with a strip of its
 //!    own, and the frames go in order of opening and then along each strip.
 //! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, and add, split
 //!    or delete them. Frames edited by hand are kept when frames are detected again.
@@ -466,6 +466,7 @@ const Saved = struct {
     opening_middle: ?f32 = null,
     detected: bool = false,
     holder: frames.Holder = .strip,
+    fit: frames.Fit = .format,
     boxes: []const Box = &.{},
 };
 
@@ -490,6 +491,8 @@ pub const State = struct {
     /// How positives sit in the holder: as a strip, or as mounted slides. Negatives are always
     /// strips (`holder`).
     holder_choice: frames.Holder = .strip,
+    /// How detected frames fit their pictures.
+    fit: frames.Fit = .format,
     dpi: u32 = default_dpi,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
@@ -853,6 +856,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     y = drawFilmChoice(state, panel, y);
     y = drawResolution(state, panel, y);
     y = drawMargin(state, panel, y);
+    y = drawFit(state, panel, y);
     drawActions(state, panel, y, origin.y + size.y - gui.px(panel_padding));
 }
 
@@ -981,6 +985,27 @@ fn drawMargin(state: *State, panel: ScannerPanel, y: f32) f32 {
     _ = gui.lineAt(panel.list, panel.x, label_y, theme.text_secondary, "Margin around frames");
     drawMarginField(state, gui.vec2(panel.x + panel.width - gui.px(margin_field_width), y));
     return y + field_height + gui.px(scanner_gap);
+}
+
+/// Draws the menu of how detected frames fit their pictures at `y`. Picking one detects the frames
+/// again. Returns the y below it.
+fn drawFit(state: *State, panel: ScannerPanel, top: f32) f32 {
+    var y = top;
+    y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Frames") + gui.px(group_gap);
+    const ratio = if (panel.roll_index) |r| labels.ratio(panel.ctx.library.rolls.items[r].info.format.format().ratio()) else null;
+    var items: [std.enums.values(frames.Fit).len][]const u8 = undefined;
+    for (&items, std.enums.values(frames.Fit)) |*item, fit| item.* = switch (fit) {
+        .format => if (ratio) |text| gui.print("Roll format, {s}", .{text}) else "Roll format",
+        .whole => "Whole frame",
+    };
+    c.ImGui_BeginDisabled(state.scanning);
+    if (menu(panel, y, "fit", &items, @backingInt(state.fit))) |picked| {
+        state.fit = @fromBackingInt(@intCast(picked));
+        state.boxes_dirty = true;
+        if (state.preview != null) detect(state, panel.ctx, panel.roll_index);
+    }
+    c.ImGui_EndDisabled();
+    return y + gui.px(device_height + scanner_gap);
 }
 
 /// Draws Preview, Detect frames and Scan at the bottom of the panel, which is at `bottom`, but no
@@ -2094,7 +2119,7 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     var added: usize = 0;
     for (detection.frames) |frame| {
         if (frame.opening >= count) continue;
-        var box = boxOf(frame, preview.*, format);
+        var box = boxOf(frame, preview.*, format, state.fit);
         middle_sums[frame.opening] += box.across;
         frame_counts[frame.opening] += 1;
         for (state.boxes.items) |hand| {
@@ -2102,7 +2127,6 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
             const overlap = @min(hand.end(), box.end()) - @max(hand.start(), box.start());
             if (overlap > same_frame_overlap * @min(hand.length, box.length)) break;
         } else {
-            box.full_height = true;
             insertBox(state, ctx.gpa, box);
             added += 1;
         }
@@ -2146,12 +2170,13 @@ fn keepHandBoxes(state: *State) void {
     state.selected = if (kept > 0) 0 else null;
 }
 
-/// Turns a detected frame into a box.
-fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format) Box {
-    const x: f32 = @floatFromInt(frame.area.x);
-    const y: f32 = @floatFromInt(frame.area.y);
-    const w: f32 = @floatFromInt(frame.area.width);
-    const h: f32 = @floatFromInt(frame.area.height);
+/// Turns a detected frame into a box that fits its picture the way `fit` says.
+fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format, fit: frames.Fit) Box {
+    const area = fit.crop(frame, preview.axis, format.ratio());
+    const x: f32 = @floatFromInt(area.x);
+    const y: f32 = @floatFromInt(area.y);
+    const w: f32 = @floatFromInt(area.width);
+    const h: f32 = @floatFromInt(area.height);
     const vertical = preview.axis == .y;
     var box: Box = .{
         .along = if (vertical) y + h / 2 else x + w / 2,
@@ -2160,12 +2185,19 @@ fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format) Box {
         .height = if (vertical) w else h,
         .rotation = frame.rotation_degrees,
         .detected_rotation = frame.rotation_degrees,
+        .shape = switch (fit) {
+            .format => .roll,
+            .whole => .free,
+        },
+        .full_height = false,
         .opening = @intCast(frame.opening),
     };
-    if (@abs(box.length - box.height * format.ratio()) > ratio_tolerance * box.length) box.shape = .free;
     if (frame.confidence == .check) {
         const cut = box.start() <= 1 or box.end() >= preview.alongSize() - 1;
-        box.check = if (cut) .cut else if (box.shape == .free) .length else .pitch;
+        const picture: f32 = @floatFromInt(if (vertical) frame.picture.height else frame.picture.width);
+        const nominal = format.width_mm * preview.alongPerMm();
+        const off = @abs(picture - nominal) > (frames.Options{}).length_tolerance * nominal;
+        box.check = if (cut) .cut else if (off) .length else .pitch;
     }
     return box;
 }
@@ -2199,7 +2231,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
             .index = i,
             .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area },
             .crop = crop,
-            .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .inset = box.inset / 100 },
+            .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .fit = state.fit, .inset = box.inset / 100 },
         };
     }
     // The queue keeps a place for every frame, so its places match the frames' numbers.
@@ -2483,6 +2515,7 @@ fn savePreviewSettings(state: *State, ctx: context.Context) void {
         .openings = preview.openings,
         .detected = preview.detected,
         .holder = state.holder_choice,
+        .fit = state.fit,
         .boxes = state.boxes.items,
     };
     const bytes = std.json.Stringify.valueAlloc(ctx.gpa, saved, .{ .whitespace = .indent_2, .emit_null_optional_fields = false }) catch return;
@@ -2516,6 +2549,7 @@ fn loadPreview(state: *State, ctx: context.Context, roll_index: usize) !void {
         .detected = saved.detected,
     };
     state.holder_choice = saved.holder;
+    state.fit = saved.fit;
     try state.boxes.appendSlice(gpa, saved.boxes);
     state.selected = if (state.boxes.items.len > 0) 0 else null;
     uploadPreview(state, ctx);
@@ -2727,21 +2761,39 @@ test "a box takes the opening's height and its shape's length" {
     try std.testing.expectEqual(@as(f32, 123), box.length);
 }
 
-test "a detected frame becomes a box along the strip, marked when it's in doubt" {
+test "a detected frame becomes a box that fits its picture, marked when it's in doubt" {
     const format = formats.Standard.@"135_full_frame".format();
-    const confident = boxOf(.{ .index = 0, .area = .{ .x = 10, .y = 100, .width = 240, .height = 360 }, .rotation_degrees = 0.5, .confidence = .confident }, test_preview, format);
-    try std.testing.expectEqual(@as(f32, 280), confident.along);
-    try std.testing.expectEqual(@as(f32, 130), confident.across);
-    try std.testing.expectEqual(@as(f32, 360), confident.length);
-    try std.testing.expectEqual(Shape.roll, confident.shape);
-    try std.testing.expectEqual(@as(f32, 0.5), confident.detected_rotation);
-    try std.testing.expectEqual(@as(?Check, null), confident.check);
+    // A picture of 24 × 34 mm at 300 dpi, a little shorter than 3:2, in a box of the opening.
+    const frame: frames.Frame = .{ .index = 0, .area = .{ .x = 45, .y = 100, .width = 300, .height = 450 }, .picture = .{ .x = 53, .y = 110, .width = 283, .height = 400 }, .rotation_degrees = 0.5, .confidence = .confident };
 
-    const long = boxOf(.{ .index = 1, .area = .{ .x = 10, .y = 600, .width = 240, .height = 500 }, .rotation_degrees = 0, .confidence = .check }, test_preview, format);
-    try std.testing.expectEqual(Shape.free, long.shape);
-    try std.testing.expectEqual(@as(?Check, .length), long.check);
-    const cut = boxOf(.{ .index = 2, .area = .{ .x = 10, .y = 0, .width = 240, .height = 360 }, .rotation_degrees = 0, .confidence = .check }, test_preview, format);
-    try std.testing.expectEqual(@as(?Check, .cut), cut.check);
+    const whole = boxOf(frame, test_preview, format, .whole);
+    try std.testing.expectEqual(@as(f32, 310), whole.along);
+    try std.testing.expectEqual(@as(f32, 194.5), whole.across);
+    try std.testing.expectEqual(@as(f32, 400), whole.length);
+    try std.testing.expectEqual(@as(f32, 283), whole.height);
+    try std.testing.expectEqual(Shape.free, whole.shape);
+    try std.testing.expect(!whole.full_height);
+    try std.testing.expectEqual(@as(f32, 0.5), whole.detected_rotation);
+    try std.testing.expectEqual(@as(?Check, null), whole.check);
+
+    // The 3:2 box inside it is as long as the picture, and less high.
+    const ratio = boxOf(frame, test_preview, format, .format);
+    try std.testing.expectEqual(@as(f32, 400), ratio.length);
+    try std.testing.expectEqual(@as(f32, 267), ratio.height);
+    try std.testing.expectEqual(@as(f32, 194.5), ratio.across);
+    try std.testing.expectEqual(Shape.roll, ratio.shape);
+
+    var long = frame;
+    long.confidence = .check;
+    long.picture.height = 300;
+    try std.testing.expectEqual(@as(?Check, .length), boxOf(long, test_preview, format, .whole).check);
+    var pitch = frame;
+    pitch.confidence = .check;
+    pitch.picture.height = 425;
+    try std.testing.expectEqual(@as(?Check, .pitch), boxOf(pitch, test_preview, format, .whole).check);
+    var cut = pitch;
+    cut.picture.y = 0;
+    try std.testing.expectEqual(@as(?Check, .cut), boxOf(cut, test_preview, format, .whole).check);
 }
 
 test "dragging a corner of a free box moves that corner only" {

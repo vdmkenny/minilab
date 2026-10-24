@@ -530,13 +530,18 @@ fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) 
     for (found.frames) |f| {
         const a = f.area;
         if (several) std.debug.print("opening {d}, ", .{f.opening + 1});
-        std.debug.print("frame {d}: x {d:.2} y {d:.2} w {d:.2} h {d:.2} mm, {t}\n", .{
+        const p = f.picture;
+        std.debug.print("frame {d}: x {d:.2} y {d:.2} w {d:.2} h {d:.2} mm, {t}; picture x {d:.2} y {d:.2} w {d:.2} h {d:.2} mm\n", .{
             f.index + 1,
             @as(f32, @floatFromInt(a.x)) * mm,
             @as(f32, @floatFromInt(a.y)) * mm,
             @as(f32, @floatFromInt(a.width)) * mm,
             @as(f32, @floatFromInt(a.height)) * mm,
             f.confidence,
+            @as(f32, @floatFromInt(p.x)) * mm,
+            @as(f32, @floatFromInt(p.y)) * mm,
+            @as(f32, @floatFromInt(p.width)) * mm,
+            @as(f32, @floatFromInt(p.height)) * mm,
         });
     }
 }
