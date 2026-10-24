@@ -138,7 +138,8 @@ The steps for a roll on a scanner:
    - The first scan after the scanner is switched on comes out about 1% brighter and a few pixels
      off (we measured this while working on the V200 driver). So the preview also warms the
      scanner up before the scans that matter.
-3. **Detect frames** (section 6), and fix them by hand where needed.
+3. **Detect frames** (section 6), and fix them by hand where needed. Untick Scan this frame for
+   frames you don't want, to save time: they stay grey on the preview and the scan skips them.
 4. **Scan.** One scan per frame at the resolution you chose: linear, 16-bit, with a margin around
    the detected box. Across the strip it takes the whole film area, or in a holder with several
    strips side by side, the frame's own strip and half the holder to the next one. The margin
