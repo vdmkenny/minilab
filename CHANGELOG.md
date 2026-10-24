@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/vdmkenny/minilab/compare/v0.5.0...v0.6.0) (2026-10-24)
+
+
+### Features
+
+* Maker's edge print, and Rolls filmstrips as high as their card ([#67](https://github.com/vdmkenny/minilab/issues/67)) ([0c63ed9](https://github.com/vdmkenny/minilab/commit/0c63ed9ea2e268c7f836917a21b2ad25c4cea049))
+* Raw scans as lossless TIFFs that other apps open, and JPEG as Export's default ([#65](https://github.com/vdmkenny/minilab/issues/65)) ([e918c52](https://github.com/vdmkenny/minilab/commit/e918c527ca4e8dbb08ff39d6ada1d85ba96bbac0))
+
 ## [0.5.0](https://github.com/vdmkenny/minilab/compare/v0.4.0...v0.5.0) (2026-10-24)
 
 
