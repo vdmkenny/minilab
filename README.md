@@ -20,7 +20,8 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 
 - **Raw scanning:** linear 16-bit scans straight from your scanner. The Mac download comes with
   SANE's drivers. On Windows, minilab uses your scanner's TWAIN driver.
-- **Frame detection:** finds the frames on a scanner preview, a strip scan or a camera shot.
+- **Frame detection:** finds the frames on a scanner preview, a strip scan or a camera shot, with
+  several strips side by side in a flatbed's film holder.
 - **One workflow:** scanning, inversion, colour correction and batch export in one app.
 - **Datasheet corrections:** the film's datasheet curves open up crushed shadows and keep them
   neutral.

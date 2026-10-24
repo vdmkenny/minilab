@@ -521,8 +521,15 @@ fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) 
     defer found.deinit(gpa);
     const mm = minilab.formats.mm_per_inch / resolution;
     std.debug.print("axis {t}, skew {d:.2}°, opening {d:.1} mm\n", .{ found.axis, found.rotation_degrees, found.opening_mm });
+    const several = found.openings.len > 1;
+    if (several) {
+        for (found.openings, 1..) |o, n| {
+            std.debug.print("opening {d}: middle {d:.1} mm, {d:.1} mm across, {s}\n", .{ n, o.middle_px * mm, o.height_mm, if (o.film) "film" else "empty" });
+        }
+    }
     for (found.frames) |f| {
         const a = f.area;
+        if (several) std.debug.print("opening {d}, ", .{f.opening + 1});
         std.debug.print("frame {d}: x {d:.2} y {d:.2} w {d:.2} h {d:.2} mm, {t}\n", .{
             f.index + 1,
             @as(f32, @floatFromInt(a.x)) * mm,

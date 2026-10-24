@@ -140,7 +140,9 @@ The steps for a roll on a scanner:
      scanner up before the scans that matter.
 3. **Detect frames** (section 6), and fix them by hand where needed.
 4. **Scan.** One scan per frame at the resolution you chose: linear, 16-bit, with a margin around
-   the detected box. The margin is there for two reasons:
+   the detected box. Across the strip it takes the whole film area, or in a holder with several
+   strips side by side, the frame's own strip and half the holder to the next one. The margin
+   is there for two reasons:
    - the strip moves 11 to 14 lines between sessions (again from the driver work);
    - the margin takes in the gap between frames, which is where the film base gets measured.
 5. **Refine.** Detect the frame again on each full-resolution scan, tighten the crop, and measure
@@ -318,10 +320,15 @@ Detection on a strip preview works like this for negatives (`src/frames/detect.z
    between.
 2. **Opening.** Fit lines to the two long edges of the light band. These are usually the holder's
    edges, not the film's, and they give the strip's angle and the frame height. Where 135's
-   perforations (the sprocket holes) show, their bands are left out.
+   perforations (the sprocket holes) show, their bands are left out. A flatbed's film holder
+   can have several openings side by side, like four rows of 35mm: each light band at least half
+   a frame tall is one, and the steps below run on each opening with film in it. An opening with
+   nothing in it shows flat, bare light.
 3. **Gaps.** Walk along the strip and take the median density of each line across the band. A
    line counts as gap when it's at base density and flat (even a thin picture still has some
-   texture). Each run of picture between gaps has two ends. An end is sharp when the density
+   texture). Where a strip is shorter than its opening, bare light shines past its end. That's
+   lighter than any film, so it's left out before the base density is measured. Each run of
+   picture between gaps has two ends. An end is sharp when the density
    steps up within half a millimetre, soft when it doesn't, or cut off by the end of the film or
    the scan.
 4. **Snap to the roll's format.** Each frame gets the opening's full height, and its length comes

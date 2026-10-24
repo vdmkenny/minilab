@@ -16,6 +16,9 @@ const perforation_height_mm = perforations.height_mm;
 const perforation_inset_mm = perforations.inset_mm;
 const film_135_mm = formats.FilmSize.@"135".filmWidthMm().?;
 
+/// How far the light fades out at the holder's edge past bare light, in mm.
+const soft_edge_mm = 0.5;
+
 /// How often the picture's texture repeats along and across the film, in mm.
 const texture_along_mm = 7.3;
 const texture_across_mm = 5.1;
@@ -60,6 +63,9 @@ pub const Strip = struct {
     /// The film runs between these positions along the strip, and the holder covers the rest.
     film_start_mm: f32 = 0,
     film_end_mm: ?f32 = null,
+    /// Bare light between the film's end and the holder, for a strip shorter than the holder's
+    /// opening. The light fades out over the last `soft_edge_mm`, the way a real scan's edge does.
+    bare_mm: f32 = 0,
     frames: []const Frame,
     /// How far the scan is rotated about its centre, clockwise as displayed.
     rotation_degrees: f32 = 0,
@@ -121,7 +127,12 @@ pub const Strip = struct {
     fn transmission(strip: Strip, along: f32, across: f32) f32 {
         const distance = @abs(across);
         if (distance > strip.opening_mm / 2) return strip.holder;
-        if (along < strip.film_start_mm or along >= (strip.film_end_mm orelse strip.along_mm)) return strip.holder;
+        const film_end = strip.film_end_mm orelse strip.along_mm;
+        if (along >= film_end and along < film_end + strip.bare_mm) {
+            const left = film_end + strip.bare_mm - along;
+            return strip.holder + (strip.lamp - strip.holder) * @min(left / soft_edge_mm, 1);
+        }
+        if (along < strip.film_start_mm or along >= film_end) return strip.holder;
         if (strip.mounted) {
             for (strip.frames) |f| {
                 if (along >= f.start_mm and along < f.start_mm + f.length_mm and @abs(across - f.offset_mm) < strip.image_mm / 2) {
