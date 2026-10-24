@@ -148,6 +148,13 @@ pub const Area = struct {
         return @intFromFloat(std.math.clamp(product, 0, @as(f64, @floatFromInt(limit))));
     }
 
+    /// Returns `area` grown by `by` on every side, but no further than `bounds`, which holds it.
+    pub fn grown(area: Area, by: usize, bounds: Area) Area {
+        const x = @max(bounds.x, area.x -| by);
+        const y = @max(bounds.y, area.y -| by);
+        return .{ .x = x, .y = y, .width = @min(bounds.x + bounds.width, area.x + area.width + by) - x, .height = @min(bounds.y + bounds.height, area.y + area.height + by) - y };
+    }
+
     /// Returns the middle of `area`, `fraction` of its width and height.
     pub fn centre(area: Area, fraction: f32) Area {
         const w: usize = @intFromFloat(@as(f32, @floatFromInt(area.width)) * fraction);
@@ -204,6 +211,12 @@ test "cropping copies the area" {
     defer part.deinit(gpa);
     try std.testing.expectEqual([3]u16{ 5, 5, 5 }, part.at(0, 0));
     try std.testing.expectEqual([3]u16{ 10, 10, 10 }, part.at(1, 1));
+}
+
+test "an area grows on every side, but not past its bounds" {
+    const bounds: Area = .{ .x = 10, .y = 10, .width = 100, .height = 50 };
+    try std.testing.expectEqual(Area{ .x = 15, .y = 25, .width = 30, .height = 30 }, (Area{ .x = 20, .y = 30, .width = 20, .height = 20 }).grown(5, bounds));
+    try std.testing.expectEqual(Area{ .x = 10, .y = 10, .width = 100, .height = 50 }, (Area{ .x = 12, .y = 12, .width = 96, .height = 46 }).grown(5, bounds));
 }
 
 test "the centre of an area" {

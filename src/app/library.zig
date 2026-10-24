@@ -280,7 +280,10 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
         const gain = if (r.baseFor(key.frame)) |base| minilab.light_table.gainForBase(base) else minilab.light_table.gainForScan(scan);
         minilab.light_table.toScreen(scan.pixels, gain, pixels);
     } else {
-        var rendered = try minilab.look.render(gpa, scan, settings.settings, try library.looks.resolve(gpa, io, settings.look));
+        // A thumbnail is usually too small for dust to show, and then this leaves it as it is.
+        var cleaned = try settings.settings.withoutDust(gpa, scan, @max(scan.width, scan.height));
+        defer if (cleaned) |*s| s.deinit(gpa);
+        var rendered = try minilab.look.render(gpa, cleaned orelse scan, settings.settings, try library.looks.resolve(gpa, io, settings.look));
         defer rendered.deinit(gpa);
         minilab.encode.toRgba8(rendered, pixels);
     }

@@ -22,6 +22,7 @@ const image = @import("image.zig");
 const encode = @import("encode.zig");
 const statistics = @import("stats.zig");
 const stock_curves = @import("stock_curves.zig");
+const dust = @import("dust.zig");
 
 pub const FilmKind = enum {
     colour_negative,
@@ -201,11 +202,21 @@ pub const Settings = struct {
     /// Whether the scan is a finished picture, such as a lab's scan, rather than a raw scan of the
     /// film. It develops as `finishedPicture` has it, and automatic settings leave it that way.
     finished: bool = false,
+    /// Dust removal, which works on the scan before any of the above (`dust`).
+    dust: dust.Settings = .{},
 
     /// The settings for a finished picture: a positive at an exposure of 1, so the picture comes
     /// out just as it went in. The look and saturation can still change it.
     pub fn finishedPicture() Settings {
         return .{ .kind = .colour_positive, .exposure = 1, .finished = true };
+    }
+
+    /// Returns `scan` with its dust removed as the settings ask, in a copy the caller frees, or
+    /// null when there's nothing to remove (`dust.cleaned`). `frame_longest` is the frame's longer
+    /// side at `scan`'s resolution. A raw scan of film shows dust denser than around it; a finished
+    /// picture is already a positive, usually of a negative, so there it's lighter.
+    pub fn withoutDust(settings: *const Settings, gpa: std.mem.Allocator, scan: image.Scan, frame_longest: usize) !?image.Scan {
+        return dust.cleaned(gpa, scan, settings.dust, if (settings.finished) .light else .dense, frame_longest);
     }
 
     /// Returns the curves, in the form `automatic` takes them.

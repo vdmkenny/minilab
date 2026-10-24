@@ -177,6 +177,8 @@ fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
         for (row, 0..) |v, j| try w.print("{s}{d:.4}", .{ if (i + j == 0) "" else " ", v });
     }
     try w.writeAll("\"\n");
+    // Dust removal, only when it's on: its threshold, max size in percent and max density in D.
+    if (s.dust.remove) try w.print("    minilab:DustRemoval=\"{d:.1} {d:.1} {d:.2}\"\n", .{ s.dust.threshold, s.dust.max_size, s.dust.max_density });
 }
 
 fn attribute(w: *std.Io.Writer, name: []const u8, value: []const u8) std.Io.Writer.Error!void {
@@ -604,7 +606,14 @@ test "XMP escapes what the roll says and gives dates as dates" {
     try std.testing.expect(std.mem.indexOf(u8, packet, "minilab:FilmStock=\"Kodak Portra 400\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, packet, "photoshop:ICCProfile=\"Display P3\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, packet, "minilab:Settings=\"saved\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, packet, "DustRemoval") == null);
     try std.testing.expect(std.mem.endsWith(u8, packet, "<?xpacket end=\"w\"?>\n"));
+
+    var dusted = example;
+    dusted.develop.?.settings.?.dust.remove = true;
+    const cleaned = try xmp(gpa, dusted);
+    defer gpa.free(cleaned);
+    try std.testing.expect(std.mem.indexOf(u8, cleaned, "minilab:DustRemoval=\"8.0 0.5 1.50\"") != null);
 
     var vague = example;
     vague.shot = "summer";
