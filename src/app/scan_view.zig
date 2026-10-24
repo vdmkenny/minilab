@@ -1748,16 +1748,16 @@ fn drawShapeControls(state: *State, box: *Box, preview: *const Preview, format: 
 
     // Inset, rotation, and the custom ratio.
     c.ImGui_PushID("sliders");
-    if (sliderRowAt(x, &y, width, "Inset", &box.inset, 0, max_inset, "{d:.1}%", 0)) {
+    if (sliderRowAt(x, &y, width, "Inset", &box.inset, 0, max_inset, "{d:.1}%", 0, "Higher trims more off each side")) {
         markEdited(state, box);
     }
     y += gui.px(slider_gap);
-    if (sliderRowAt(x, &y, width, "Rotation", &box.rotation, -max_rotation, max_rotation, "{d:.1}°", box.detected_rotation)) {
+    if (sliderRowAt(x, &y, width, "Rotation", &box.rotation, -max_rotation, max_rotation, "{d:.1}°", box.detected_rotation, "Straightens a tilted frame · resets to the detected angle")) {
         markEdited(state, box);
     }
     if (box.shape == .custom) {
         y += gui.px(slider_gap);
-        if (sliderRowAt(x, &y, width, "Ratio", &box.ratio, 0.5, 3, "{d:.2}", format.ratio())) {
+        if (sliderRowAt(x, &y, width, "Ratio", &box.ratio, 0.5, 3, "{d:.2}", format.ratio(), "Width over height · resets to the roll's format")) {
             reshape(box, preview, format);
             markEdited(state, box);
         }
@@ -2621,10 +2621,10 @@ fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f
     return clicked;
 }
 
-/// Draws a slider row for the frame tools: a 110-pixel label, the slider, the value in a 56-pixel
-/// column, and a button that resets it to `default`. Moves `y` past it. Returns true when the
-/// value changed.
-fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min: f32, max: f32, comptime format: []const u8, default: f32) bool {
+/// Draws a slider row for the frame tools: a 110-pixel label, the slider with `help` as its
+/// tooltip, the value in a 56-pixel column, and a button that resets it to `default`. Moves `y`
+/// past it. Returns true when the value changed.
+fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min: f32, max: f32, comptime format: []const u8, default: f32, help: [:0]const u8) bool {
     // A range input is 20 pixels high in the design, and the slider fills the row.
     const height = gui.px(slider_row_height);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(slider_spacing), (height - c.ImGui_GetFontSize()) / 2));
@@ -2635,6 +2635,7 @@ fn sliderRowAt(x: f32, y: *f32, width: f32, label: []const u8, value: *f32, min:
     const slider_width = width - gui.px(slider_label_column + 2 * slider_spacing + slider_value_column + gui.reset_space);
     c.ImGui_SetCursorScreenPos(gui.vec2(slider_x, y.*));
     var changed = gui.slider(gui.print("{s}", .{label}), value, min, max, slider_width / gui.scale);
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
     fonts.push(.mono);
     const shown = gui.formatSigned(format, value.*);
     const shown_width = c.ImGui_CalcTextSize(shown).x;

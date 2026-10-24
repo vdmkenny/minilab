@@ -712,6 +712,32 @@ pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown:
     return clicked and !at_default;
 }
 
+/// Draws a loupe: a lens with its handle down to the right, in the square reaching `radius` from
+/// `centre`.
+pub fn loupeIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, colour: theme.Color) void {
+    const ink = theme.imU32(colour);
+    const thickness = radius * loupe.rim;
+    const lens = radius * loupe.lens;
+    const middle = vec2(centre.x - radius * loupe.shift, centre.y - radius * loupe.shift);
+    c.ImDrawList_AddCircleEx(list, middle, lens, ink, loupe.segments, thickness);
+    // The handle runs from the lens's rim, down to the right.
+    const rim = lens / std.math.sqrt2;
+    const end = radius * loupe.reach;
+    c.ImDrawList_AddLineEx(list, vec2(middle.x + rim, middle.y + rim), vec2(centre.x + end, centre.y + end), ink, thickness * loupe.handle);
+}
+
+/// A loupe icon's lens and handle, as shares of its radius: the lens's size and its rim, how far
+/// its middle sits up and to the left, and how far the handle reaches down and to the right. Then
+/// how much thicker the handle is than the rim, and how many segments draw the rim.
+const loupe = struct {
+    const lens = 0.62;
+    const rim = 0.18;
+    const shift = 0.2;
+    const reach = 0.85;
+    const handle = 1.6;
+    const segments = 32;
+};
+
 /// Draws a turning arrow: three quarters of a circle of `radius`, centred at `centre`. It goes
 /// clockwise for turn right, and anticlockwise for turn left and for reset.
 pub fn turnIcon(list: *c.ImDrawList, centre: Vec2, radius: f32, clockwise: bool, colour: theme.Color) void {

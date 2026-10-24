@@ -829,6 +829,7 @@ fn qualityRow(state: *State, grid: FileGrid, top: f32) f32 {
     rowLabel(list, x, y, "Quality");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y + (row - c.ImGui_GetFrameHeight()) / 2));
     _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap - gui.reset_space);
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Higher is sharper and larger · 90 and up keep full color");
     state.quality = @round(state.quality);
     const shown = gui.print("{d:.0}", .{state.quality});
     gui.valueText(shown);
