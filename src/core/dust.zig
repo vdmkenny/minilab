@@ -67,6 +67,15 @@ pub const Settings = struct {
     pub const min_max_density = 0.2;
     pub const max_max_density = 1.5;
 
+    comptime {
+        for ([_][3]f32{
+            .{ min_threshold, default_threshold, max_threshold },
+            .{ min_max_size, default_max_size, max_max_size },
+            .{ min_max_density, default_max_density, max_max_density },
+        }) |range| if (!(range[0] <= range[1] and range[1] <= range[2])) @compileError("a dust default is outside its range");
+        if (!(min_max_size <= tuned_size and tuned_size <= max_max_size)) @compileError("the tuned size is outside Max size's range");
+    }
+
     /// The densest a speck can be, as a `Code`, or null for no limit.
     fn densest(settings: Settings) ?Code {
         if (settings.max_density >= max_max_density) return null;
@@ -128,17 +137,19 @@ const Sizes = struct {
     /// `speck` at `tuned_size`: how close specks are to group, and how far round a speck the film
     /// it sits on is measured.
     near: usize,
+    /// How far round a pixel its grain is measured.
     grain: usize,
+    /// The ring filled round a speck as well, for its soft edge.
     edge: usize,
 
     fn of(frame_longest: usize, max_size: f32) Sizes {
         const longest: f32 = @floatFromInt(frame_longest);
-        const size = std.math.clamp(max_size, Settings.min_max_size, Settings.max_max_size);
+        const fitting = reach(longest, std.math.clamp(max_size, Settings.min_max_size, Settings.max_max_size));
         const near = reach(longest, tuned_size);
-        const speck = @max(near, reach(longest, size));
+        const speck = @max(near, fitting);
         return .{
             .speck = speck,
-            .widest = 2 * reach(longest, size) + 1,
+            .widest = 2 * fitting + 1,
             .near = near,
             // The grain's ring reaches past the guard square by `near` at least.
             .grain = @max(grain_reach * near, 2 * speck + 1 + near),
@@ -148,9 +159,12 @@ const Sizes = struct {
 
     /// How far from its centre a square `size` percent of `longest` reaches.
     fn reach(longest: f32, size: f32) usize {
-        return @max(1, @as(usize, @intFromFloat(@round(longest * size / 100 / 2))));
+        return @max(1, @as(usize, @intFromFloat(@round(longest * size / percent / 2))));
     }
 
+    const percent = 100;
+
+    /// The opening's square, from side to side.
     fn across(sizes: Sizes) usize {
         return 2 * sizes.speck + 1;
     }
@@ -319,21 +333,21 @@ fn mark(gpa: std.mem.Allocator, top_hat: []const Code, width: usize, height: usi
             const centre = inner.sumAt(x);
             // Only on a picture smaller than the guard is there no ring; then the whole square
             // will do.
-            if (ring.count > centre.count) {
-                ring.plain -= centre.plain;
-                ring.squared -= centre.squared;
-                ring.count -= centre.count;
-            }
+            if (ring.count > centre.count) ring = ring.minus(centre);
             const count: f64 = @floatFromInt(ring.count);
             const mean = @as(f64, @floatFromInt(ring.plain)) / count;
             const square = @as(f64, @floatFromInt(ring.squared)) / count;
-            const spread = @sqrt(@max(square - mean * mean, 1));
+            const spread = @sqrt(@max(square - mean * mean, least_variance));
             const above = @as(f64, @floatFromInt(t)) - mean;
             const strong = @max(threshold * spread, floor);
             m.* = if (above > strong) .strong else if (above > strong * edge_threshold) .faint else .none;
         }
     }
 }
+
+/// The least the grain's variance counts as, in `Code`s squared, so film with no grain at all
+/// doesn't make every bump a speck.
+const least_variance = 1;
 
 /// Sums of `values` and their squares over the square reaching `radius` from each pixel of a row,
 /// a row at a time from the top: down each column over the square's rows, then along the row.
@@ -348,7 +362,23 @@ const Window = struct {
     top: usize = 0,
     bottom: usize = 0,
 
-    const Sums = struct { plain: u64 = 0, squared: u64 = 0, count: u64 = 0 };
+    const Sums = struct {
+        plain: u64 = 0,
+        squared: u64 = 0,
+        count: u64 = 0,
+
+        fn of(v: Code) Sums {
+            return .{ .plain = v, .squared = @as(u64, v) * v, .count = 1 };
+        }
+
+        fn plus(a: Sums, b: Sums) Sums {
+            return .{ .plain = a.plain + b.plain, .squared = a.squared + b.squared, .count = a.count + b.count };
+        }
+
+        fn minus(a: Sums, b: Sums) Sums {
+            return .{ .plain = a.plain - b.plain, .squared = a.squared - b.squared, .count = a.count - b.count };
+        }
+    };
 
     fn init(gpa: std.mem.Allocator, values: []const Code, width: usize, radius: usize) !Window {
         const columns = try gpa.alloc(Sums, width);
@@ -366,31 +396,18 @@ const Window = struct {
     fn moveTo(window: *Window, y: usize, height: usize) void {
         const w = window.width;
         while (window.bottom < @min(height, y + window.radius + 1)) : (window.bottom += 1) {
-            for (window.columns, window.values[window.bottom * w ..][0..w]) |*s, v| {
-                s.plain += v;
-                s.squared += @as(u64, v) * v;
-                s.count += 1;
-            }
+            for (window.columns, window.values[window.bottom * w ..][0..w]) |*s, v| s.* = s.plus(.of(v));
         }
         while (window.top < y -| window.radius) : (window.top += 1) {
-            for (window.columns, window.values[window.top * w ..][0..w]) |*s, v| {
-                s.plain -= v;
-                s.squared -= @as(u64, v) * v;
-                s.count -= 1;
-            }
+            for (window.columns, window.values[window.top * w ..][0..w]) |*s, v| s.* = s.minus(.of(v));
         }
         window.running[0] = .{};
-        for (window.columns, 0..) |s, x| {
-            const r = window.running[x];
-            window.running[x + 1] = .{ .plain = r.plain + s.plain, .squared = r.squared + s.squared, .count = r.count + s.count };
-        }
+        for (window.columns, 0..) |s, x| window.running[x + 1] = window.running[x].plus(s);
     }
 
     /// The sums over the square around column `x` of the current row.
     fn sumAt(window: *const Window, x: usize) Sums {
-        const left = window.running[x -| window.radius];
-        const right = window.running[@min(window.width, x + window.radius + 1)];
-        return .{ .plain = right.plain - left.plain, .squared = right.squared - left.squared, .count = right.count - left.count };
+        return window.running[@min(window.width, x + window.radius + 1)].minus(window.running[x -| window.radius]);
     }
 };
 
@@ -416,7 +433,7 @@ const Seen = packed struct(u8) {
     spot: bool = false,
     /// Within reach of a spot, so in its group.
     near: bool = false,
-    /// Already taken into a spot or a group.
+    /// Already taken into a group.
     taken: bool = false,
     _: u5 = 0,
 };
@@ -448,47 +465,63 @@ fn findSpecks(gpa: std.mem.Allocator, planes: Planes, sizes: Sizes, densest: ?Co
     defer clump.deinit(gpa);
 
     // The spots: flood out from each strong mark through the marks next to it.
-    for (marks, 0..) |m, start| {
-        if (m != .strong or seen[start].spot) continue;
-        seen[start].spot = true;
-        try stack.append(gpa, @intCast(start));
-        while (stack.pop()) |at| {
-            var each = neighbours(at, width, height, 1);
-            while (each.next()) |next| {
-                if (marks[next] == .none or seen[next].spot) continue;
-                seen[next].spot = true;
-                try stack.append(gpa, next);
-            }
+    const Spot = struct {
+        marks: []const Mark,
+        seen: []Seen,
+
+        fn enter(spot: @This(), at: u32) bool {
+            if (spot.marks[at] == .none or spot.seen[at].spot) return false;
+            spot.seen[at].spot = true;
+            return true;
         }
+
+        fn reach(_: @This(), _: u32) !bool {
+            return true;
+        }
+    };
+    const spot: Spot = .{ .marks = marks, .seen = seen };
+    for (marks, 0..) |m, start| {
+        if (m != .strong or !spot.enter(@intCast(start))) continue;
+        try stack.append(gpa, @intCast(start));
+        _ = try flood(gpa, &stack, width, height, spot);
     }
 
     // Each spot reaches out `near`, so spots that close end up in one group.
-    const reach = try gpa.alloc(u8, marks.len);
-    defer gpa.free(reach);
-    for (reach, seen) |*r, s| r.* = @intFromBool(s.spot);
-    try filter(u8, .max, gpa, reach, width, height, sizes.near);
-    for (seen, reach) |*s, r| s.near = r != 0;
+    const nearby = try gpa.alloc(u8, marks.len);
+    defer gpa.free(nearby);
+    for (nearby, seen) |*n, s| n.* = @intFromBool(s.spot);
+    try filter(u8, .max, gpa, nearby, width, height, sizes.near);
+    for (seen, nearby) |*s, n| s.near = n != 0;
 
     // The groups: flood through the pixels near a spot, keeping the spots' pixels.
-    for (seen, 0..) |s, start| {
-        if (!s.spot or s.taken) continue;
-        const first = found.pixels.items.len;
-        var area: Bounds = .{};
-        seen[start].taken = true;
-        try stack.append(gpa, @intCast(start));
-        while (stack.pop()) |at| {
-            if (seen[at].spot) {
-                try found.pixels.append(gpa, at);
-                area.add(at % width, at / width);
-            }
-            var each = neighbours(at, width, height, 1);
-            while (each.next()) |next| {
-                if (!seen[next].near or seen[next].taken) continue;
-                seen[next].taken = true;
-                try stack.append(gpa, next);
-            }
+    const Group = struct {
+        gpa: std.mem.Allocator,
+        seen: []Seen,
+        width: usize,
+        found: *Specks,
+        area: Bounds = .{},
+
+        fn enter(group: *@This(), at: u32) bool {
+            if (!group.seen[at].near or group.seen[at].taken) return false;
+            group.seen[at].taken = true;
+            return true;
         }
-        const box = area.toArea();
+
+        fn reach(group: *@This(), at: u32) !bool {
+            if (!group.seen[at].spot) return true;
+            try group.found.pixels.append(group.gpa, at);
+            group.area.add(at % group.width, at / group.width);
+            return true;
+        }
+    };
+    for (seen, 0..) |s, start| {
+        if (!s.spot) continue;
+        var group: Group = .{ .gpa = gpa, .seen = seen, .width = width, .found = found };
+        if (!group.enter(@intCast(start))) continue;
+        const first = found.pixels.items.len;
+        try stack.append(gpa, @intCast(start));
+        _ = try flood(gpa, &stack, width, height, &group);
+        const box = group.area.toArea();
         const pixels = found.pixels.items[first..];
         var peak: Code = 0;
         for (pixels) |at| peak = @max(peak, planes.top_hat[at]);
@@ -524,11 +557,7 @@ fn onFlat(planes: Planes, peak: Code, box: image.Area, sizes: Sizes) bool {
     var highest: f32 = 0;
     for (sides) |side| {
         if (side.width == 0 or side.height == 0) continue;
-        var sum: u64 = 0;
-        for (side.y..side.y + side.height) |y| {
-            for (planes.background[y * w + side.x ..][0..side.width]) |b| sum += b;
-        }
-        const m = @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(side.width * side.height));
+        const m = meanOver(planes, .background, side, null);
         lowest = @min(lowest, m);
         highest = @max(highest, m);
     }
@@ -555,41 +584,57 @@ fn onItsOwn(gpa: std.mem.Allocator, planes: Planes, pixels: []const u32, box: im
     const h = planes.height;
     var peak: u32 = 0;
     for (pixels) |at| peak = @max(peak, densityAt(planes, at));
-    const film = densityBetween(planes, grown(box, clump_ring_out * sizes.near, w, h), grown(box, clump_ring_in * sizes.near, w, h));
-    const level = film + clump_height * (@as(f32, @floatFromInt(peak)) - film);
+    const film = meanOver(planes, .density, box.grown(clump_ring_out * sizes.near, .whole(w, h)), box.grown(clump_ring_in * sizes.near, .whole(w, h)));
     // A clump that reaches the edge of this window is too big to fit anyway. The picture's own
     // edge doesn't count.
-    const window = grown(box, fibre_length * sizes.across(), w, h);
+    const window = box.grown(fibre_length * sizes.across(), .whole(w, h));
     try clump.taken.resize(gpa, window.width * window.height);
     @memset(clump.taken.items, false);
     clump.stack.clearRetainingCapacity();
-    var bounds: Bounds = .{};
-    var count: usize = 0;
+    const Grow = struct {
+        planes: Planes,
+        window: image.Area,
+        level: f32,
+        taken: []bool,
+        bounds: Bounds = .{},
+        count: usize = 0,
+
+        fn local(grow: *const @This(), at: u32) usize {
+            const x = at % grow.planes.width;
+            const y = at / grow.planes.width;
+            return (y - grow.window.y) * grow.window.width + x - grow.window.x;
+        }
+
+        fn enter(grow: *@This(), at: u32) bool {
+            const i = grow.local(at);
+            if (grow.taken[i] or @as(f32, @floatFromInt(densityAt(grow.planes, at))) < grow.level) return false;
+            grow.taken[i] = true;
+            return true;
+        }
+
+        fn reach(grow: *@This(), at: u32) !bool {
+            const x = at % grow.planes.width;
+            const y = at / grow.planes.width;
+            const at_left = x == grow.window.x and grow.window.x > 0;
+            const at_top = y == grow.window.y and grow.window.y > 0;
+            const at_right = x + 1 == grow.window.x + grow.window.width and x + 1 < grow.planes.width;
+            const at_bottom = y + 1 == grow.window.y + grow.window.height and y + 1 < grow.planes.height;
+            if (at_left or at_top or at_right or at_bottom) return false;
+            grow.bounds.add(x, y);
+            grow.count += 1;
+            return true;
+        }
+    };
+    var grow: Grow = .{ .planes = planes, .window = window, .level = film + clump_height * (@as(f32, @floatFromInt(peak)) - film), .taken = clump.taken.items };
+    // The speck itself is in its clump, however faint its edge.
     for (pixels) |at| {
-        const local = (at / w - window.y) * window.width + at % w - window.x;
-        if (clump.taken.items[local]) continue;
-        clump.taken.items[local] = true;
+        const i = grow.local(at);
+        if (grow.taken[i]) continue;
+        grow.taken[i] = true;
         try clump.stack.append(gpa, at);
     }
-    while (clump.stack.pop()) |at| {
-        const x = at % w;
-        const y = at / w;
-        const at_left = x == window.x and window.x > 0;
-        const at_top = y == window.y and window.y > 0;
-        const at_right = x + 1 == window.x + window.width and x + 1 < w;
-        const at_bottom = y + 1 == window.y + window.height and y + 1 < h;
-        if (at_left or at_top or at_right or at_bottom) return false;
-        bounds.add(x, y);
-        count += 1;
-        var each = neighbours(at, w, h, 1);
-        while (each.next()) |next| {
-            const local = (next / w - window.y) * window.width + next % w - window.x;
-            if (clump.taken.items[local] or @as(f32, @floatFromInt(densityAt(planes, next))) < level) continue;
-            clump.taken.items[local] = true;
-            try clump.stack.append(gpa, next);
-        }
-    }
-    return sizes.fits(bounds.toArea(), count);
+    if (!try flood(gpa, &clump.stack, w, h, &grow)) return false;
+    return sizes.fits(grow.bounds.toArea(), grow.count);
 }
 
 /// The clump's edge, as a share of the way from the film around a speck up to its peak.
@@ -602,16 +647,33 @@ fn densityAt(planes: Planes, at: usize) u32 {
     return @as(u32, planes.background[at]) + planes.top_hat[at];
 }
 
-/// The mean density of the pixels in `area` but not in `inner`, which it holds.
-fn densityBetween(planes: Planes, area: image.Area, inner: image.Area) f32 {
+/// The mean of the background, or the density, over the pixels of `area` that aren't in
+/// `inner`, if it's given.
+fn meanOver(planes: Planes, comptime what: enum { background, density }, area: image.Area, inner: ?image.Area) f32 {
     var sum: u64 = 0;
     var count: u64 = 0;
     for (area.y..area.y + area.height) |y| for (area.x..area.x + area.width) |x| {
-        if (x >= inner.x and x < inner.x + inner.width and y >= inner.y and y < inner.y + inner.height) continue;
-        sum += densityAt(planes, y * planes.width + x);
+        if (inner) |in| if (x >= in.x and x < in.x + in.width and y >= in.y and y < in.y + in.height) continue;
+        const at = y * planes.width + x;
+        sum += switch (what) {
+            .background => planes.background[at],
+            .density => densityAt(planes, at),
+        };
         count += 1;
     };
     return @as(f32, @floatFromInt(sum)) / @as(f32, @floatFromInt(@max(count, 1)));
+}
+
+/// Floods out from the pixels on `stack` to their 8 neighbours, as far as `way.enter` lets it,
+/// and gives each pixel it reaches to `way.reach`. `enter` marks a pixel as it lets it in, so
+/// each is reached once. Returns false, stopping there, as soon as `reach` does.
+fn flood(gpa: std.mem.Allocator, stack: *std.ArrayList(u32), width: usize, height: usize, way: anytype) !bool {
+    while (stack.pop()) |at| {
+        if (!try way.reach(at)) return false;
+        var each = neighbours(at, width, height, 1);
+        while (each.next()) |next| if (way.enter(next)) try stack.append(gpa, next);
+    }
+    return true;
 }
 
 /// The box around some pixels.
@@ -697,18 +759,24 @@ fn fill(gpa: std.mem.Allocator, scan: image.Scan, planes: Planes, found: Specks,
     defer shape.deinit(gpa);
     var ring: std.ArrayList([2]isize) = .empty;
     defer ring.deinit(gpa);
+    var inside: std.ArrayList([2]isize) = .empty;
+    defer inside.deinit(gpa);
     for (found.boxes.items) |speck| {
-        const box = grown(speck.area, edge, w, h);
+        const box = speck.area.grown(edge, .whole(w, h));
         try shape.resize(gpa, box.width * box.height);
         for (0..box.height) |y| @memcpy(shape.items[y * box.width ..][0..box.width], holes[(box.y + y) * w + box.x ..][0..box.width]);
-        // The ring: the film round the speck, as places from the box's corner.
+        // The speck's pixels and the film round it, as places from the box's corner.
         ring.clearRetainingCapacity();
-        const around = grown(box, @max(min_ring, edge + 1), w, h);
+        inside.clearRetainingCapacity();
+        const around = box.grown(@max(min_ring, edge + 1), .whole(w, h));
         for (around.y..around.y + around.height) |y| for (around.x..around.x + around.width) |x| {
-            if (holes[y * w + x]) continue;
-            try ring.append(gpa, .{ @as(isize, @intCast(x)) - @as(isize, @intCast(box.x)), @as(isize, @intCast(y)) - @as(isize, @intCast(box.y)) });
+            const place: [2]isize = .{ @as(isize, @intCast(x)) - @as(isize, @intCast(box.x)), @as(isize, @intCast(y)) - @as(isize, @intCast(box.y)) };
+            const in_box = x >= box.x and x < box.x + box.width and y >= box.y and y < box.y + box.height;
+            if (!holes[y * w + x]) {
+                try ring.append(gpa, place);
+            } else if (in_box) try inside.append(gpa, place);
         };
-        const patch: Patch = .{ .planes = planes, .holes = holes, .box = box, .ring = ring.items, .shape = shape.items };
+        const patch: Patch = .{ .planes = planes, .holes = holes, .box = box, .ring = ring.items, .inside = inside.items };
         if (patch.best()) |offset| {
             patch.copy(scan, offset);
         } else try smooth(gpa, scan, box, shape.items);
@@ -720,10 +788,10 @@ fn fill(gpa: std.mem.Allocator, scan: image.Scan, planes: Planes, found: Specks,
 const Patch = struct {
     planes: Planes,
     holes: []const bool,
-    /// The speck and its edge, the pixels of it to fill (`box`'s size), and its ring, as places
-    /// from `box`'s corner.
+    /// The speck and its edge, and the pixels in it to fill and the ring of film round them, as
+    /// places from `box`'s corner.
     box: image.Area,
-    shape: []const bool,
+    inside: []const [2]isize,
     ring: []const [2]isize,
 
     const Match = struct { offset: [2]isize, cost: f64 };
@@ -735,18 +803,19 @@ const Patch = struct {
         const reach: isize = @intCast(patch_reach * widest + min_ring);
         const step: isize = @intCast(@max(1, widest / patch_steps));
         var found: ?Match = null;
+        patch.search(.{ 0, 0 }, reach, step, &found);
+        const coarse = found orelse return null;
+        patch.search(coarse.offset, step - 1, 1, &found);
+        return found.?.offset;
+    }
+
+    /// Considers the offsets within `reach` of `centre`, `step` apart.
+    fn search(patch: Patch, centre: [2]isize, reach: isize, step: isize, found: *?Match) void {
         var dy = -reach;
         while (dy <= reach) : (dy += step) {
             var dx = -reach;
-            while (dx <= reach) : (dx += step) patch.consider(.{ dx, dy }, &found);
+            while (dx <= reach) : (dx += step) patch.consider(.{ centre[0] + dx, centre[1] + dy }, found);
         }
-        const coarse = (found orelse return null).offset;
-        var fy = coarse[1] - step + 1;
-        while (fy < coarse[1] + step) : (fy += 1) {
-            var fx = coarse[0] - step + 1;
-            while (fx < coarse[0] + step) : (fx += 1) patch.consider(.{ fx, fy }, &found);
-        }
-        return found.?.offset;
     }
 
     /// Weighs up the patch at `offset` from the speck, and keeps it in `found` if it's the best so
@@ -755,18 +824,16 @@ const Patch = struct {
         var sum: f64 = 0;
         var squares: f64 = 0;
         for (patch.ring) |place| {
-            const from = patch.at(place, .{ 0, 0 }) orelse unreachable;
             const to = patch.at(place, offset) orelse return;
             if (patch.holes[to]) return;
-            const d = @as(f64, @floatFromInt(densityAt(patch.planes, from))) - @as(f64, @floatFromInt(densityAt(patch.planes, to)));
+            const d = @as(f64, @floatFromInt(densityAt(patch.planes, patch.at(place, .{ 0, 0 }).?))) - @as(f64, @floatFromInt(densityAt(patch.planes, to)));
             sum += d;
             squares += d * d;
         }
-        for (0..patch.box.height) |y| for (0..patch.box.width) |x| {
-            if (!patch.shape[y * patch.box.width + x]) continue;
-            const to = patch.at(.{ @intCast(x), @intCast(y) }, offset) orelse return;
+        for (patch.inside) |place| {
+            const to = patch.at(place, offset) orelse return;
             if (patch.holes[to]) return;
-        };
+        }
         const n: f64 = @floatFromInt(@max(patch.ring.len, 1));
         const cost = squares - sum * sum / n;
         if (found.* == null or cost < found.*.?.cost) found.* = .{ .offset = offset, .cost = cost };
@@ -792,15 +859,13 @@ const Patch = struct {
         }
         var difference: [image.channel_count]PlaneSums.Fitted = undefined;
         for (&difference, sums) |*d, sum| d.* = sum.fit();
-        for (0..patch.box.height) |y| for (0..patch.box.width) |x| {
-            if (!patch.shape[y * patch.box.width + x]) continue;
-            const place: [2]isize = .{ @intCast(x), @intCast(y) };
+        for (patch.inside) |place| {
             const from = scan.pixels[patch.at(place, offset).?];
             for (&scan.pixels[patch.at(place, .{ 0, 0 }).?], from, difference) |*v, f, d| {
                 const gain = std.math.pow(f32, 10, -d.at(place));
                 v.* = @intFromFloat(@round(@min(@as(f32, @floatFromInt(f)) * gain, image.full_scale)));
             }
-        };
+        }
     }
 };
 
@@ -909,13 +974,6 @@ fn smooth(gpa: std.mem.Allocator, scan: image.Scan, box: image.Area, holes: []bo
     }
 }
 
-/// `area` grown by `by` on every side, but not off a `width` × `height` image.
-fn grown(area: image.Area, by: usize, width: usize, height: usize) image.Area {
-    const x = area.x -| by;
-    const y = area.y -| by;
-    return .{ .x = x, .y = y, .width = @min(width, area.x + area.width + by) - x, .height = @min(height, area.y + area.height + by) - y };
-}
-
 /// How rough the film is in `area` of `scan`, for the tests, leaving out the pixels `holes` marks: the mean
 /// difference in density between pixels side by side and one above the other. Null when there's
 /// no pair to measure, or the film is perfectly smooth.
@@ -999,11 +1057,11 @@ fn addDisc(scan: image.Scan, cx: usize, cy: usize, radius: usize, density: f32) 
     }
 }
 
-/// The mean density of the square reaching `radius` from (`cx`, `cy`), in green.
+/// The mean density of the square reaching `radius` from (`cx`, `cy`).
 fn densityAround(scan: image.Scan, cx: usize, cy: usize, radius: usize) f32 {
     var sum: f32 = 0;
     for (cy - radius..cy + radius + 1) |y| {
-        for (scan.row(y)[cx - radius .. cx + radius + 1]) |p| sum += -std.math.log10(@as(f32, @floatFromInt(@max(p[1], 1))) / image.full_scale);
+        for (scan.row(y)[cx - radius .. cx + radius + 1]) |p| sum += meanDensity(p);
     }
     const side: f32 = @floatFromInt(2 * radius + 1);
     return sum / (side * side);
@@ -1180,7 +1238,7 @@ test "a filled speck keeps the film's grain" {
         @memset(holes, false);
         const speck: image.Area = .{ .x = 397, .y = 297, .width = 7, .height = 7 };
         for (speck.y..speck.y + speck.height) |y| @memset(holes[y * scan.width + speck.x ..][0..speck.width], true);
-        const around = roughness(scan, holes, grown(speck, 2 * speck.width, scan.width, scan.height)).?;
+        const around = roughness(scan, holes, speck.grown(2 * speck.width, .whole(scan.width, scan.height))).?;
         @memset(holes, false);
         const ratio = roughness(scan, holes, speck).? / around;
         try std.testing.expect(ratio * grain_match > 1 and ratio < grain_match);

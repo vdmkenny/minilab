@@ -305,7 +305,7 @@ pub const Frame = struct {
         defer square.deinit(gpa);
         if (!negative and frame.settings.dust.remove) {
             const longest = @max(bounds.width, bounds.height);
-            const around = grown(area, minilab.dust.margin(longest, frame.settings.dust), bounds);
+            const around = area.grown(minilab.dust.margin(longest, frame.settings.dust), bounds);
             var context = try scan.crop(gpa, around);
             defer context.deinit(gpa);
             if (try frame.settings.withoutDust(gpa, context, longest)) |cleaned| {
@@ -354,13 +354,6 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.slide_colour = keep.slide_colour;
     settings.finished = keep.finished;
     settings.dust = keep.dust;
-}
-
-/// `area` grown by `by` on every side, but no further than `bounds`, which holds it.
-fn grown(area: image.Area, by: usize, bounds: image.Area) image.Area {
-    const x = @max(bounds.x, area.x -| by);
-    const y = @max(bounds.y, area.y -| by);
-    return .{ .x = x, .y = y, .width = @min(bounds.x + bounds.width, area.x + area.width + by) - x, .height = @min(bounds.y + bounds.height, area.y + area.height + by) - y };
 }
 
 /// Where a run `length` long, centred on `centre`, starts so that it stays inside the run from

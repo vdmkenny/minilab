@@ -664,7 +664,7 @@ pub fn sliderRow(label: []const u8, v: *f32, min: f32, max: f32, comptime format
     rowLabel(label);
     var changed = slider("slider", v, min, max, 0);
     if (options.help) |help| if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", help.ptr);
-    if (valueAndReset(formatSigned(format, v.*), formatSigned(format, options.default))) {
+    if (valueAndReset(options.shown(format, v.*, max), options.shown(format, options.default, max))) {
         v.* = options.default;
         changed = true;
     }
@@ -686,6 +686,13 @@ pub const SliderOptions = struct {
     default: f32,
     /// Shown while the slider is hovered.
     help: ?[:0]const u8 = null,
+    /// Shown in place of the value at the top of the range, such as Any for no limit.
+    at_max: ?[]const u8 = null,
+
+    fn shown(options: SliderOptions, comptime format: []const u8, v: f32, max: f32) []const u8 {
+        if (options.at_max) |label| if (v >= max) return label;
+        return formatSigned(format, v);
+    }
 };
 
 /// A small button at `at` that puts a value back to its default. It's disabled while the value as

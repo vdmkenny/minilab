@@ -1754,29 +1754,13 @@ fn drawDust(state: *State) void {
             .default = Dust.default_max_size,
             .help = "Larger specks are kept · percent of the frame's long side",
         })) state.changed();
-        if (maxDensityRow(&d.max_density)) state.changed();
+        if (gui.sliderRow("Max density", &d.max_density, Dust.min_max_density, Dust.max_max_density, "{d:.2} D", .{
+            .default = Dust.default_max_density,
+            .help = "Stronger specks are kept · lower to protect lights and stars",
+            .at_max = "Any",
+        })) state.changed();
     }
     gui.endSection(false);
-}
-
-/// The slider for the most a speck can stand above the film around it, in D. At the top of its
-/// range there's no limit, shown as Any.
-fn maxDensityRow(value: *f32) bool {
-    const Dust = minilab.dust.Settings;
-    c.ImGui_PushID("Max density");
-    defer c.ImGui_PopID();
-    gui.rowLabel("Max density");
-    var changed = gui.slider("slider", value, Dust.min_max_density, Dust.max_max_density, 0);
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Stronger specks are kept · lower to protect lights and stars");
-    if (gui.valueAndReset(densityLimit(value.*), densityLimit(Dust.default_max_density))) {
-        value.* = Dust.default_max_density;
-        changed = true;
-    }
-    return changed;
-}
-
-fn densityLimit(value: f32) []const u8 {
-    return if (value >= minilab.dust.Settings.max_max_density) "Any" else gui.print("{d:.2} D", .{value});
 }
 
 /// Draws the Preset section: the film type, stock, look, tone and white balance.
