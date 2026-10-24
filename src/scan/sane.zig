@@ -822,7 +822,7 @@ pub const Scanner = struct {
             var parameters: Parameters = undefined;
             try scanner.checkOrFinish(scanner.api.get_parameters(scanner.handle, &parameters));
             const layout = Layout.of(parameters) catch |err| {
-                std.log.warn("minilab can't read the scanner's data: {d}-bit, format {d}", .{ parameters.depth, @intFromEnum(parameters.format) });
+                std.log.warn("minilab can't read the scanner's data: {d}-bit, format {d}", .{ parameters.depth, @backingInt(parameters.format) });
                 scanner.finish();
                 return err;
             };
@@ -1000,7 +1000,7 @@ fn errorOf(status: Status) Error {
 
 test "a SANE status reads as text in the log, even one SANE added later" {
     try std.testing.expectEqualStrings("invalid argument", Status.inval.text());
-    try std.testing.expectEqualStrings("unknown status", @as(Status, @enumFromInt(42)).text());
+    try std.testing.expectEqualStrings("unknown status", @as(Status, @fromBackingInt(@intCast(42))).text());
 }
 
 test "the bundled SANE looks in its own folders first, then the system's" {
