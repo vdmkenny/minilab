@@ -1,8 +1,8 @@
 //! Exports frames. For each frame we crop and turn its scan, reduce it if asked, and develop it
 //! with its saved settings (or automatic ones if it hasn't been developed yet). Then we convert it
-//! to the chosen colour space, encode it as TIFF or JPEG with that space's ICC profile and the
-//! roll's metadata, and write an XMP sidecar next to it. A `Batch` exports a roll's frames on a
-//! thread of its own, with progress and cancel.
+//! to the chosen colour space, and encode it as TIFF or JPEG with that space's ICC profile and the
+//! roll's metadata inside. A `Batch` exports a roll's frames on a thread of its own, with progress
+//! and cancel.
 //!
 //! On colour: every look develops to linear light in the scanner's RGB, which we take as having
 //! Rec. 709's primaries. `icc.Transform` wants linear Rec. 2020, so the pixels go through
@@ -260,9 +260,9 @@ pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, em
             return error.OutOfMemory;
         },
         // A TIFF too big for classic TIFF's offsets is a BigTIFF, and we don't add metadata to
-        // those. The sidecar still has all of it.
+        // those.
         error.UnexpectedFile, error.TooLarge => {
-            std.log.warn("metadata not embedded: {t}; the sidecar has it", .{err});
+            std.log.warn("metadata not embedded: {t}", .{err});
             return plain;
         },
     };
@@ -623,11 +623,6 @@ pub const Batch = struct {
         const path = try std.fs.path.join(gpa, &.{ batch.folder, name });
         defer gpa.free(path);
         try cwd.writeFile(io, .{ .sub_path = path, .data = file });
-        const sidecar_name = try std.fmt.allocPrint(gpa, "{s}.xmp", .{job.stem});
-        defer gpa.free(sidecar_name);
-        const sidecar = try std.fs.path.join(gpa, &.{ batch.folder, sidecar_name });
-        defer gpa.free(sidecar);
-        try cwd.writeFile(io, .{ .sub_path = sidecar, .data = packet });
         _ = batch.written.fetchAdd(1, .acq_rel);
     }
 };
@@ -752,7 +747,7 @@ test "a crop outside the scan is refused" {
     try std.testing.expectError(error.CropOutsideScan, developPicture(gpa, scan, .{ .scan = "01.ppm", .crop = .{ .x = 5, .y = 0, .width = 6, .height = 2 } }, .neutral, .{}, null));
 }
 
-test "a batch writes each frame's file and sidecar, and stops when cancelled" {
+test "a batch writes each frame's file with its metadata inside, and stops when cancelled" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -785,19 +780,20 @@ test "a batch writes each frame's file and sidecar, and stops when cancelled" {
     try std.testing.expectEqual(@as(f32, 1), batch.progress());
 
     const cwd = std.Io.Dir.cwd();
-    for ([_][]const u8{ "roll014_01.jpg", "roll014_03.jpg", "roll014_03.xmp" }) |name| {
+    for ([_][]const u8{ "roll014_01.jpg", "roll014_03.jpg" }) |name| {
         const path = try std.fs.path.join(gpa, &.{ folder, name });
         defer gpa.free(path);
         const bytes = try cwd.readFileAlloc(io, path, gpa, .limited(1 << 20));
         defer gpa.free(bytes);
-        if (std.mem.endsWith(u8, name, ".xmp")) {
-            try std.testing.expect(std.mem.indexOf(u8, bytes, "A. Person") != null);
-        } else {
-            var decoded = try jpeg.read(gpa, bytes);
-            defer decoded.deinit(gpa);
-            try std.testing.expectEqual(@as(usize, 24), decoded.image.width);
-        }
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "A. Person") != null);
+        var decoded = try jpeg.read(gpa, bytes);
+        defer decoded.deinit(gpa);
+        try std.testing.expectEqual(@as(usize, 24), decoded.image.width);
     }
+    // No sidecar: the metadata is in the file.
+    const sidecar = try std.fs.path.join(gpa, &.{ folder, "roll014_03.xmp" });
+    defer gpa.free(sidecar);
+    try std.testing.expectError(error.FileNotFound, cwd.access(io, sidecar, .{}));
 
     const stopped = try Batch.create(gpa, io, &catalog, &r, &.{ 0, 1, 2 }, .{ .options = .{}, .pattern = "again_{frame}", .folder = folder });
     defer stopped.destroy(gpa);
