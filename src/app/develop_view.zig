@@ -320,7 +320,7 @@ pub const State = struct {
     zoom: Zoom = .fit,
     /// How far the frame is panned at 100%, in screen pixels from the centre.
     pan: gui.Vec2 = .{ .x = 0, .y = 0 },
-    clipping: bool = true,
+    clipping: bool = false,
     picking: ?Picking = null,
     range: develop.Range = .midtones,
     /// The looks the drop-down lists, read each time it opens.
