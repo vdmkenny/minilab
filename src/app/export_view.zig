@@ -95,7 +95,6 @@ const path_field = 1024;
 const FileChoice = enum {
     jpeg,
     tiff16,
-    tiff8,
     /// Shown, but the codecs can't write it yet.
     heic,
 
@@ -103,7 +102,6 @@ const FileChoice = enum {
         return switch (choice) {
             .jpeg => "JPEG",
             .tiff16 => "TIFF 16-bit",
-            .tiff8 => "TIFF 8-bit",
             .heic => "HEIC HDR",
         };
     }
@@ -237,12 +235,10 @@ pub const State = struct {
             .format = switch (state.file) {
                 .jpeg => .jpeg,
                 // HEIC can't be written yet, and Export is off while it's chosen.
-                .tiff16, .tiff8, .heic => .tiff,
+                .tiff16, .heic => .tiff,
             },
-            .depth = switch (state.file) {
-                .tiff8, .jpeg => .eight,
-                .tiff16, .heic => .sixteen,
-            },
+            // A TIFF from Export is 16-bit, for more editing elsewhere. A JPEG is always 8-bit.
+            .depth = .sixteen,
             .quality = @intFromFloat(std.math.clamp(@round(state.quality), 1, 100)),
             .space = state.space,
             .long_edge = switch (state.size) {
@@ -727,7 +723,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     c.ImGui_Dummy(gui.vec2(0, 0));
 }
 
-/// Draws the file choices (TIFF 16-bit, TIFF 8-bit, JPEG and HEIC HDR) as pills that wrap.
+/// Draws the file choices (JPEG, TIFF 16-bit and HEIC HDR) as pills that wrap.
 /// Returns the y below them.
 fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
     var at = gui.vec2(x, top);
@@ -768,7 +764,6 @@ fn formatNote(state: *const State) []const u8 {
     const options = state.options();
     const base = switch (state.file) {
         .tiff16 => "16-bit · ZIP · ICC profile",
-        .tiff8 => "8-bit · ZIP · ICC profile",
         .jpeg => gui.print("8-bit · quality {d} · ICC profile", .{options.quality}),
         .heic => "HDR with gain map · not available yet",
     };

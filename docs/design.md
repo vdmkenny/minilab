@@ -151,8 +151,8 @@ The steps for a roll on a scanner:
    the film base in that scan's own margin.
 6. **Develop.** minilab works out automatic settings for each frame. Adjust them, pick a look,
    remove dust if you want, and sync settings across the roll.
-7. **Export.** JPEG by default, or TIFF (16 or 8 bit) for more editing in another app. HEIC with a
-   gain map will come later; Export already shows it, greyed out.
+7. **Export.** JPEG by default, or 16-bit TIFF for more editing in another app. HEIC with a gain
+   map will come later; Export already shows it, greyed out.
 
 Camera scans and imported files skip steps 2 and 4. You import RAWs, linear TIFFs or PNM scans
 into a roll (`minilab import`, or drop them on the roll in the app), detect or draw the frames, and

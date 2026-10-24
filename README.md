@@ -107,9 +107,9 @@ The app has five workspaces, roughly one per step:
   the spot under the cursor at the scan's full resolution, to check focus and grain. You can also
   give a frame 1 to 5 stars or reject it, in the bar under the picture or with Lightroom's keys:
   0 to 5 for stars, X to reject, U to take the reject back.
-- **Export** saves JPEGs, or TIFFs for more editing elsewhere, in sRGB, Display P3, Adobe RGB or
-  ProPhoto RGB, with the roll's metadata in them, at full size or with the long edge cut down to
-  a size you pick. A star filter picks the frames by rating, and rejected frames start out
+- **Export** saves JPEGs, or 16-bit TIFFs for more editing elsewhere, in sRGB, Display P3, Adobe
+  RGB or ProPhoto RGB, with the roll's metadata in them, at full size or with the long edge cut
+  down to a size you pick. A star filter picks the frames by rating, and rejected frames start out
   unticked. You can also fix the roll's camera, lens, date, copyright and notes there, and add
   metadata fields of your own.
 - **Looks** lists the looks you can develop with, and lets you make your own (see below).
