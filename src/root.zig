@@ -16,6 +16,8 @@ pub const calibration = @import("core/calibration.zig");
 pub const scanner_settings = @import("core/scanner_settings.zig");
 /// Medians, percentiles and histogram ranks.
 pub const stats = @import("core/stats.zig");
+/// Splitting work over the cores.
+pub const parallel = @import("core/parallel.zig");
 /// Straightening each layer's density by its stock's datasheet curve.
 pub const stock_curves = @import("core/stock_curves.zig");
 /// .cube LUTs, for looks.

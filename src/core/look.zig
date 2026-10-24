@@ -15,6 +15,7 @@ const std = @import("std");
 const image = @import("image.zig");
 const develop = @import("develop.zig");
 const encode = @import("encode.zig");
+const parallel = @import("parallel.zig");
 const cube_lut = @import("cube_lut.zig");
 const model = @import("../looks/model.zig");
 const saved = @import("../looks/saved.zig");
@@ -241,30 +242,28 @@ pub fn renderBanded(gpa: std.mem.Allocator, scan: image.Scan, settings: develop.
     return rendered;
 }
 
-/// The most threads a render uses.
-const max_threads = 16;
-/// Below this many pixels, starting threads costs more than it saves.
+/// Below this many pixels in a band, starting a thread costs more than it saves.
 const min_parallel_pixels = 64 * 1024;
 
 /// Develops `raw` into `out`, then applies `look` and the saturation, split over the cores. Each
 /// pixel stands alone, so the result is the same however the work is split.
 pub fn renderPixels(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, out: [][3]f32) void {
     std.debug.assert(raw.len == out.len);
-    const cores = std.Thread.getCpuCount() catch 1;
-    const count = @min(max_threads, cores, @max(1, raw.len / min_parallel_pixels));
-    const share = (raw.len + count - 1) / count;
-    var threads: [max_threads]?std.Thread = @splat(null);
-    for (threads[0 .. count - 1], 0..) |*thread, i| {
-        const from = i * share;
-        const to = @min(raw.len, from + share);
-        thread.* = std.Thread.spawn(.{}, renderBand, .{ prepared, look, raw[from..to], out[from..to] }) catch null;
-        // If we couldn't start a thread, do the band here.
-        if (thread.* == null) renderBand(prepared, look, raw[from..to], out[from..to]);
-    }
-    const last = (count - 1) * share;
-    renderBand(prepared, look, raw[last..], out[last..]);
-    for (threads[0 .. count - 1]) |thread| if (thread) |t| t.join();
+    const job: RenderJob = .{ .prepared = prepared, .look = look, .raw = raw, .out = out };
+    parallel.inBands(raw.len, parallel.bandCount(raw.len, min_parallel_pixels), job);
 }
+
+/// What each thread of `renderPixels` works on.
+const RenderJob = struct {
+    prepared: develop.Prepared,
+    look: Resolved,
+    raw: []const [3]u16,
+    out: [][3]f32,
+
+    pub fn run(job: RenderJob, _: usize, first: usize, end: usize) void {
+        renderBand(job.prepared, job.look, job.raw[first..end], job.out[first..end]);
+    }
+};
 
 fn renderBand(prepared: develop.Prepared, look: Resolved, raw: []const [3]u16, out: [][3]f32) void {
     for (out, raw) |*o, r| o.* = develop.pixel(prepared, r);

@@ -406,6 +406,56 @@ test "a point on the preview finds its pixel on the scan, however the frame is t
     }
 }
 
+test "a frame develops the same from a roll's TIFF raw scan as from an older roll's PPM, loupe too" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var scan: image.Scan = try .init(gpa, 120, 80);
+    defer scan.deinit(gpa);
+    for (scan.pixels, 0..) |*px, i| px.* = .{ @intCast(20000 + i % 120 * 300), @intCast(15000 + i / 120 * 400), @intCast(9000 + i % 7 * 50) };
+    const ppm = try minilab.pnm.write(gpa, u16, scan);
+    defer gpa.free(ppm);
+    const tif = try minilab.roll.encodeRaw(gpa, scan, null);
+    defer gpa.free(tif);
+    try tmp.dir.writeFile(io, .{ .sub_path = "01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = "01.tif", .data = tif });
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var catalog: look.Catalog = try .init(gpa, null);
+    defer catalog.deinit(gpa);
+
+    // The frame from one of the two files, developed, with the loupe on it.
+    const Developed = struct {
+        frame: Frame,
+        loupe: Frame.Patch,
+
+        fn open(name: []const u8, in: []const u8, looks: *look.Catalog) !@This() {
+            const a = std.testing.allocator;
+            const path = try std.fs.path.join(a, &.{ in, name });
+            defer a.free(path);
+            var frame: Frame = try .load(a, std.testing.io, path, name, .{ .x = 10, .y = 5, .width = 100, .height = 70 }, 1, false);
+            errdefer frame.close(a);
+            frame.measure(.colour_negative);
+            try frame.render(a, std.testing.io, looks);
+            const patch = try frame.loupe(a, std.testing.io, looks, .{ 20, 30 }, 24, false);
+            return .{ .frame = frame, .loupe = patch };
+        }
+
+        fn close(developed: *@This()) void {
+            std.testing.allocator.free(developed.loupe.pixels);
+            developed.frame.close(std.testing.allocator);
+        }
+    };
+    var from_ppm: Developed = try .open("01.ppm", folder, &catalog);
+    defer from_ppm.close();
+    var from_tif: Developed = try .open("01.tif", folder, &catalog);
+    defer from_tif.close();
+    try std.testing.expectEqualSlices([4]u8, from_ppm.frame.rendered, from_tif.frame.rendered);
+    try std.testing.expectEqual(from_ppm.loupe.width, from_tif.loupe.width);
+    try std.testing.expectEqualSlices([4]u8, from_ppm.loupe.pixels, from_tif.loupe.pixels);
+}
+
 test "the loupe's square stays inside the crop" {
     try std.testing.expectEqual(@as(usize, 10), squareStart(5, 10, 10, 100));
     try std.testing.expectEqual(@as(usize, 45), squareStart(50, 10, 10, 100));

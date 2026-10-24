@@ -1,7 +1,8 @@
 //! Colour profiles through LittleCMS 2. This builds the output spaces minilab offers from their
 //! definitions, gives each space's ICC profile as bytes to embed in a TIFF or a JPEG, and makes
 //! the transform from linear Rec. 2020 to any of them. (Export converts the developed pixels to
-//! linear Rec. 2020 before it uses the transform.)
+//! linear Rec. 2020 before it uses the transform.) It also builds linear sRGB, the profile a
+//! roll's raw scans carry.
 //!
 //! The profiles are ICC version 2.4 matrix-shaper profiles, which every colour-managed program
 //! can read. Where version 2 can't describe a curve with a formula, LittleCMS stores it as a
@@ -19,6 +20,10 @@ pub const Space = enum {
     adobe_rgb,
     prophoto,
     rec2020_linear,
+    /// What a roll's raw scans say they're in (`roll.encodeRaw`). They hold linear light in the
+    /// scanner's own channels, which aren't quite sRGB's, but on a negative it's the brightness
+    /// that matters: with this, other apps show it at the right brightness rather than too dark.
+    srgb_linear,
 };
 
 /// The rendering intents, numbered the way LittleCMS numbers them. Between two matrix-shaper
@@ -82,6 +87,9 @@ fn primaries(red: [2]f64, green: [2]f64, blue: [2]f64) c.cmsCIExyYTRIPLE {
     };
 }
 
+/// sRGB's primaries, from IEC 61966-2-1, which Rec. 709 shares.
+const srgb_primaries = primaries(.{ 0.64, 0.33 }, .{ 0.30, 0.60 }, .{ 0.15, 0.06 });
+
 /// The name the space's profile gives it.
 pub fn nameOf(space: Space) [:0]const u8 {
     return definition(space).description;
@@ -93,7 +101,7 @@ fn definition(space: Space) Definition {
         .srgb => .{
             .description = "sRGB",
             .white = d65,
-            .primaries = primaries(.{ 0.64, 0.33 }, .{ 0.30, 0.60 }, .{ 0.15, 0.06 }),
+            .primaries = srgb_primaries,
             .transfer = srgb_transfer,
         },
         // DCI-P3's primaries with D65 and the sRGB curve, as Apple defines it.
@@ -123,6 +131,12 @@ fn definition(space: Space) Definition {
             .description = "Rec. 2020 linear",
             .white = d65,
             .primaries = primaries(.{ 0.708, 0.292 }, .{ 0.170, 0.797 }, .{ 0.131, 0.046 }),
+            .transfer = .linear,
+        },
+        .srgb_linear => .{
+            .description = "sRGB linear",
+            .white = d65,
+            .primaries = srgb_primaries,
             .transfer = .linear,
         },
     };
@@ -279,6 +293,18 @@ test "linear Rec. 2020 middle grey and white become sRGB's" {
     for (output[0]) |sample| try std.testing.expectApproxEqAbs(srgb_middle_grey, @as(f32, @floatFromInt(sample)), 1);
     try std.testing.expectEqual([image.channel_count]u8{ 255, 255, 255 }, output[1]);
     try std.testing.expectEqual([image.channel_count]u8{ 0, 0, 0 }, output[2]);
+}
+
+test "a raw scan's profile is linear: grey keeps its share of the light" {
+    var transform: Transform(f32) = try .init(.srgb_linear, .relative_colorimetric);
+    defer transform.deinit();
+    const input = [_][image.channel_count]f32{ @splat(0.18), @splat(0.5) };
+    var output: [input.len][image.channel_count]f32 = undefined;
+    transform.apply(&input, &output);
+    const tolerance = 1e-3;
+    for (input, output) |expected, actual| {
+        for (expected, actual) |e, a| try std.testing.expectApproxEqAbs(e, a, tolerance);
+    }
 }
 
 test "a float transform to linear Rec. 2020 changes nothing and keeps values above 1" {
