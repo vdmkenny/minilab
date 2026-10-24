@@ -537,10 +537,12 @@ How it works (`core/dust.zig`), on the frame's scan, cropped and turned:
    thin fibre can be twice as long. A speck also stays if it's denser than Max density, if the film
    beside it is much denser on one side than another (it's a highlight on an edge), or if it's the
    peak of a bigger clump, like a lamp's bulb in its glow.
-5. Each speck, and a pixel or two round it for its soft edge, is filled with the plane through the
-   film around it plus the grain of a patch nearby whose grain matches the film around the speck.
-   So the grain carries on through the speck, fine or coarse. Where no patch matches, the speck is
-   filled smoothly from its edge inwards. Nothing away from the specks changes.
+5. Each speck, and a pixel or two round it for its soft edge, is filled the way a healing brush
+   does it: with the patch of film nearby whose ring of pixels best matches the ring round the
+   speck, evened out to the speck's ring by the plane through the difference between the two. So
+   grain, fine or coarse, and the picture's own texture, such as fur, carry on through the speck
+   from real film. Where there's no patch to take (at the picture's edge, or among other specks),
+   the speck is filled smoothly from its edge inwards. Nothing away from the specks changes.
 
 The sizes are shares of the frame's longer side, so the same specks go at any resolution, from any
 scanner or camera. Develop removes the dust from its reduced copy, and keeps the result until the
