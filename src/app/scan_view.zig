@@ -2117,6 +2117,12 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
     ctx.gpa.free(preview.openings);
     preview.openings = openings;
+    // Frames kept from hand edits that take the opening's full height follow the opening as it's
+    // found now. The strip can sit a little differently in a new preview, and they'd stick out of
+    // it.
+    for (state.boxes.items) |*box| {
+        if (box.hand and box.full_height) reshape(box, preview, format);
+    }
     // The film's base is measured on the strip, now there are frames on it.
     if (state.boxes.items.len > 1) if (preview.texture) |*t| {
         t.release(ctx.gpu);
