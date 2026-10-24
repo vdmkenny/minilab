@@ -1731,22 +1731,29 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     drawDust(state);
 }
 
-/// Draws the Dust section: dust removal, how far above the grain a speck stands, and the limits
-/// that keep the picture's own small highlights.
+/// Draws the dust section: its heading is the check box that turns dust removal on, then how far
+/// above the grain a speck stands, and the limits that keep the picture's own small highlights.
 fn drawDust(state: *State) void {
     const d = &state.frame.?.settings.dust;
     const Dust = minilab.dust.Settings;
     gui.beginSection("dust");
-    gui.heading("DUST");
+    fonts.pushSized(.semibold, fonts.small_size);
+    const toggled = gui.checkbox("REMOVE DUST", &d.remove);
+    fonts.pop();
+    if (toggled) state.changed();
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
         defer c.ImGui_PopStyleVar();
-        gui.rowLabel("");
-        if (gui.checkbox("Remove dust", &d.remove)) state.changed();
         c.ImGui_BeginDisabled(!d.remove);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{ .default = Dust.default_threshold })) state.changed();
-        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{ .default = Dust.default_max_size })) state.changed();
+        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{
+            .default = Dust.default_threshold,
+            .help = "Lower removes fainter specks · higher only obvious ones",
+        })) state.changed();
+        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{
+            .default = Dust.default_max_size,
+            .help = "Larger specks are kept · percent of the frame's long side",
+        })) state.changed();
         if (maxDensityRow(&d.max_density)) state.changed();
     }
     gui.endSection(false);
@@ -1760,6 +1767,7 @@ fn maxDensityRow(value: *f32) bool {
     defer c.ImGui_PopID();
     gui.rowLabel("Max density");
     var changed = gui.slider("slider", value, Dust.min_max_density, Dust.max_max_density, 0);
+    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Stronger specks are kept · lower to protect lights and stars");
     if (gui.valueAndReset(densityLimit(value.*), densityLimit(Dust.default_max_density))) {
         value.* = Dust.default_max_density;
         changed = true;

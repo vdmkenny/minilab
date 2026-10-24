@@ -613,7 +613,7 @@ test "XMP escapes what the roll says and gives dates as dates" {
     dusted.develop.?.settings.?.dust.remove = true;
     const cleaned = try xmp(gpa, dusted);
     defer gpa.free(cleaned);
-    try std.testing.expect(std.mem.indexOf(u8, cleaned, "minilab:DustRemoval=\"8.0 0.8 1.50\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, cleaned, "minilab:DustRemoval=\"8.0 0.5 1.50\"") != null);
 
     var vague = example;
     vague.shot = "summer";

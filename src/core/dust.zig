@@ -57,8 +57,8 @@ pub const Settings = struct {
     /// the top, only a few of the most obvious specks are left to find.
     pub const min_threshold = 6;
     pub const max_threshold = 20;
-    /// 0.8% is about 0.3 mm on 35mm film. Past 1.2%, hardly any more specks come in.
-    pub const default_max_size = 0.8;
+    /// 0.5% is about 0.2 mm on 35mm film. Past 1.2%, hardly any more specks come in.
+    pub const default_max_size = 0.5;
     pub const min_max_size = 0.2;
     pub const max_max_size = 1.2;
     /// At 0.2 D only faint specks go. Past 1.5 D, little but a light in the picture is that much
@@ -82,6 +82,10 @@ pub const Polarity = enum {
     light,
 };
 
+/// The size, in percent of the frame's longer side, that measuring the grain and grouping specks
+/// are set for. The opening is never narrower than this, so a `max_size` below it only leaves
+/// more alone.
+const tuned_size = 0.8;
 /// A fibre can be this many times longer than the largest speck is wide, if it's on average this
 /// many times thinner.
 const fibre_length = 2;
@@ -112,17 +116,17 @@ comptime {
 }
 
 /// The sizes the steps work at, in pixels, for a frame `frame_longest` pixels along its longer side
-/// and specks up to `max_size` percent of that. Below the default `max_size`, finding the specks
-/// works just as at the default, and only what fits as a speck shrinks, so a smaller `max_size`
-/// only ever leaves more alone. Above it, the opening grows to let bigger specks stand out.
+/// and specks up to `max_size` percent of that. Below `tuned_size`, finding the specks works just
+/// as at `tuned_size`, and only what fits as a speck shrinks, so a smaller `max_size` only ever
+/// leaves more alone. Above it, the opening grows to let bigger specks stand out.
 const Sizes = struct {
     /// The opening's square reaches this far from its centre, so it's `2 * speck + 1` across. A
     /// speck has to be narrower than that to stand out from the opening.
     speck: usize,
     /// The widest speck that fits.
     widest: usize,
-    /// `speck` at the default `max_size`: how close specks are to group, and how far round a
-    /// speck the film it sits on is measured.
+    /// `speck` at `tuned_size`: how close specks are to group, and how far round a speck the film
+    /// it sits on is measured.
     near: usize,
     grain: usize,
     edge: usize,
@@ -130,7 +134,7 @@ const Sizes = struct {
     fn of(frame_longest: usize, max_size: f32) Sizes {
         const longest: f32 = @floatFromInt(frame_longest);
         const size = std.math.clamp(max_size, Settings.min_max_size, Settings.max_max_size);
-        const near = reach(longest, Settings.default_max_size);
+        const near = reach(longest, tuned_size);
         const speck = @max(near, reach(longest, size));
         return .{
             .speck = speck,
@@ -1006,8 +1010,9 @@ fn densityAround(scan: image.Scan, cx: usize, cy: usize, radius: usize) f32 {
 }
 
 const test_speck = 0.5;
-/// Dust removal on, as it starts.
-const on: Settings = .{ .remove = true };
+/// Dust removal on, with specks up to the size the steps are tuned for, which the tests' specks
+/// are drawn to.
+const on: Settings = .{ .remove = true, .max_size = tuned_size };
 
 test "specks on grainy film are filled in, and nothing else changes" {
     const gpa = std.testing.allocator;
@@ -1028,7 +1033,7 @@ test "specks on grainy film are filled in, and nothing else changes" {
         try std.testing.expectApproxEqAbs(densityAround(film, s[0], s[1], s[2] + 1), densityAround(scan, s[0], s[1], s[2] + 1), 3 * fine_grain.density);
     }
     // Away from the specks, every pixel is as it was.
-    const sizes: Sizes = .of(scan.width, Settings.default_max_size);
+    const sizes: Sizes = .of(scan.width, tuned_size);
     for (scan.pixels, dusty.pixels, 0..) |after, was, i| {
         const x = i % scan.width;
         const y = i / scan.width;
@@ -1043,7 +1048,7 @@ test "spots too big for dust, texture, lines and edges are the picture" {
     var scan = try testFilm(gpa, 800, 600, fine_grain);
     defer scan.deinit(gpa);
     // A spot five times the largest speck.
-    addDisc(scan, 150, 150, 5 * Sizes.of(scan.width, Settings.default_max_size).speck, test_speck);
+    addDisc(scan, 150, 150, 5 * Sizes.of(scan.width, tuned_size).speck, test_speck);
     // Texture: specks close together all over a patch.
     var y: usize = 300;
     while (y < 380) : (y += 5) {
@@ -1071,7 +1076,7 @@ test "a thin fibre comes out, and a thick one is the picture" {
         var scan = try testFilm(gpa, 1600, 1200, fine_grain);
         defer scan.deinit(gpa);
         // Half as long again as the largest speck is wide.
-        const length = Sizes.of(scan.width, Settings.default_max_size).across() * 3 / 2;
+        const length = Sizes.of(scan.width, tuned_size).across() * 3 / 2;
         for (0..length) |i| addDisc(scan, 600 + i, 600 + i / 4, radius, test_speck);
         try std.testing.expectEqual(@as(usize, if (radius == 0) 1 else 0), try remove(gpa, scan, on, .dense, scan.width));
     }
@@ -1187,13 +1192,13 @@ test "a smaller max size and a lower max density only ever leave more alone" {
     var film = try testFilm(gpa, 1200, 800, fine_grain);
     defer film.deinit(gpa);
     // Specks from one pixel to nearly the widest, faint and dense.
-    const widest = Sizes.of(film.width, Settings.default_max_size).widest;
+    const widest = Sizes.of(film.width, tuned_size).widest;
     for (0..widest / 2, 0..) |radius, i| {
         addDisc(film, 100 + 150 * i, 200, radius, test_speck);
         addDisc(film, 100 + 150 * i, 500, radius, 3 * test_speck);
     }
     var last: usize = std.math.maxInt(usize);
-    for ([_]f32{ Settings.max_max_size, Settings.default_max_size, 0.5, Settings.min_max_size }) |size| {
+    for ([_]f32{ Settings.max_max_size, tuned_size, Settings.default_max_size, 0.3, Settings.min_max_size }) |size| {
         var scan = try film.crop(gpa, .whole(film.width, film.height));
         defer scan.deinit(gpa);
         const found = try remove(gpa, scan, .{ .remove = true, .max_size = size }, .dense, scan.width);
@@ -1207,7 +1212,7 @@ test "a smaller max size and a lower max density only ever leave more alone" {
     var all = try film.crop(gpa, .whole(film.width, film.height));
     defer all.deinit(gpa);
     const everything = try remove(gpa, all, on, .dense, scan.width);
-    try std.testing.expectEqual(everything / 2, try remove(gpa, scan, .{ .remove = true, .max_density = 1 }, .dense, scan.width));
+    try std.testing.expectEqual(everything / 2, try remove(gpa, scan, .{ .remove = true, .max_size = tuned_size, .max_density = 1 }, .dense, scan.width));
 }
 
 test "a bulb in a lamp's glow is the picture" {
@@ -1215,7 +1220,7 @@ test "a bulb in a lamp's glow is the picture" {
     var scan = try testFilm(gpa, 800, 600, fine_grain);
     defer scan.deinit(gpa);
     // A soft glow, wider than the largest speck, and the bulb at its heart.
-    const glow = 3 * Sizes.of(scan.width, Settings.default_max_size).speck;
+    const glow = 3 * Sizes.of(scan.width, tuned_size).speck;
     for (0..2 * glow + 1) |dy| for (0..2 * glow + 1) |dx| {
         const r2: f32 = @floatFromInt((dx -| glow) * (dx -| glow) + (glow -| dx) * (glow -| dx) + (dy -| glow) * (dy -| glow) + (glow -| dy) * (glow -| dy));
         const d = 2 * test_speck * @exp(-r2 / @as(f32, @floatFromInt(glow * glow)));

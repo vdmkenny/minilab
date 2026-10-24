@@ -507,9 +507,9 @@ or the settings change. A pick (film base or neutral) still works with it on, at
 ### Dust
 
 Dust on the film blocks light, so on a raw scan a speck is a small spot that's denser than the film
-around it, on a negative or a slide alike. Develop's Dust section turns dust removal on for a
-frame. It's off to begin with, it's saved with the frame's settings, and Sync copies it with the
-rest (section 8). Without an infrared channel there's no sure way to tell dust from the picture,
+around it, on a negative or a slide alike. In Develop, the Remove dust box, which heads its own
+section, turns dust removal on for a frame. It's off to begin with, it's saved with the frame's
+settings, and Sync copies it with the rest (section 8). Without an infrared channel there's no sure way to tell dust from the picture,
 so it's something you turn on where it helps, with three limits to keep the picture's own small
 highlights:
 
@@ -517,7 +517,8 @@ highlights:
   grain. Lower finds fainter specks. Below 6, the clumps of a fast film's grain start to look like
   dust, so the slider stops there.
 - **Max size:** the widest speck, as a share of the frame's longer side, from 0.2% to 1.2%. The
-  default, 0.8%, is about 0.3 mm on 35mm film. A smaller size only ever leaves more alone.
+  default, 0.5%, is about 0.2 mm on 35mm film. Up to 0.8% a smaller size only ever leaves more
+  alone; above that, bigger specks come in too.
 - **Max density:** the most a speck can stand above the film around it, from 0.2 D up to Any (no
   limit), the default. The bulbs in a string of fairy lights usually stand further above the film
   than dust does, so a lower limit keeps lights, stars and the like.
