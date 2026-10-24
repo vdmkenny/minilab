@@ -312,9 +312,10 @@ keeps it flat. 120 and anything wider needs another scanner or a camera.
 
 Film holders usually cover the edges of the film, but a little clear film beside the picture
 still shows. So detection measures each picture: along the strip between the gaps either side of
-it, and across from where the exposure starts. Scan's Frames menu then fits each frame to its
-picture. Roll format puts the biggest box of the format's ratio inside it, and Whole frame takes
-the picture's own edges, so frames that aren't quite the format's size need no cropping by hand.
+it, and across from where the exposure starts. Scan's Frame detection menu then fits each frame
+to its picture. Preserve aspect ratio puts the biggest box of the format's ratio inside it, and
+Detect full frame takes the picture's own edges, so frames that aren't quite the format's size
+need no cropping by hand.
 
 Detection on a strip preview works like this for negatives (`src/frames/detect.zig`):
 

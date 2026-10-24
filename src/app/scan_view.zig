@@ -8,9 +8,9 @@
 //!    and the resolution. We use the transparency unit whenever the scanner has one.
 //! 2. Preview: scan the scanner's whole film area at its lowest resolution of 300 dpi or more.
 //! 3. Detect frames on the preview (`minilab.frames.detect`) for the open roll's format. Each frame
-//!    fits its picture the way the Frames menu says: a box of the format's ratio inside it, or the
-//!    whole picture. A holder can have several openings side by side, each with a strip of its
-//!    own, and the frames go in order of opening and then along each strip.
+//!    fits its picture the way the Frame detection menu says: a box of the format's ratio inside
+//!    it, or the whole picture. A holder can have several openings side by side, each with a strip
+//!    of its own, and the frames go in order of opening and then along each strip.
 //! 4. Adjust the boxes: drag them along the strip, resize them in the frame view, and add, split
 //!    or delete them. Frames edited by hand are kept when frames are detected again.
 //! 5. Scan each frame at full resolution with a margin around it, on the scan thread
@@ -991,12 +991,12 @@ fn drawMargin(state: *State, panel: ScannerPanel, y: f32) f32 {
 /// again. Returns the y below it.
 fn drawFit(state: *State, panel: ScannerPanel, top: f32) f32 {
     var y = top;
-    y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Frames") + gui.px(group_gap);
+    y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Frame detection") + gui.px(group_gap);
     const ratio = if (panel.roll_index) |r| labels.ratio(panel.ctx.library.rolls.items[r].info.format.format().ratio()) else null;
     var items: [std.enums.values(frames.Fit).len][]const u8 = undefined;
     for (&items, std.enums.values(frames.Fit)) |*item, fit| item.* = switch (fit) {
-        .format => if (ratio) |text| gui.print("Roll format, {s}", .{text}) else "Roll format",
-        .whole => "Whole frame",
+        .format => if (ratio) |text| gui.print("Preserve aspect ratio ({s})", .{text}) else "Preserve aspect ratio",
+        .whole => "Detect full frame",
     };
     c.ImGui_BeginDisabled(state.scanning);
     if (menu(panel, y, "fit", &items, @backingInt(state.fit))) |picked| {
