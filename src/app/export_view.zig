@@ -496,7 +496,7 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
         state.applyFilter(r);
     }
     c.ImGui_PopStyleVar();
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Rejected left out");
+    gui.tooltip("Rejected left out");
     c.ImGui_SetCursorScreenPos(gui.vec2(all_x, top));
     if (gui.buttonOf(.normal, "Select all", gui.vec2(all_width / gui.scale, control_height))) state.selectAll(true);
     shortcuts.tooltip("Select all", .select_all);
@@ -537,7 +537,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         const hovered = c.ImGui_IsItemHovered(0);
         const frame = r.frames.items[i];
         if (hovered) {
-            c.ImGui_SetTooltip("%s", gui.print("Frame {d} · {s}", .{ i + 1, if (!frame.developed) "not developed · automatic settings" else frame.look.label() }).ptr);
+            gui.showTooltip(gui.print("Frame {d} · {s}", .{ i + 1, if (!frame.developed) "not developed · automatic settings" else frame.look.label() }));
         }
         if (clicked) {
             if (shift and state.anchor != null) {
@@ -720,7 +720,7 @@ fn drawSettings(state: *State, ctx: context.Context, roll_index: usize) void {
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
         const why: ?[]const u8 = if (running) "Export under way" else if (count == 0) "No frames selected" else if (!pattern_ok) "Invalid file name pattern" else if (!folder_ok) "No folder chosen" else null;
-        if (why) |text| c.ImGui_SetTooltip("%s", gui.print("{s}", .{text}).ptr);
+        if (why) |text| gui.showTooltip(text);
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, button_y + gui.px(export_height + panel_padding)));
     c.ImGui_Dummy(gui.vec2(0, 0));
@@ -742,7 +742,7 @@ fn drawFileChoices(state: *State, x: f32, top: f32, width: f32) f32 {
         c.ImGui_SetCursorScreenPos(at);
         if (choice == .heic) {
             drawUnavailable(label, gui.vec2(pill_width, height));
-            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Not available yet");
+            if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) gui.showTooltip("Not available yet");
         } else {
             if (gui.buttonOf(if (state.file == choice) .selected else .unselected, label, gui.vec2(pill_width / gui.scale, pill_height))) state.file = choice;
         }
@@ -829,6 +829,7 @@ fn qualityRow(state: *State, grid: FileGrid, top: f32) f32 {
     rowLabel(list, x, y, "Quality");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x, y + (row - c.ImGui_GetFrameHeight()) / 2));
     _ = gui.slider("quality", &state.quality, 1, 100, control_width / gui.scale - gui.value_column - gui.label_gap - gui.reset_space);
+    gui.tooltip("Higher is sharper and larger · 90 and up keep full color");
     state.quality = @round(state.quality);
     const shown = gui.print("{d:.0}", .{state.quality});
     gui.valueText(shown);
@@ -855,7 +856,7 @@ fn longEdgeRow(state: *State, grid: FileGrid, top: f32) f32 {
     _ = c.ImGui_InputTextWithHint("##long edge", "3000", &state.custom_edge, state.custom_edge.len + 1, c.ImGuiInputTextFlags_CharsDecimal);
     c.ImGui_PopStyleVar();
     fonts.pop();
-    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("%s", gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }).ptr);
+    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) gui.showTooltip(gui.print("{d} to {d} px", .{ min_custom_edge, max_custom_edge }));
     const unit_y = y + (row - c.ImGui_GetFontSize()) / 2;
     c.ImDrawList_AddText(list, gui.vec2(control_x + gui.px(edge_field_width + unit_gap), unit_y), theme.imU32(theme.text_tertiary), "px");
     y += row + gui.px(grid_gap);
@@ -878,7 +879,7 @@ fn namesRow(state: *State, grid: FileGrid, top: f32) f32 {
     c.ImGui_PopStyleVar();
     fonts.pop();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip("{roll}  roll name, lowercase\n{name}  roll name\n{frame}  frame number\n{frame:02}  two digits\n{stock}  film stock\n{date}  date shot");
+        gui.showTooltip("{roll}  roll name, lowercase\n{name}  roll name\n{frame}  frame number\n{frame:02}  two digits\n{stock}  film stock\n{date}  date shot");
     }
     y += row;
     if (exporting.checkPattern(std.mem.sliceTo(&state.pattern, 0))) |_| {} else |err| {
@@ -908,7 +909,7 @@ fn folderRow(state: *State, ctx: context.Context, grid: FileGrid, y: f32) f32 {
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (row - c.ImGui_GetFontSize()) / 2));
     _ = gui.textField("folder", &state.folder, "Roll/exports", (control_width - choose_width - gui.px(field_gap)) / gui.scale);
     c.ImGui_PopStyleVar();
-    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) c.ImGui_SetTooltip("Relative to the library");
+    if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) gui.showTooltip("Relative to the library");
     c.ImGui_SetCursorScreenPos(gui.vec2(control_x + control_width - choose_width, y));
     c.ImGui_BeginDisabled(state.dialog.isShowing());
     if (gui.buttonOf(.normal, "Choose", gui.vec2(choose_width / gui.scale, control_height))) chooseFolder(state, ctx);
@@ -973,7 +974,7 @@ fn fixedValue(list: *c.ImDrawList, label: [:0]const u8, fixed: FixedValue, at: g
     if (fixed.why) |why| {
         c.ImGui_SetCursorScreenPos(at);
         _ = c.ImGui_InvisibleButton(label, gui.vec2(width, row), 0);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{why}).ptr);
+        gui.tooltip(why);
     }
 }
 
@@ -988,7 +989,7 @@ fn drawOwnFields(state: *State, ctx: context.Context, r: *roll.Roll, list: *c.Im
     const add_width = gui.fittedWidth("Add field", pill_padding);
     c.ImGui_SetCursorScreenPos(gui.vec2(x + width - add_width, y));
     const add = gui.buttonOf(.normal, "Add field", gui.vec2(add_width / gui.scale, detail_row));
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Written to XMP");
+    gui.tooltip("Written to XMP");
     y += row + gui.px(metadata_gap);
     syncFields(state, ctx.gpa, r);
     var remove: ?usize = null;
@@ -1016,7 +1017,7 @@ fn drawOwnFields(state: *State, ctx: context.Context, r: *roll.Roll, list: *c.Im
         c.ImGui_SetCursorScreenPos(gui.vec2(x + width - remove_size, y));
         if (c.ImGui_InvisibleButton("remove", gui.vec2(remove_size, remove_size), 0)) remove = i;
         const hovered = c.ImGui_IsItemHovered(0);
-        if (hovered) c.ImGui_SetTooltip("Remove");
+        if (hovered) gui.showTooltip("Remove");
         const centre = gui.vec2(x + width - remove_size / 2, y + row / 2);
         gui.cross(list, centre, gui.px(remove_arm), gui.px(remove_thickness), if (hovered) theme.text else theme.text_tertiary);
         y += row + gui.px(metadata_gap);
@@ -1067,7 +1068,7 @@ fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.D
     _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
-    if (which == .shot and c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("YYYY, YYYY-MM or YYYY-MM-DD");
+    if (which == .shot) gui.tooltip("YYYY, YYYY-MM or YYYY-MM-DD");
     if (trackEdit(state, .{ .detail = which }) and fits) {
         r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
     }

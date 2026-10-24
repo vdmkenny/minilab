@@ -297,7 +297,7 @@ fn keyName(key: c.ImGuiKey) []const u8 {
 /// `command`.
 pub fn tooltip(text: []const u8, command: Command) void {
     if (!c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) return;
-    if (!c.ImGui_BeginTooltip()) return;
+    if (!gui.beginTooltip()) return;
     defer c.ImGui_EndTooltip();
     gui.text(text);
     c.ImGui_SameLineEx(0, gui.px(tooltip_keys_gap));

@@ -63,10 +63,13 @@ pub fn imU32(color: Color) u32 {
     return c.ImGui_ColorConvertFloat4ToU32(color);
 }
 
+/// The padding inside windows, popups and tooltips, in the design's pixels.
+pub const window_padding = 12;
+
 /// Sets ImGui's style to the design, at `scale` (the display's content scale).
 pub fn apply(scale: f32) void {
     const style = c.ImGui_GetStyle();
-    style.*.WindowPadding = .{ .x = 12, .y = 12 };
+    style.*.WindowPadding = .{ .x = window_padding, .y = window_padding };
     // Controls 30 pixels high around 13-pixel text, as in the design.
     style.*.FramePadding = .{ .x = 10, .y = 8.5 };
     style.*.ItemSpacing = .{ .x = 8, .y = 8 };

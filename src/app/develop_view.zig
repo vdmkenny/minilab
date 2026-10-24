@@ -89,6 +89,7 @@ const crop_icon = struct {
     };
 };
 const turn_icon_radius = 5.5;
+const loupe_icon_radius = 7.5;
 /// The reject cross: its arms as a share of the rating icon, and its stroke.
 const reject_arm = 0.3;
 const reject_stroke = 1.6;
@@ -319,7 +320,7 @@ pub const State = struct {
     zoom: Zoom = .fit,
     /// How far the frame is panned at 100%, in screen pixels from the centre.
     pan: gui.Vec2 = .{ .x = 0, .y = 0 },
-    clipping: bool = true,
+    clipping: bool = false,
     picking: ?Picking = null,
     range: develop.Range = .midtones,
     /// The looks the drop-down lists, read each time it opens.
@@ -752,7 +753,7 @@ pub const State = struct {
         }
         c.ImGui_Separator();
         if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("3D or 1D · sRGB or Rec. 709");
+        gui.tooltip("3D or 1D · sRGB or Rec. 709");
     }
 
     /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
@@ -1063,7 +1064,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
         c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - c.ImGui_CalcTextSize(counted).x, 0);
         c.ImGui_SetCursorPosY(header_y);
         gui.textColored(theme.text_tertiary, counted);
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Developed of all frames");
+        gui.tooltip("Developed of all frames");
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(frames_heading_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
@@ -1179,23 +1180,22 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(toolbar.padding_x), origin.y + gui.px(toolbar.padding_y)));
     if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
-    c.ImGui_SameLineEx(0, gui.px(toolbar.group_gap));
-    c.ImGui_SetCursorScreenPos(gui.vec2(c.ImGui_GetCursorScreenPos().x, controls_y));
+    nextControl(toolbar.group_gap, controls_y);
     if (gui.button("Fit")) {
         state.zoom = .fit;
         state.pan = .{ .x = 0, .y = 0 };
     }
     shortcuts.tooltip("Whole frame", .zoom_out);
-    c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+    nextControl(toolbar.button_gap, controls_y);
     if (gui.button("100%")) state.zoom = .actual;
     shortcuts.tooltip("Actual pixels · drag to move", .zoom_in);
-    c.ImGui_SameLineEx(0, gui.px(toolbar.group_gap));
+    nextControl(toolbar.group_gap, controls_y);
     if (gui.checkbox("Clipping", &state.clipping)) state.shown_stale = true;
     shortcuts.tooltip("Clipped highlights red, shadows blue", .clipping);
-    c.ImGui_SameLineEx(0, gui.px(toolbar.group_gap));
-    _ = gui.checkbox("Loupe", &state.loupe);
-    shortcuts.tooltip("Full resolution", .loupe);
-    c.ImGui_SameLineEx(0, gui.px(toolbar.group_gap));
+    nextControl(toolbar.group_gap, controls_y);
+    if (loupeButton(list, state.loupe)) state.loupe = !state.loupe;
+    shortcuts.tooltip("Loupe · full resolution", .loupe);
+    nextControl(toolbar.group_gap, controls_y);
     c.ImGui_BeginDisabled(state.frame == null);
     const crop_corner = c.ImGui_GetCursorScreenPos();
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(crop_icon.inset + crop_icon.size + crop_icon.gap) / 2 + gui.px(crop_icon.label_padding), c.ImGui_GetStyle().*.FramePadding.y));
@@ -1210,16 +1210,16 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
     if (state.cropping == null) {
         // Turning is quicker here than through the crop tool.
         c.ImGui_BeginDisabled(state.frame == null);
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        nextControl(toolbar.button_gap, controls_y);
         if (turnButton(list, "turn left", false)) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
         shortcuts.tooltip("Rotate left", .turn_left);
-        c.ImGui_SameLineEx(0, gui.px(toolbar.turn_gap));
+        nextControl(toolbar.turn_gap, controls_y);
         if (turnButton(list, "turn right", true)) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
         shortcuts.tooltip("Rotate right", .turn_right);
         c.ImGui_EndDisabled();
     }
     if (state.cropping != null) {
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        nextControl(toolbar.button_gap, controls_y);
         if (gui.button("Auto")) {
             const frame = &state.frame.?;
             if (frame.detect(gpa, state.format(library), state.dpi(library))) |area| {
@@ -1228,17 +1228,17 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
                 state.cropping.?.max = .{ @as(f32, @floatFromInt(area.x + area.width)) / scale, @as(f32, @floatFromInt(area.y + area.height)) / scale };
             } else |_| {}
         }
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Detect the frame");
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        gui.tooltip("Detect the frame");
+        nextControl(toolbar.button_gap, controls_y);
         if (gui.button("Turn left")) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
         shortcuts.tooltip("Rotate left", .turn_left);
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        nextControl(toolbar.button_gap, controls_y);
         if (gui.button("Turn right")) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
         shortcuts.tooltip("Rotate right", .turn_right);
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        nextControl(toolbar.button_gap, controls_y);
         if (gui.buttonOf(if (state.cropping.?.mirrored) .selected else .normal, "Mirror", gui.vec2(0, 0))) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
         shortcuts.tooltip("Flip", .mirror);
-        c.ImGui_SameLineEx(0, gui.px(toolbar.button_gap));
+        nextControl(toolbar.button_gap, controls_y);
         if (gui.buttonOf(.primary, "Done", gui.vec2(0, 0))) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
         shortcuts.tooltip("Keeps the crop", .confirm);
     }
@@ -1251,6 +1251,14 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
     const pipeline_x = origin.x + width - gui.px(toolbar.padding_x) - pipeline_size.x;
     if (pipeline_x > controls_end + gui.px(toolbar.pipeline_room)) c.ImDrawList_AddText(list, gui.vec2(pipeline_x, origin.y + (toolbar_height - pipeline_size.y) / 2), theme.imU32(theme.text_tertiary), pipeline);
     fonts.pop();
+}
+
+/// Moves on to the toolbar's next control, `gap` design pixels along, at `y`. The view switch
+/// before them is taller, so a plain `SameLine` would put each control at its top instead of in
+/// the middle of the toolbar.
+fn nextControl(gap: f32, y: f32) void {
+    c.ImGui_SameLineEx(0, gui.px(gap));
+    c.ImGui_SetCursorScreenPos(gui.vec2(c.ImGui_GetCursorScreenPos().x, y));
 }
 
 /// Draws the info line, `info_height` high, across the bottom at `origin`: the frame's details on
@@ -1603,6 +1611,15 @@ fn drawCropIcon(list: *c.ImDrawList, corner: gui.Vec2) void {
     }
 }
 
+/// A square button with a loupe on it, lit while the loupe is on. Returns true when it's clicked.
+fn loupeButton(list: *c.ImDrawList, on: bool) bool {
+    const side = c.ImGui_GetFrameHeight();
+    const corner = c.ImGui_GetCursorScreenPos();
+    const clicked = gui.buttonOf(if (on) .selected else .normal, "##loupe", gui.vec2(side / gui.scale, side / gui.scale));
+    gui.loupeIcon(list, gui.vec2(corner.x + side / 2, corner.y + side / 2), gui.px(loupe_icon_radius), if (on) theme.text else theme.text_secondary);
+    return clicked;
+}
+
 /// A square button with a turn arrow on it. Returns true when it's clicked.
 fn turnButton(list: *c.ImDrawList, id: [:0]const u8, clockwise: bool) bool {
     const side = c.ImGui_GetFrameHeight();
@@ -1685,17 +1702,35 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         defer c.ImGui_PopStyleVar();
         // Each slider resets to the frame's automatic setting, on its current film base.
         const auto = frame.automaticSettings();
-        if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}", .{ .default = auto.density_range })) state.changed();
-        if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}", .{ .default = auto.offset })) state.changed();
+        if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}", .{
+            .default = auto.density_range,
+            .help = "Lower brightens highlights · higher keeps them from clipping",
+        })) state.changed();
+        if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}", .{
+            .default = auto.offset,
+            .help = "Higher sends more shadows to black · lower lifts them",
+        })) state.changed();
         drawMatrix(state);
         c.ImGui_Dummy(gui.vec2(0, gui.px(inversion_gap)));
         gui.heading("INVERSION");
         c.ImGui_BeginDisabled(fitted);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Contrast", &s.contrast, 1, 8, "{d:.2}", .{ .default = auto.contrast })) state.changed();
-        if (gui.sliderRow("Black", &s.black, -0.5, 0.5, "{d:.3}", .{ .default = auto.black })) state.changed();
-        if (gui.sliderRow("Highlight roll-off", &s.roll_off, 0.01, 0.99, "{d:.2}", .{ .default = auto.roll_off })) state.changed();
-        if (gui.sliderRow("Exposure", &s.exposure, 0.5, 2, "{d:.2}", .{ .default = auto.exposure })) state.changed();
+        if (gui.sliderRow("Contrast", &s.contrast, 1, 8, "{d:.2}", .{
+            .default = auto.contrast,
+            .help = "Higher adds contrast · lower flattens it",
+        })) state.changed();
+        if (gui.sliderRow("Black", &s.black, -0.5, 0.5, "{d:.3}", .{
+            .default = auto.black,
+            .help = "Higher lifts black toward gray · lower deepens it",
+        })) state.changed();
+        if (gui.sliderRow("Highlight roll-off", &s.roll_off, 0.01, 0.99, "{d:.2}", .{
+            .default = auto.roll_off,
+            .help = "Lower eases highlights off sooner · higher keeps them until they clip",
+        })) state.changed();
+        if (gui.sliderRow("Exposure", &s.exposure, 0.5, 2, "{d:.2}", .{
+            .default = auto.exposure,
+            .help = "Higher brightens the picture · lower darkens it",
+        })) state.changed();
     }
     gui.endSection(true);
 
@@ -1709,7 +1744,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
             defer c.ImGui_PopStyleVar();
             if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}", .{
                 .default = (develop.Settings{}).saturation,
-                .help = "After the look · 0 gray, 1 unchanged",
+                .help = "Higher is more colorful · 0 gray, 1 unchanged",
             })) state.changed();
         }
         const gap = gui.px(range_gap);
@@ -1724,7 +1759,10 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         defer c.ImGui_PopStyleVar();
         const which = @backingInt(state.range);
         if (temperatureRow(&s.temperature[which])) state.changed();
-        if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{ .default = 0 })) state.changed();
+        if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{
+            .default = 0,
+            .help = "Higher is more magenta · lower more green",
+        })) state.changed();
     }
     gui.endSection(true);
 
@@ -1830,7 +1868,7 @@ fn temperatureRow(kelvin: *f32) bool {
     var mired = develop.mired(kelvin.*);
     var changed = gui.slider("slider", &mired, develop.mired(develop.min_kelvin), develop.mired(develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(develop.kelvinOfMired(mired) / kelvin_step) * kelvin_step;
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Shooting light");
+    gui.tooltip("Lower for warm light, like tungsten · higher for shade");
     if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
         changed = true;
@@ -1864,8 +1902,8 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     }
     const choice = labels.findStock(info.stock orelse "") orelse return;
     if (choice.preset) |preset| {
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("%s", gui.print("{s}", .{preset.source}).ptr);
-    } else if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("No datasheet numbers");
+        gui.tooltip(preset.source);
+    } else gui.tooltip("No datasheet numbers");
     // Only a stock with a preset has something to correct by. With corrections off, the stock
     // is just the roll's metadata.
     if (choice.preset == null) return;
@@ -1874,7 +1912,7 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Per-layer datasheet curves");
+    gui.tooltip("Per-layer datasheet curves");
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.

@@ -1153,7 +1153,7 @@ fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: 
     const ink = if (hovered) theme.text else theme.text_secondary;
     gui.plus(list, gui.vec2(at.x + gui.px(item_padding_x + add_icon / 2), at.y + height / 2), gui.px(add_plus_arm), gui.px(add_plus_thickness), ink);
     gui.textIn(list, at.x + gui.px(item_padding_x + add_icon + add_icon_gap), at.y, height, ink, label);
-    if (hovered) c.ImGui_SetTooltip(tooltip);
+    if (hovered) gui.showTooltip(tooltip);
     return clicked;
 }
 
@@ -1231,7 +1231,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
             };
             _ = c.ImGui_OpenPopup("rename", 0);
         }
-        if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Click to rename");
+        gui.tooltip("Click to rename");
         drawRename(state, ctx);
     }
     fonts.pushSized(.regular, fonts.small_size);
@@ -1258,7 +1258,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
             y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
             if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Removes the library's copy");
+            gui.tooltip("Removes the library's copy");
             return;
         },
         .neutral, .frontier => {
@@ -1374,7 +1374,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
             const name = if (i == 0) "Neutral" else bundled.looks[ids[i].kind().bundled].name;
             c.ImGui_PushIDInt(@intCast(i));
             if (previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), name, ids[i].eql(&frame.look), true)) ctx.develop.useLook(ctx.io, ctx.library, ids[i]);
-            if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("Use on %s", gui.print("{s}", .{frame.name}).ptr);
+            gui.tooltip(gui.print("Use on {s}", .{frame.name}));
             c.ImGui_PopID();
         }
         const rows = (to - from + columns - 1) / columns;
@@ -1481,7 +1481,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip("References (JPEG, TIFF) · with our scans (PPM)");
+        gui.showTooltip("References (JPEG, TIFF) · with our scans (PPM)");
     }
     x = c.ImGui_GetItemRectMax().x + gui.px(bar_gap);
 
@@ -1629,7 +1629,7 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
     c.ImGui_SetCursorScreenPos(gui.vec2(use_x, row_min.y));
     if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.running == null) own.toggleHeldOut(ctx, i);
     const use_hovered = c.ImGui_IsItemHovered(0);
-    if (use_hovered) c.ImGui_SetTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
+    if (use_hovered) gui.showTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
 
     if (state.pair == i) {
         c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.raised));
@@ -1666,9 +1666,9 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
 
 /// The tooltip over a pair: its files, and how well they line up.
 fn pairTooltip(p: draft.Pair) void {
-    const a = p.alignment orelse return c.ImGui_SetTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
+    const a = p.alignment orelse return gui.showTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
     const turned = a.orientation.label();
-    c.ImGui_SetTooltip(gui.print("{s}\nCorrelation {d:.2} of 1 · good above {d:.1}\nReference {s}{s}covers {d:.0}% of our scan's width", .{
+    gui.showTooltip(gui.print("{s}\nCorrelation {d:.2} of 1 · good above {d:.1}\nReference {s}{s}covers {d:.0}% of our scan's width", .{
         p.theirs,
         a.quality,
         aligned_quality,
@@ -1844,14 +1844,14 @@ fn drawModelButtons(state: *State, ctx: context.Context, own: *Own, look: usize,
     if (gui.buttonOf(.primary, if (fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, fit_height))) state.startFit(ctx, look);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
+        gui.showTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, save_top));
     if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, save_height))) {
         if (result == null) ctx.notice.set("Nothing to save", .{}) else saveLook(ctx, own);
     }
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        c.ImGui_SetTooltip(gui.print("To Looks/{s}", .{own.name}));
+        gui.showTooltip(gui.print("To Looks/{s}", .{own.name}));
     }
 }
 

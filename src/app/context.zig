@@ -45,7 +45,7 @@ pub fn copyButton(notice: *Notice, command: [:0]const u8, size: gui.Vec2) void {
         _ = c.SDL_SetClipboardText(command);
         notice.set("Copied", .{});
     }
-    if (c.ImGui_IsItemHovered(0)) c.ImGui_SetTooltip("For Terminal");
+    gui.tooltip("For Terminal");
 }
 
 /// How long a notice stays in the header.

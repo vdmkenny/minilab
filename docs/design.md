@@ -495,7 +495,7 @@ not just buried in the code.
 ### The loupe
 
 Develop's viewer shows a reduced copy of the scan, so even its 100% view isn't the scan's full
-detail. The loupe is: with it on (L, or the Loupe box on the toolbar), a circle follows the cursor
+detail. The loupe is: with it on (L, or the loupe button on the toolbar), a circle follows the cursor
 over the picture and shows that spot at the scan's own resolution, one scan pixel to one screen
 pixel. It's rendered on its own: the point under the cursor goes back through the turns, the
 mirror and the crop to the scan (`Frame.scanPoint`), and a square of the full scan around it is
