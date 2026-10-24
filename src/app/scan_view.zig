@@ -359,6 +359,13 @@ const Preview = struct {
         return 0;
     }
 
+    /// Where opening `index` is across the strip: from its near edge to its far edge, in preview
+    /// pixels. Before detection has found it, that's the whole preview.
+    fn span(preview: Preview, index: u8) [2]f32 {
+        const o = preview.opening(index) orelse return .{ 0, preview.acrossSize() };
+        return .{ o.middle - o.height / 2, o.middle + o.height / 2 };
+    }
+
     /// How far across the strip a scan of a frame in opening `index` reaches: halfway to the
     /// openings on either side, or to the edge of the preview. In preview pixels.
     fn lane(preview: Preview, index: u8) [2]f32 {
@@ -1624,7 +1631,10 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
 fn moveBox(state: *State, preview: *const Preview, index: usize, along: f32, across: f32) void {
     const box = &state.boxes.items[index];
     box.along = std.math.clamp(box.along + along, 0, preview.alongSize());
-    if (!box.full_height) box.across = std.math.clamp(box.across + across, 0, preview.acrossSize());
+    if (!box.full_height) {
+        box.across += across;
+        keepInOpening(box, preview);
+    }
     // Placed by hand, so it no longer needs checking.
     box.check = null;
     markEdited(state, box);
@@ -1876,20 +1886,33 @@ fn resizeBox(state: *State, preview: *const Preview, index: usize, corner: u2, d
     const share = box.insetShare();
     const right = corner == 1 or corner == 2;
     const bottom = corner == 2 or corner == 3;
-    const length = @max(box.length + (if (right) dx else -dx) / share, min_box_px);
+    const across = preview.span(box.opening);
+    const tallest = across[1] - across[0];
+    var length = @max(box.length + (if (right) dx else -dx) / share, min_box_px);
+    // A box with a set ratio gets its height from its length, and no box is taller than its
+    // opening.
+    if (locked) length = @min(length, tallest * box.length / box.height);
     // The centre moves with the dragged side, by half the change.
     const shift = (length - box.length) / 2 * @as(f32, if (right) 1 else -1);
     box.along += if (flip) -shift else shift;
     if (locked) {
         box.height *= length / box.length;
     } else if (!box.full_height) {
-        const height = @max(box.height + (if (bottom) dy else -dy) / share, min_box_px);
+        const height = std.math.clamp(box.height + (if (bottom) dy else -dy) / share, @min(min_box_px, tallest), tallest);
         box.across += (height - box.height) / 2 * @as(f32, if (bottom) 1 else -1);
         box.height = height;
     }
     box.length = length;
+    keepInOpening(box, preview);
     box.check = null;
     markEdited(state, box);
+}
+
+/// Moves `box` across the strip as little as it takes to keep it inside its opening.
+fn keepInOpening(box: *Box, preview: *const Preview) void {
+    const across = preview.span(box.opening);
+    const half = box.height / 2;
+    box.across = if (2 * half >= across[1] - across[0]) (across[0] + across[1]) / 2 else std.math.clamp(box.across, across[0] + half, across[1] - half);
 }
 
 /// Marks `box` as edited by hand, so detecting again keeps it, and has the boxes saved.
@@ -2094,6 +2117,12 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
     ctx.gpa.free(preview.openings);
     preview.openings = openings;
+    // Frames kept from hand edits that take the opening's full height follow the opening as it's
+    // found now. The strip can sit a little differently in a new preview, and they'd stick out of
+    // it.
+    for (state.boxes.items) |*box| {
+        if (box.hand and box.full_height) reshape(box, preview, format);
+    }
     // The film's base is measured on the strip, now there are frames on it.
     if (state.boxes.items.len > 1) if (preview.texture) |*t| {
         t.release(ctx.gpu);
@@ -2728,6 +2757,27 @@ test "dragging a corner of a free box moves that corner only" {
     try std.testing.expectEqual(@as(f32, 66), box.height);
     try std.testing.expectEqual(@as(f32, 203), box.across);
     try std.testing.expect(box.hand and state.boxes_dirty);
+}
+
+test "a box with a set ratio stops growing at its opening's height, and stays inside it" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    // The test preview's opening is 300 pixels high, from 45 to 345 across.
+    try state.boxes.append(gpa, .{ .along = 800, .across = 300, .length = 360, .height = 240, .full_height = false });
+    resizeBox(&state, &test_preview, 0, 2, 200, 0);
+    const box = state.boxes.items[0];
+    try std.testing.expectApproxEqAbs(@as(f32, 300), box.height, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f32, 450), box.length, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f32, 195), box.across, 1e-3);
+
+    // A free box's height stops there too, and moving it across can't take it out.
+    state.boxes.items[0] = .{ .along = 800, .across = 300, .length = 360, .height = 100, .shape = .free, .full_height = false };
+    resizeBox(&state, &test_preview, 0, 2, 0, 400);
+    try std.testing.expectApproxEqAbs(@as(f32, 300), state.boxes.items[0].height, 1e-3);
+    state.boxes.items[0].height = 100;
+    moveBox(&state, &test_preview, 0, 0, 500);
+    try std.testing.expectApproxEqAbs(@as(f32, 295), state.boxes.items[0].across, 1e-3);
 }
 
 test "the resolution menu lists all of a scanner's resolutions, or its highest ones" {
