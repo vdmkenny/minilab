@@ -250,6 +250,8 @@ const Box = struct {
     hand: bool = false,
     /// The holder opening it's in, in `Preview.openings`.
     opening: u8 = 0,
+    /// Left out of the scan, to save time.
+    skip: bool = false,
 
     fn start(box: Box) f32 {
         return box.along - box.length / 2;
@@ -425,6 +427,8 @@ const Preview = struct {
 /// What's happened to a frame in the queue.
 const QueueItem = union(enum) {
     waiting,
+    /// Left out of this scan.
+    skipped,
     /// Since this time, in SDL's milliseconds.
     scanning: u64,
     checking,
@@ -439,7 +443,7 @@ const QueueItem = union(enum) {
     fn frame(item: QueueItem) ?usize {
         return switch (item) {
             .done, .check_crop => |index| index,
-            .waiting, .scanning, .checking, .failed, .cancelled => null,
+            .waiting, .skipped, .scanning, .checking, .failed, .cancelled => null,
         };
     }
 };
@@ -680,8 +684,12 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
                 ctx.notice.set("Scanning canceled", .{});
             } else {
                 var added: usize = 0;
-                for (state.queue.items) |item| added += @intFromBool(item.frame() != null);
-                ctx.notice.set("Scanned {d} of {d} frames", .{ added, state.queue.items.len });
+                var wanted: usize = 0;
+                for (state.queue.items) |item| {
+                    added += @intFromBool(item.frame() != null);
+                    wanted += @intFromBool(item != .skipped);
+                }
+                ctx.notice.set("Scanned {d} of {d} frames", .{ added, wanted });
             }
         },
     }
@@ -986,7 +994,7 @@ fn drawActions(state: *State, panel: ScannerPanel, y: f32, bottom: f32) void {
     if (gui.buttonOf(.normal, "Detect frames", gui.vec2(half / gui.scale, action_height))) detect(state, ctx, panel.roll_index);
     c.ImGui_EndDisabled();
     c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, scan_y));
-    const count = state.boxes.items.len;
+    const count = framesToScan(state);
     c.ImGui_BeginDisabled(!ready or count == 0 or state.preview == null);
     const scan_label: [:0]const u8 = if (state.scanning) "Scanning…" else if (count == 0) "Scan" else if (count == 1) "Scan 1 frame" else gui.print("Scan {d} frames", .{count});
     if (gui.buttonOf(.primary, scan_label, gui.vec2(panel.width / gui.scale, scan_button_height))) startScan(state, ctx, panel.roll_index);
@@ -1567,8 +1575,9 @@ fn drawPictures(state: *const State, preview: *const Preview, map: StripMap, lis
     }
 }
 
-/// Draws the boxes over the preview: amber, dashed white where they need checking, and a ring
-/// around the selected one. Click a box to select it, and drag it to move it along the strip.
+/// Draws the boxes over the preview: amber, dashed white where they need checking, grey where
+/// they're left out of the scan, and a ring around the selected one. Click a box to select it, and
+/// drag it to move it along the strip.
 fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.ImDrawList) void {
     for (state.boxes.items, 0..) |box, i| {
         const corners = map.rect(box.crop());
@@ -1590,7 +1599,7 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
         c.ImGui_PopID();
 
         const weak = box.check != null;
-        const ink = theme.imU32(if (weak) theme.text else theme.accent);
+        const ink = theme.imU32(if (box.skip) theme.text_tertiary else if (weak) theme.text else theme.accent);
         const inset = gui.px(box_inset);
         const inner_min = gui.vec2(min.x + inset, min.y + inset);
         const inner_max = gui.vec2(max.x - inset, max.y - inset);
@@ -1604,7 +1613,7 @@ fn drawBoxesOnStrip(state: *State, preview: *Preview, map: StripMap, list: *c.Im
         const size = c.ImGui_CalcTextSize(chip);
         const chip_min = gui.vec2(min.x + gui.px(chip_inset), min.y + gui.px(chip_inset));
         const chip_max = gui.vec2(chip_min.x + size.x + gui.px(2 * chip_padding), chip_min.y + gui.lineFor(fonts.tiny_size));
-        c.ImDrawList_AddRectFilledEx(list, chip_min, chip_max, theme.imU32(if (weak) theme.text else theme.accent), gui.px(gui.track_rounding), 0);
+        c.ImDrawList_AddRectFilledEx(list, chip_min, chip_max, ink, gui.px(gui.track_rounding), 0);
         c.ImDrawList_AddText(list, gui.vec2(chip_min.x + gui.px(chip_padding), chip_min.y + (chip_max.y - chip_min.y - size.y) / 2), theme.imU32(theme.on_accent), chip);
         fonts.pop();
     }
@@ -1666,6 +1675,16 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
     y += titleAt(list, x, y, gui.print("Frame {d}", .{index + 1}), gui.print("{s} · {s}{s}", .{ labels.filmAndName(format), shape_text, rotated })) + gui.px(section_gap);
 
     y += drawFrameView(state, preview, index, list, x, y, width) + gui.px(section_gap);
+
+    c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
+    c.ImGui_BeginDisabled(state.scanning);
+    var scanned = !box.skip;
+    if (gui.checkboxWith("Scan this frame", &scanned, .{ .gap = checkbox_gap, .height = gui.lineHeight(), .label_color = theme.text })) {
+        box.skip = !scanned;
+        state.boxes_dirty = true;
+    }
+    c.ImGui_EndDisabled();
+    y += gui.lineHeight() + gui.px(section_gap);
 
     if (box.check != null) {
         y += drawCheckNote(state, preview, index, list, x, y, width) + gui.px(section_gap);
@@ -2130,8 +2149,12 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
     const r = roll_index orelse return;
     const gpa = ctx.gpa;
     const info = ctx.library.rolls.items[r].info;
-    const jobs = gpa.alloc(scan_worker.FrameJob, state.boxes.items.len) catch return;
-    for (state.boxes.items, jobs, 0..) |box, *job, i| {
+    const jobs = gpa.alloc(scan_worker.FrameJob, framesToScan(state)) catch return;
+    var next: usize = 0;
+    for (state.boxes.items, 0..) |box, i| {
+        if (box.skip) continue;
+        const job = &jobs[next];
+        next += 1;
         const crop = preview.toScanner(preview.rect(box.crop()));
         // Along the strip, scan the crop plus the margin on each side. Across it, scan the whole
         // film area, so the holder's edges show up for finding the frame again. With several
@@ -2150,11 +2173,13 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
             .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .inset = box.inset / 100 },
         };
     }
+    // The queue keeps a place for every frame, so its places match the frames' numbers.
     state.queue.clearRetainingCapacity();
-    state.queue.appendNTimes(gpa, .waiting, jobs.len) catch {
+    state.queue.ensureTotalCapacity(gpa, state.boxes.items.len) catch {
         gpa.free(jobs);
         return;
     };
+    for (state.boxes.items) |box| state.queue.appendAssumeCapacity(if (box.skip) .skipped else .waiting);
     if (state.queue_roll) |p| gpa.free(p);
     state.queue_roll = gpa.dupe(u8, ctx.library.rolls.items[r].path) catch null;
     // A strip that runs down the scanner has its frames on their side, so they get turned the way
@@ -2165,6 +2190,13 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         return;
     };
     state.scanning = true;
+}
+
+/// How many frames a scan takes: all but the ones left out.
+fn framesToScan(state: *const State) usize {
+    var count: usize = 0;
+    for (state.boxes.items) |box| count += @intFromBool(!box.skip);
+    return count;
 }
 
 /// `box` stretched across to the lane of its opening.
@@ -2194,14 +2226,17 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
         const info = ctx.library.rolls.items[r].info;
         y += gui.lineAt(list, x, y, theme.text, gui.print("Into {s} · {s}", .{ info.name, info.stock orelse labels.filmKind(info.kind) })) + gui.px(group_gap);
     }
-    const count = if (state.scanning or state.queue.items.len > 0) state.queue.items.len else state.boxes.items.len;
+    const queued = state.scanning or state.queue.items.len > 0;
+    const count = if (queued) state.queue.items.len else state.boxes.items.len;
+    var scanned: usize = 0;
+    for (0..count) |i| scanned += @intFromBool(queueItemAt(state, queued, i) != .skipped);
     const deep = if (state.capabilities) |caps| caps.deep else true;
-    const summary = gui.print("{d} {s} · {d} dpi · {d}-bit", .{ count, if (count == 1) "frame" else "frames", state.dpi, @as(u32, if (deep) 48 else 24) });
+    const summary = gui.print("{d} {s} · {d} dpi · {d}-bit", .{ scanned, if (scanned == 1) "frame" else "frames", state.dpi, @as(u32, if (deep) 48 else 24) });
     y += gui.lineAt(list, x, y, theme.text_secondary, summary) + gui.px(queue_gap);
 
     const worker = state.worker;
     for (0..count) |i| {
-        const item: QueueItem = if (i < state.queue.items.len) state.queue.items[i] else .waiting;
+        const item = queueItemAt(state, queued, i);
         c.ImGui_PushIDInt(@intCast(i));
         const row = drawQueueRow(list, x, y, width, i, item, worker);
         c.ImGui_PopID();
@@ -2233,6 +2268,13 @@ fn drawQueue(state: *State, ctx: context.Context) ?context.Workspace {
     return next;
 }
 
+/// Frame `index` in the queue panel: its place in the queue once a scan has started, or else what
+/// a scan would do with it.
+fn queueItemAt(state: *const State, queued: bool, index: usize) QueueItem {
+    if (queued) return state.queue.items[index];
+    return if (state.boxes.items[index].skip) .skipped else .waiting;
+}
+
 /// The roll the scans go into: the queue's while it's scanning, or else the roll open in Develop.
 fn targetRoll(state: *const State, ctx: context.Context) ?usize {
     if (state.scanning) if (state.queue_roll) |path| {
@@ -2249,13 +2291,13 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
     const running = item == .scanning;
     const height = 2 * pad_y + line + if (running) gui.px(group_gap + progress_height) else 0;
     const filled = switch (item) {
-        .waiting, .cancelled => false,
+        .waiting, .skipped, .cancelled => false,
         .scanning, .checking, .done, .check_crop, .failed => true,
     };
     if (filled) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.raised), gui.px(gui.control_rounding), 0);
     if (running) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + gui.px(running_bar), y + height), theme.imU32(theme.accent), gui.px(gui.control_rounding), c.ImDrawFlags_RoundCornersLeft);
 
-    const ink = if (filled) theme.text else theme.text_secondary;
+    const ink = if (filled) theme.text else if (item == .skipped) theme.text_tertiary else theme.text_secondary;
     const text_y = y + pad_y + (line - c.ImGui_GetFontSize()) / 2;
     fonts.push(.mono);
     c.ImDrawList_AddText(list, gui.vec2(x + pad_x, text_y), theme.imU32(ink), gui.print("{d}", .{index + 1}));
@@ -2263,6 +2305,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
     const finishing = if (worker) |w| w.phase.load(.acquire) == .finishing else false;
     const label: []const u8 = switch (item) {
         .waiting => "Waiting",
+        .skipped => "Skipped",
         .scanning => if (finishing) "Finishing" else if (worker != null and worker.?.progress.total.load(.acquire) == 0) "Starting" else "Scanning",
         .checking => "Checking edges",
         .done => "Scanned, base measured",
@@ -2302,7 +2345,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
             const done = if (worker) |w| w.progress.fraction() else 0;
             gui.progressBar(list, gui.vec2(x + pad_x, bar_y), gui.vec2(right, bar_y + gui.px(progress_height)), done);
         },
-        .waiting, .checking, .failed, .cancelled => {},
+        .waiting, .skipped, .checking, .failed, .cancelled => {},
     }
     return .{ .height = height, .check = check };
 }
@@ -2790,6 +2833,22 @@ test "a preview saved before several openings keeps its one" {
     try std.testing.expectEqual(@as(f32, 195), openings[0].middle);
     const none = try savedOpenings(gpa, .{ .dpi = .{ 300, 300 }, .area = default_film_area, .axis = .y });
     try std.testing.expectEqual(@as(usize, 0), none.len);
+}
+
+test "frames left out of the scan aren't counted, and the queue shows them as skipped" {
+    const gpa = std.testing.allocator;
+    var state: State = .{};
+    defer state.boxes.deinit(gpa);
+    for ([_]bool{ false, true, false }, 0..) |skip, i| {
+        try state.boxes.append(gpa, .{ .along = @floatFromInt(i), .across = 0, .length = 1, .height = 1, .skip = skip });
+    }
+    try std.testing.expectEqual(@as(usize, 2), framesToScan(&state));
+    try std.testing.expectEqual(QueueItem.waiting, queueItemAt(&state, false, 0));
+    try std.testing.expectEqual(QueueItem.skipped, queueItemAt(&state, false, 1));
+    // A preview saved before frames could be left out scans them all.
+    const old = try std.json.parseFromSlice(Box, gpa, "{\"along\": 1, \"across\": 2, \"length\": 3, \"height\": 4}", .{});
+    defer old.deinit();
+    try std.testing.expect(!old.value.skip);
 }
 
 test "detecting again keeps only the boxes edited by hand" {
