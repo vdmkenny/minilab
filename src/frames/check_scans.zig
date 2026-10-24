@@ -1,8 +1,8 @@
-//! Prints what frame detection finds on our V200 scans in `vendor/`, so a change to detection can
+//! Prints what frame detection finds on our own scans in `vendor/`, so a change to detection can
 //! be compared by eye. It runs with the tests and skips itself when the scans aren't there, since
 //! they're private and large (`core/scans_test.zig` reads them).
 //!
-//! The scans are a B&W negative strip and a colour negative frame:
+//! From the V200, a B&W negative strip and a colour negative frame:
 //!
 //! - `10-preview-negative`: the 300 dpi preview Epson's software made of the whole B&W strip,
 //!   8-bit at gamma 1.8, with six frames.
@@ -10,6 +10,13 @@
 //! - `hw-scans/2026-10-22`: 2400 dpi scans, each of one frame plus the holder's edges, the gaps
 //!   and part of the frames next to it. Each one is checked at full resolution, and again reduced
 //!   to 300 dpi the way a preview would be.
+//!
+//! And raw 300 dpi previews of colour negative strips of four frames, shorter than the holder's
+//! opening, so bare light shows past them:
+//!
+//! - `hw-scans/2026-10-24-v200`: one strip in the V200's holder.
+//! - `hw-scans/2026-10-24-v850`: the V850's 35mm holder, with four rows side by side, holding one
+//!   strip and then three.
 
 const std = @import("std");
 const image = @import("../core/image.zig");
@@ -37,9 +44,12 @@ const sources = [_]Source{
     .{ .path = "hw-scans/2026-10-22/mac-colour-negative-c16-2400-gamma10-positive-film.pnm", .dpi = frame_dpi, .gamma = 1 },
     .{ .path = "hw-scans/2026-10-22/mac-positive-c16-2400-gamma10-a.pnm", .dpi = frame_dpi, .gamma = 1 },
     .{ .path = "hw-scans/2026-10-22/mac-negative-c8-2400-warm.pnm", .dpi = frame_dpi, .gamma = epson_gamma },
+    .{ .path = "hw-scans/2026-10-24-v200/short-strip-preview-raw-c16-300.ppm", .dpi = preview_dpi, .gamma = 1 },
+    .{ .path = "hw-scans/2026-10-24-v850/preview-tpu-raw-c16-300.ppm", .dpi = preview_dpi, .gamma = 1 },
+    .{ .path = "hw-scans/2026-10-24-v850/three-strips-preview-tpu-raw-c16-300.ppm", .dpi = preview_dpi, .gamma = 1 },
 };
 
-test "V200 scans" {
+test "our own scans" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     const format = formats.Standard.@"135_full_frame".format();
@@ -80,9 +90,10 @@ fn report(gpa: std.mem.Allocator, io: std.Io, name: []const u8, scan: image.Scan
                 return @as(f32, @floatFromInt(px)) / scale;
             }
         }.of;
-        std.debug.print("    {d}: x {d:.1} y {d:.1} mm, {d:.1} × {d:.1} mm, {s}\n", .{
-            f.index,                     mm(f.area.x, px_per_mm),      mm(f.area.y, px_per_mm),
-            mm(f.area.width, px_per_mm), mm(f.area.height, px_per_mm), @tagName(f.confidence),
+        std.debug.print("    {d}: opening {d}, x {d:.1} y {d:.1} mm, {d:.1} × {d:.1} mm, {s}\n", .{
+            f.index,                 f.opening,                   mm(f.area.x, px_per_mm),
+            mm(f.area.y, px_per_mm), mm(f.area.width, px_per_mm), mm(f.area.height, px_per_mm),
+            @tagName(f.confidence),
         });
     }
 }

@@ -9,6 +9,7 @@
 
 const std = @import("std");
 const image = @import("../core/image.zig");
+const light_table = @import("../core/light_table.zig");
 const stats = @import("../core/stats.zig");
 const formats = @import("formats.zig");
 
@@ -202,11 +203,11 @@ const flat_spread = 0.05;
 const gap_quantile = 0.98;
 /// The shortest stretch of flat lines, in mm, that's enough to give a gap level of its own.
 const min_flat_mm = 0.5;
-/// A strip shorter than the holder's opening lets bare light through past its ends. That light
-/// is at least this much lighter than the film, in density, and the holder's edge beyond it can
-/// be this soft.
-const min_base_density = 0.1;
-const soft_edge_mm = 1.0;
+/// A line lighter than this is bare light with no film in front of it, which a strip shorter than
+/// the holder's opening leaves at its ends. Even the clearest film base is darker. It's the same
+/// level the light table leaves out. The light fades a little towards the ends of the opening, so
+/// the flat lines around it that are within the gap tolerance of the brightest line count too.
+const bare_light: f32 = light_table.open_light * image.full_scale;
 
 /// Runs shorter than this are noise, and merge into their neighbours.
 const min_run_mm = 0.3;
@@ -992,17 +993,21 @@ const Content = struct {
 
 /// Runs steps 3 to 5 for a strip.
 fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Profile, c: Context) !void {
-    const extent = try leaveOutBareLight(gpa, profile, filmExtent(profile.median, c.threshold) orelse return, c);
-    const level = try gapLevel(gpa, profile, extent, c);
+    const extent = filmExtent(profile.median, c.threshold) orelse return;
+    const bare = try gpa.alloc(bool, profile.median.len);
+    defer gpa.free(bare);
+    markBareLight(profile, bare, c.gap_tolerance);
+    const level = try gapLevel(gpa, profile, bare, extent, c);
     const scale = c.opening.alongScale();
 
     const density = try gpa.alloc(f32, profile.median.len);
     defer gpa.free(density);
     const gaps = try gpa.alloc(bool, profile.median.len);
     defer gpa.free(gaps);
-    for (density, gaps, profile.median, profile.spread) |*d, *gap, m, spread| {
+    for (density, gaps, profile.median, profile.spread, bare) |*d, *gap, m, spread, no_film| {
         d.* = densityFromGap(c.kind, level, m);
-        gap.* = d.* < c.gap_tolerance and c.kind.isFlat(spread);
+        // Bare light has no film, so it's a gap whatever the film is.
+        gap.* = no_film or (d.* < c.gap_tolerance and c.kind.isFlat(spread));
     }
 
     var runs: std.ArrayList(Run) = .empty;
@@ -1066,59 +1071,34 @@ fn sideAt(density: []const f32, run: Run, end: End, extent: Range, depth: usize,
     return if (std.mem.max(f32, window) >= sharp_step) .sharp else .soft;
 }
 
-/// Leaves out the bare light at either end of `extent`, where the strip is shorter than the
-/// holder's opening: flat lines as light as the lightest one, up to the holder's soft edge. Bare
-/// light always has the holder past it, so film that runs to the edge of the scan, like the gaps
-/// in a frame scan's margins, stays. So does light that isn't clearly lighter than the film,
-/// which is the film's own clear base.
-fn leaveOutBareLight(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !Range {
-    const medians = profile.median[extent.start..extent.end];
-    const spreads = profile.spread[extent.start..extent.end];
-    var lamp: f32 = 0;
-    for (medians, spreads) |m, spread| {
-        if (spread < flat_spread) lamp = @max(lamp, m);
-    }
-    if (lamp == 0) return extent;
-    const bare = struct {
-        fn at(m: f32, spread: f32, light: f32, tolerance: f32) bool {
-            return spread < flat_spread and std.math.log10(light / @max(m, level_floor)) < tolerance;
+/// Marks the lines of bare light in `bare`: runs of lines brighter than `bare_light`, with the
+/// flat lines around them that it fades to.
+fn markBareLight(profile: Profile, bare: []bool, gap_tolerance: f32) void {
+    @memset(bare, false);
+    const brightest = std.mem.max(f32, profile.median);
+    if (brightest < bare_light) return;
+    const faded = brightest * std.math.pow(f32, 10, -gap_tolerance);
+    const Lines = struct {
+        profile: Profile,
+        faded: f32,
+        fn light(lines: @This(), line: usize) bool {
+            const m = lines.profile.median[line];
+            return m >= bare_light or (lines.profile.spread[line] < flat_spread and m >= lines.faded);
         }
-    }.at;
-    const scale = c.opening.alongScale();
-    const soft: usize = @intFromFloat(@round(soft_edge_mm * c.px_per_mm / scale));
-    const shortest: usize = @intFromFloat(@max(@round(min_flat_mm * c.px_per_mm / scale), 1));
-
-    // From each end with the holder past it, past the holder's soft edge, then through the bare
-    // light.
+    };
+    const lines: Lines = .{ .profile = profile, .faded = faded };
     var start: usize = 0;
-    if (extent.start > 0) {
-        const first = for (0..@min(soft, medians.len)) |i| {
-            if (bare(medians[i], spreads[i], lamp, c.gap_tolerance)) break i;
-        } else medians.len;
-        var i = first;
-        while (i < medians.len and bare(medians[i], spreads[i], lamp, c.gap_tolerance)) i += 1;
-        if (i - first >= shortest) start = i;
+    while (start < bare.len) {
+        if (!lines.light(start)) {
+            start += 1;
+            continue;
+        }
+        var end = start;
+        var bright = false;
+        while (end < bare.len and lines.light(end)) : (end += 1) bright = bright or profile.median[end] >= bare_light;
+        if (bright) @memset(bare[start..end], true);
+        start = end;
     }
-    var end = medians.len;
-    if (extent.end < profile.median.len) {
-        const last = for (0..@min(soft, medians.len)) |k| {
-            const j = medians.len - 1 - k;
-            if (bare(medians[j], spreads[j], lamp, c.gap_tolerance)) break j + 1;
-        } else 0;
-        var j = last;
-        while (j > start and bare(medians[j - 1], spreads[j - 1], lamp, c.gap_tolerance)) j -= 1;
-        if (last >= j and last - j >= shortest) end = j;
-    }
-    if (start == 0 and end == medians.len) return extent;
-    if (end <= start) return extent;
-
-    // The film's lightest lines.
-    const sorted = try gpa.dupe(f32, medians[start..end]);
-    defer gpa.free(sorted);
-    std.mem.sortUnstable(f32, sorted, {}, std.sort.asc(f32));
-    const lightest = @max(quantile(f32, sorted, gap_quantile), level_floor);
-    if (std.math.log10(lamp / lightest) < min_base_density) return extent;
-    return .{ .start = extent.start + start, .end = extent.start + end };
 }
 
 /// The lines from the first to the last one that shows film rather than holder.
@@ -1132,15 +1112,24 @@ fn filmExtent(median: []const f32, threshold: u16) ?Range {
     return .{ .start = start, .end = end };
 }
 
-/// Finds the level of the gaps between frames. For negatives that's the film base, from the
-/// lightest line medians. Bare light past the end of a short strip is lighter still, so when light
-/// runs reach the ends, the base comes from the stretches of flat lines between them, the way gaps
+/// Finds the level of the gaps between frames, leaving out bare light, which isn't film. For
+/// negatives that's the film base, from the lightest line medians. Light past the end of a short
+/// strip that's not quite bright enough to tell from film is lighter still, so when light runs
+/// reach the ends, the base comes from the stretches of flat lines between them, the way gaps
 /// look. A picture's odd flat line doesn't count. For positives it's the darkest lines.
-fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !f32 {
+fn gapLevel(gpa: std.mem.Allocator, profile: Profile, all_bare: []const bool, extent: Range, c: Context) !f32 {
     const medians = profile.median[extent.start..extent.end];
-    const sorted = try gpa.alloc(f32, medians.len);
-    defer gpa.free(sorted);
-    @memcpy(sorted, medians);
+    const bare = all_bare[extent.start..extent.end];
+    const sorted_all = try gpa.alloc(f32, medians.len);
+    defer gpa.free(sorted_all);
+    var film: usize = 0;
+    for (medians, bare) |m, no_film| {
+        if (no_film) continue;
+        sorted_all[film] = m;
+        film += 1;
+    }
+    if (film == 0) return bare_light;
+    const sorted = sorted_all[0..film];
     std.mem.sortUnstable(f32, sorted, {}, std.sort.asc(f32));
     switch (c.kind) {
         .positive => return @max(quantile(f32, sorted, 1 - gap_quantile), level_floor),
@@ -1158,7 +1147,7 @@ fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context)
             var flat: usize = 0;
             var stretch = start;
             for (start..end + 1) |line| {
-                if (line < end and spreads[line] < flat_spread) continue;
+                if (line < end and spreads[line] < flat_spread and !bare[line]) continue;
                 if (line - stretch >= shortest) {
                     @memcpy(sorted[flat..][0 .. line - stretch], medians[stretch..line]);
                     flat += line - stretch;
@@ -1649,13 +1638,34 @@ test "a frame cut off by the end of the scan is marked for checking" {
 test "bare light past the end of a strip shorter than the opening" {
     var frames: [strip_135_frames]synthetic.Frame = undefined;
     var strip = synthetic.strip135(&frames);
-    // The film ends 1 mm after the last frame, then 40 mm of light before the holder.
+    // The film ends 1 mm after the last frame, then 40 mm of light before the holder. In a raw
+    // scan the light is close to full scale.
     strip.film_end_mm = strip.along_mm - synthetic.leader_135_mm + 1;
     strip.bare_mm = 40;
     strip.along_mm = strip.film_end_mm.? + strip.bare_mm + 5;
+    strip.lamp = synthetic.raw_lamp;
     var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
     defer detection.deinit(testing_gpa);
     try expectFrames(detection, strip, &all_confident, 0.3);
+}
+
+test "bare light at both ends, with the holder's lip past it" {
+    // The film starts after 6 mm of holder, a 5 mm lip that lets a little light through and 1 mm
+    // of bare light, and ends with 40 mm of light and another lip before the holder.
+    var frames: [4]synthetic.Frame = undefined;
+    var strip = synthetic.strip135(&frames);
+    const shift = 12;
+    for (&frames) |*f| f.start_mm += shift;
+    strip.film_start_mm += shift;
+    strip.film_end_mm = strip.film_end_mm.? + shift;
+    strip.bare_before_mm = 1;
+    strip.bare_mm = 40;
+    strip.lip_mm = 5;
+    strip.along_mm = strip.film_end_mm.? + strip.bare_mm + strip.lip_mm + 6;
+    strip.lamp = synthetic.raw_lamp;
+    var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
+    defer detection.deinit(testing_gpa);
+    try expectFrames(detection, strip, &.{ .confident, .confident, .confident, .confident }, 0.3);
 }
 
 test "a frame scan's gaps at its ends aren't bare light" {

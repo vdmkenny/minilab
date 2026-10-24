@@ -18,6 +18,8 @@ const film_135_mm = formats.FilmSize.@"135".filmWidthMm().?;
 
 /// How far the light fades out at the holder's edge past bare light, in mm.
 const soft_edge_mm = 0.5;
+/// The light's transmission in a raw scan, where the scanner sets it close to full scale.
+pub const raw_lamp = 0.99;
 
 /// How often the picture's texture repeats along and across the film, in mm.
 const texture_along_mm = 7.3;
@@ -63,9 +65,14 @@ pub const Strip = struct {
     /// The film runs between these positions along the strip, and the holder covers the rest.
     film_start_mm: f32 = 0,
     film_end_mm: ?f32 = null,
-    /// Bare light between the film's end and the holder, for a strip shorter than the holder's
-    /// opening. The light fades out over the last `soft_edge_mm`, the way a real scan's edge does.
+    /// Bare light before the film's start and past its end, for a strip shorter than the holder's
+    /// opening. It fades out over `soft_edge_mm` at the holder, the way a real scan's edge does.
+    /// Then the holder can have a lip for `lip_mm` that lets a little light through, like the
+    /// V200's holder.
+    bare_before_mm: f32 = 0,
     bare_mm: f32 = 0,
+    lip_mm: f32 = 0,
+    lip: f32 = 0.004,
     frames: []const Frame,
     /// How far the scan is rotated about its centre, clockwise as displayed.
     rotation_degrees: f32 = 0,
@@ -128,11 +135,14 @@ pub const Strip = struct {
         const distance = @abs(across);
         if (distance > strip.opening_mm / 2) return strip.holder;
         const film_end = strip.film_end_mm orelse strip.along_mm;
-        if (along >= film_end and along < film_end + strip.bare_mm) {
-            const left = film_end + strip.bare_mm - along;
-            return strip.holder + (strip.lamp - strip.holder) * @min(left / soft_edge_mm, 1);
+        if (along < strip.film_start_mm or along >= film_end) {
+            const after = along >= film_end;
+            const past = if (after) along - film_end else strip.film_start_mm - along;
+            const bare = if (after) strip.bare_mm else strip.bare_before_mm;
+            if (past < bare) return strip.holder + (strip.lamp - strip.holder) * @min((bare - past) / soft_edge_mm, 1);
+            if (bare > 0 and past < bare + strip.lip_mm) return strip.lip;
+            return strip.holder;
         }
-        if (along < strip.film_start_mm or along >= film_end) return strip.holder;
         if (strip.mounted) {
             for (strip.frames) |f| {
                 if (along >= f.start_mm and along < f.start_mm + f.length_mm and @abs(across - f.offset_mm) < strip.image_mm / 2) {

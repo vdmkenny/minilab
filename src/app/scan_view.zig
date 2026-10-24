@@ -374,20 +374,31 @@ const Preview = struct {
         return .{ near, far };
     }
 
-    /// Where to measure the film's base: the first opening with film, in a holder with several,
-    /// so the bare light of the empty ones doesn't pass for the clearest film. Null with one
-    /// opening, where the whole preview does.
-    fn filmArea(preview: Preview) ?image.Area {
-        if (preview.openings.len < 2) return null;
-        const o = preview.openings[preview.firstFilm()];
-        if (!o.film) return null;
-        const r = preview.rect(.{ .along = preview.alongSize() / 2, .across = o.middle, .length = preview.alongSize(), .height = o.height });
+    /// The image area that `box` covers, clipped to the preview. Null when that's empty.
+    fn imageArea(preview: Preview, box: Box) ?image.Area {
+        const r = preview.rect(box);
         const x0: usize = @intFromFloat(std.math.clamp(@round(r[0]), 0, @as(f32, @floatFromInt(preview.scan.width))));
         const y0: usize = @intFromFloat(std.math.clamp(@round(r[1]), 0, @as(f32, @floatFromInt(preview.scan.height))));
         const x1: usize = @intFromFloat(std.math.clamp(@round(r[2]), @as(f32, @floatFromInt(x0)), @as(f32, @floatFromInt(preview.scan.width))));
         const y1: usize = @intFromFloat(std.math.clamp(@round(r[3]), @as(f32, @floatFromInt(y0)), @as(f32, @floatFromInt(preview.scan.height))));
         if (x1 == x0 or y1 == y0) return null;
         return .{ .x = x0, .y = y0, .width = x1 - x0, .height = y1 - y0 };
+    }
+
+    /// Where to measure the film's base, once there are frames: along the first strip from its
+    /// first frame to its last, across its opening, which takes in the gaps between them. Bare
+    /// light past a short strip or in an empty opening would pass for the clearest film. Null
+    /// with fewer than two frames on that strip, where the whole preview is measured.
+    fn filmArea(preview: Preview, boxes: []const Box) ?image.Area {
+        if (boxes.len < 2 or boxes[1].opening != boxes[0].opening) return null;
+        const first = boxes[0];
+        var last = boxes[1];
+        for (boxes[2..]) |b| {
+            if (b.opening != first.opening) break;
+            last = b;
+        }
+        const o = preview.opening(first.opening) orelse Opening{ .height = first.height, .middle = first.across };
+        return preview.imageArea(.{ .along = (first.start() + last.end()) / 2, .across = o.middle, .length = last.end() - first.start(), .height = o.height });
     }
 
     /// Converts a box in strip coordinates to an image rectangle: x0, y0, x1, y1.
@@ -2053,8 +2064,8 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
     ctx.gpa.free(preview.openings);
     preview.openings = openings;
-    // With several openings, the film's base is measured on the film, now detection has found it.
-    if (preview.openings.len > 1) if (preview.texture) |*t| {
+    // The film's base is measured on the strip, now there are frames on it.
+    if (state.boxes.items.len > 1) if (preview.texture) |*t| {
         t.release(ctx.gpu);
         preview.texture = null;
         uploadPreview(state, ctx);
@@ -2348,7 +2359,7 @@ fn uploadPreview(state: *State, ctx: context.Context) void {
     if (preview.texture != null) return;
     const pixels = ctx.gpa.alloc([4]u8, preview.scan.pixels.len) catch return;
     defer ctx.gpa.free(pixels);
-    var film = if (preview.filmArea()) |area| preview.scan.crop(ctx.gpa, area) catch null else null;
+    var film = if (preview.filmArea(state.boxes.items)) |area| preview.scan.crop(ctx.gpa, area) catch null else null;
     defer if (film) |*f| f.deinit(ctx.gpa);
     const measured = film orelse preview.scan;
     const gain = minilab.light_table.gainForScan(measured);
@@ -2740,6 +2751,23 @@ test "a frame scan in a holder with several openings covers its own lane" {
     try std.testing.expectEqual(@as(f32, 875), box.across - box.height / 2);
     try std.testing.expectEqual(@as(f32, 1400), box.across + box.height / 2);
     try std.testing.expectEqual(@as(f32, 500), box.along);
+}
+
+test "the film's base is measured along the first strip, from its first frame to its last" {
+    var preview = test_preview;
+    preview.scan.width = 1400;
+    preview.openings = &.{
+        .{ .height = 300, .middle = 200 },
+        .{ .height = 300, .middle = 650 },
+    };
+    const boxes = [_]Box{
+        .{ .along = 300, .across = 200, .length = 450, .height = 300 },
+        .{ .along = 760, .across = 200, .length = 450, .height = 300 },
+        .{ .along = 300, .across = 650, .length = 450, .height = 300, .opening = 1 },
+    };
+    const area = preview.filmArea(&boxes).?;
+    try std.testing.expectEqual(image.Area{ .x = 50, .y = 75, .width = 300, .height = 910 }, area);
+    try std.testing.expectEqual(@as(?image.Area, null), preview.filmArea(boxes[1..]));
 }
 
 test "a preview saved before several openings keeps its one" {
