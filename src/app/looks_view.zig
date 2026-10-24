@@ -1993,14 +1993,7 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     const anchor = p(at, k, chart_design.y_label[0], chart_design.y_label[1]);
     const first = list.*.VtxBuffer.Size;
     c.ImDrawList_AddText(list, gui.vec2(anchor.x - out_size.x / 2, anchor.y - baseline), small, "out");
-    const vertices = list.*.VtxBuffer.Data;
-    var i: c_int = first;
-    while (i < list.*.VtxBuffer.Size) : (i += 1) {
-        const v = &vertices[@intCast(i)];
-        const dx = v.pos.x - anchor.x;
-        const dy = v.pos.y - anchor.y;
-        v.pos = gui.vec2(anchor.x + dy, anchor.y - dx);
-    }
+    gui.turnSince(list, first, anchor, .up);
     fonts.pop();
     // The label goes at the top right, as in the design, or at the top left to keep it out of the
     // fitted curves' way.

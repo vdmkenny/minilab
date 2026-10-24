@@ -58,6 +58,12 @@ pub fn pushSized(face: Face, size: f32) void {
     c.ImGui_PushFontFloat(faces.get(face), size * scale);
 }
 
+/// Draws text in `face` at `size` screen pixels, until `pop`. For text that follows something
+/// drawn to scale, like a strip of film.
+pub fn pushPixels(face: Face, size: f32) void {
+    c.ImGui_PushFontFloat(faces.get(face), size);
+}
+
 pub fn pop() void {
     c.ImGui_PopFont();
 }
