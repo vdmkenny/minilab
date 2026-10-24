@@ -1,8 +1,10 @@
 //! TIFF input and output through LibTIFF. Reading takes the first image in a file and puts it in
 //! a `Scan`: 8-bit or 16-bit RGB or greyscale, in strips or tiles, chunky or planar, in any
 //! compression LibTIFF decodes. Writing stores 8-bit or 16-bit RGB with Deflate and the horizontal
-//! predictor, plus an ICC profile if there is one. Both work on files in memory, so reading and
-//! writing the actual files is up to the caller.
+//! predictor, plus an ICC profile if there is one. It compresses the strips on all the cores, and
+//! only makes a BigTIFF when the file wouldn't fit in a classic one. A 16-bit file laid out that
+//! way, like a roll's raw scans, is decompressed on all the cores too. Both work on files in
+//! memory, so reading and writing the actual files is up to the caller.
 
 const std = @import("std");
 const native_endian = @import("builtin").cpu.arch.endian();
@@ -47,6 +49,9 @@ pub const WriteError = error{
 pub const WriteOptions = struct {
     /// An ICC profile to embed, like the ones `icc.profileBytes` returns.
     icc_profile: ?[]const u8 = null,
+    /// The resolution in pixels per inch, for the resolution tags. Without one, other apps take
+    /// the file to be 72 dpi.
+    dpi: ?f32 = null,
 };
 
 /// The photometric interpretations we read, numbered the way TIFF numbers them.
@@ -70,7 +75,15 @@ const SampleFormat = enum(u16) {
 
 const Compression = enum(u16) {
     adobe_deflate = c.COMPRESSION_ADOBE_DEFLATE,
+    /// Deflate under its older number, which some programs still write.
+    deflate = c.COMPRESSION_DEFLATE,
     jpeg = c.COMPRESSION_JPEG,
+    _,
+};
+
+const Predictor = enum(u16) {
+    none = c.PREDICTOR_NONE,
+    horizontal = c.PREDICTOR_HORIZONTAL,
     _,
 };
 
@@ -78,9 +91,15 @@ const Compression = enum(u16) {
 const software = "minilab";
 /// The size we aim for when writing strips, before compression.
 const strip_bytes_target = 1 << 20;
-/// Above this many bytes of pixels, the file is written as BigTIFF, because we can't count on
-/// Deflate to get it under classic TIFF's 4 GiB limit.
-const bigtiff_threshold = 1 << 31;
+/// The Deflate level we write: zlib's default, which is level 6 and LibTIFF's default too. Level 9
+/// makes a raw scan no smaller.
+const deflate_level = c.Z_DEFAULT_COMPRESSION;
+/// The most threads that work on one file's strips.
+const max_threads = 16;
+/// Classic TIFF's offsets are 32 bits, so its files stop at 4 GiB. Above this many bytes of
+/// compressed strips and profile, a file is written as BigTIFF instead, which leaves room for the
+/// tags. Lightroom and Photoshop don't open BigTIFF, so it's only for files that need it.
+const bigtiff_threshold = (1 << 32) - (16 << 20);
 /// The modes we pass to `TIFFClientOpen`: reading without mapping the file into memory, and
 /// writing a classic or a BigTIFF file, little-endian.
 const read_mode = "rm";
@@ -98,12 +117,12 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
 
     var scan: image.Scan = try .init(gpa, header.width, header.height);
     errdefer scan.deinit(gpa);
-    switch (header.depth) {
+    if (!try readOwnStrips(gpa, tif, bytes, header, scan)) switch (header.depth) {
         inline else => |known| try readPixels(switch (known) {
             .eight => u8,
             .sixteen => u16,
         }, gpa, tif, header.layout, &scan),
-    }
+    };
     return .{ .scan = scan, .depth = header.depth, .icc_profile = try iccProfile(gpa, tif) };
 }
 
@@ -112,6 +131,7 @@ const Header = struct {
     width: u32,
     height: u32,
     depth: image.Depth,
+    compression: Compression,
     layout: Layout,
 };
 
@@ -137,6 +157,7 @@ fn readHeader(tif: *c.TIFF) ReadError!Header {
     if (width == 0 or height == 0) return error.InvalidTiff;
 
     const depth = std.enums.fromInt(image.Depth, bits) orelse return error.UnsupportedTiff;
+    const compression: Compression = @fromBackingInt(compression_number);
     const sample_format: SampleFormat = @fromBackingInt(format_number);
     if (sample_format != .unsigned) return error.UnsupportedTiff;
     const planar_config: PlanarConfig = @fromBackingInt(planar_number);
@@ -150,7 +171,7 @@ fn readHeader(tif: *c.TIFF) ReadError!Header {
         .rgb => .rgb,
         .min_is_black => .grey,
         // LibTIFF converts JPEG's YCbCr to RGB when asked.
-        .ycbcr => if (@as(Compression, @fromBackingInt(compression_number)) == .jpeg and
+        .ycbcr => if (compression == .jpeg and
             c.TIFFSetField(tif, c.TIFFTAG_JPEGCOLORMODE, @as(c_int, c.JPEGCOLORMODE_RGB)) != 0)
             .rgb
         else
@@ -167,7 +188,7 @@ fn readHeader(tif: *c.TIFF) ReadError!Header {
             c.TIFFGetField(tif, c.TIFFTAG_TILELENGTH, &block_height) == 0) return error.InvalidTiff;
     } else if (c.TIFFGetFieldDefaulted(tif, c.TIFFTAG_ROWSPERSTRIP, &block_height) == 0) return error.InvalidTiff;
     if (block_width == 0 or block_height == 0) return error.InvalidTiff;
-    return .{ .width = width, .height = height, .depth = depth, .layout = .{
+    return .{ .width = width, .height = height, .depth = depth, .compression = compression, .layout = .{
         .colour = colour,
         .planar = planar,
         .samples_per_pixel = if (planar) 1 else samples,
@@ -288,23 +309,25 @@ fn depthOf(comptime Sample: type) image.Depth {
     };
 }
 
-/// Writes `encoded` (RGB, with 8-bit or 16-bit `Sample`s) as a TIFF file with Deflate. The caller
-/// owns the bytes.
+/// Writes `encoded` (RGB, with 8-bit or 16-bit `Sample`s) as a TIFF file with Deflate. The strips
+/// are compressed first, on all the cores (`compressStrips`), since on one core Deflate takes
+/// seconds for a scan. The caller owns the bytes.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), options: WriteOptions) WriteError![]u8 {
     const depth = depthOf(Sample);
     const width = std.math.cast(u32, encoded.width) orelse return error.ImageTooLarge;
     const height = std.math.cast(u32, encoded.height) orelse return error.ImageTooLarge;
     const row_bytes = encoded.width * @sizeOf([image.channel_count]Sample);
-    const pixel_bytes = std.mem.sliceAsBytes(encoded.pixels);
+    const rows_per_strip: u32 = @intCast(std.math.clamp(strip_bytes_target / @max(row_bytes, 1), 1, height));
+    var strips = try compressStrips(gpa, Sample, encoded, rows_per_strip);
+    defer strips.deinit(gpa);
 
     var sink: Sink = .{ .gpa = gpa };
     defer sink.bytes.deinit(gpa);
-    const mode = if (pixel_bytes.len > bigtiff_threshold) write_mode_big else write_mode;
-    const tif = open(&sink, mode, Sink) orelse return sink.failure();
+    const profile_bytes = if (options.icc_profile) |profile| profile.len else 0;
+    const tif = open(&sink, modeFor(strips.total() + profile_bytes), Sink) orelse return sink.failure();
     var closed = false;
     defer if (!closed) c.TIFFClose(tif);
 
-    const rows_per_strip: u32 = @intCast(std.math.clamp(strip_bytes_target / @max(row_bytes, 1), 1, height));
     if (c.TIFFSetField(tif, c.TIFFTAG_IMAGEWIDTH, width) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_IMAGELENGTH, height) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_BITSPERSAMPLE, @as(c_int, @backingInt(depth))) == 0 or
@@ -320,20 +343,19 @@ pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image
         const size = std.math.cast(u32, profile.len) orelse return error.TiffWriteFailed;
         if (c.TIFFSetField(tif, c.TIFFTAG_ICCPROFILE, size, profile.ptr) == 0) return sink.failure();
     }
+    if (options.dpi) |dpi| {
+        // LibTIFF takes the resolutions as doubles through its variadic setter.
+        const resolution: f64 = dpi;
+        if (c.TIFFSetField(tif, c.TIFFTAG_XRESOLUTION, resolution) == 0 or
+            c.TIFFSetField(tif, c.TIFFTAG_YRESOLUTION, resolution) == 0 or
+            c.TIFFSetField(tif, c.TIFFTAG_RESOLUTIONUNIT, @as(c_int, c.RESUNIT_INCH)) == 0)
+            return sink.failure();
+    }
 
-    // LibTIFF may change the data it encodes, so each strip is copied first.
-    const strip = try gpa.alloc(u8, rows_per_strip * row_bytes);
-    defer gpa.free(strip);
-    var y: u32 = 0;
-    var index: u32 = 0;
-    while (y < height) : ({
-        y += rows_per_strip;
-        index += 1;
-    }) {
-        const rows = @min(rows_per_strip, height - y);
-        const data = strip[0 .. rows * row_bytes];
-        @memcpy(data, pixel_bytes[y * row_bytes ..][0..data.len]);
-        if (c.TIFFWriteEncodedStrip(tif, index, data.ptr, @intCast(data.len)) < 0) return sink.failure();
+    // The strips are compressed already, so LibTIFF writes them as they are.
+    for (0..strips.count()) |index| {
+        const strip = strips.get(index);
+        if (c.TIFFWriteRawStrip(tif, @intCast(index), strip.ptr, @intCast(strip.len)) < 0) return sink.failure();
     }
     if (c.TIFFWriteDirectory(tif) == 0) return sink.failure();
     closed = true;
@@ -341,6 +363,232 @@ pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image
     if (sink.out_of_memory) return error.OutOfMemory;
     return sink.bytes.toOwnedSlice(gpa);
 }
+
+/// The mode to write a file in that holds `bytes` of strips and profile: classic TIFF if they fit,
+/// and BigTIFF if they don't.
+fn modeFor(bytes: usize) [:0]const u8 {
+    return if (bytes > bigtiff_threshold) write_mode_big else write_mode;
+}
+
+/// A file's strips after `compressStrips`. Strip `i` is the first `lengths[i]` bytes of its own
+/// slot of `slot_bytes` in `bytes`.
+const Strips = struct {
+    bytes: []u8,
+    slot_bytes: usize,
+    lengths: []usize,
+
+    fn count(strips: Strips) usize {
+        return strips.lengths.len;
+    }
+
+    /// The bytes of all the strips together.
+    fn total(strips: Strips) usize {
+        var sum: usize = 0;
+        for (strips.lengths) |length| sum += length;
+        return sum;
+    }
+
+    fn get(strips: Strips, index: usize) []u8 {
+        return strips.bytes[index * strips.slot_bytes ..][0..strips.lengths[index]];
+    }
+
+    fn deinit(strips: *Strips, gpa: std.mem.Allocator) void {
+        gpa.free(strips.bytes);
+        gpa.free(strips.lengths);
+        strips.* = undefined;
+    }
+};
+
+/// Compresses `encoded` in strips of `rows_per_strip` rows, each with the horizontal predictor and
+/// then Deflate, the way LibTIFF's own encoder does it. Each strip stands alone, so they're split
+/// between the cores.
+fn compressStrips(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), rows_per_strip: usize) WriteError!Strips {
+    const Job = StripJob(Sample);
+    const strip_pixels = rows_per_strip * encoded.width;
+    const strip_bytes = std.math.cast(c.uLong, strip_pixels * @sizeOf(Job.Pixel)) orelse return error.ImageTooLarge;
+    const count = (encoded.height + rows_per_strip - 1) / rows_per_strip;
+    const slot_bytes: usize = c.compressBound(strip_bytes);
+    const bytes = try gpa.alloc(u8, std.math.mul(usize, count, slot_bytes) catch return error.ImageTooLarge);
+    errdefer gpa.free(bytes);
+    const lengths = try gpa.alloc(usize, count);
+    errdefer gpa.free(lengths);
+    const results = try gpa.alloc(c_int, count);
+    defer gpa.free(results);
+
+    const bands = bandCount(count);
+    // Each thread needs room for one strip, to apply the predictor to.
+    const scratch = try gpa.alloc(Job.Pixel, bands * strip_pixels);
+    defer gpa.free(scratch);
+    const job: Job = .{
+        .encoded = encoded,
+        .rows_per_strip = rows_per_strip,
+        .strips = .{ .bytes = bytes, .slot_bytes = slot_bytes, .lengths = lengths },
+        .results = results,
+        .scratch = scratch,
+    };
+    inBands(count, bands, job);
+    for (results) |result| switch (result) {
+        c.Z_OK => {},
+        c.Z_MEM_ERROR => return error.OutOfMemory,
+        else => return error.TiffWriteFailed,
+    };
+    return job.strips;
+}
+
+/// How many threads to split `count` strips between: one per core, up to `max_threads`.
+fn bandCount(count: usize) usize {
+    const cores = std.Thread.getCpuCount() catch 1;
+    return @max(1, @min(max_threads, cores, count));
+}
+
+/// Splits `count` strips into `bands` runs of strips in a row, and has `job.run(band, first, end)`
+/// work through each, all but the last on threads of their own.
+fn inBands(count: usize, bands: usize, job: anytype) void {
+    std.debug.assert(bands >= 1 and bands <= max_threads);
+    const share = (count + bands - 1) / bands;
+    var threads: [max_threads]?std.Thread = @splat(null);
+    for (threads[0 .. bands - 1], 0..) |*thread, band| {
+        const first = @min(count, band * share);
+        const end = @min(count, first + share);
+        thread.* = std.Thread.spawn(.{}, @TypeOf(job).run, .{ job, band, first, end }) catch null;
+        // If we couldn't start a thread, its strips are done here.
+        if (thread.* == null) job.run(band, first, end);
+    }
+    job.run(bands - 1, @min(count, (bands - 1) * share), count);
+    for (threads[0 .. bands - 1]) |thread| if (thread) |t| t.join();
+}
+
+/// What each thread of `compressStrips` works on, for samples of type `Sample`.
+fn StripJob(comptime Sample: type) type {
+    return struct {
+        encoded: image.Image(Pixel),
+        rows_per_strip: usize,
+        strips: Strips,
+        /// zlib's result for each strip.
+        results: []c_int,
+        /// Room for one strip's pixels for each band.
+        scratch: []Pixel,
+
+        const Job = @This();
+        const Pixel = [image.channel_count]Sample;
+
+        /// Compresses strips `first` up to `end`, in `band`'s room.
+        fn run(job: Job, band: usize, first: usize, end: usize) void {
+            const width = job.encoded.width;
+            const room_pixels = job.rows_per_strip * width;
+            const room = job.scratch[band * room_pixels ..][0..room_pixels];
+            for (first..end) |index| {
+                const y = index * job.rows_per_strip;
+                const pixels = room[0 .. @min(job.rows_per_strip, job.encoded.height - y) * width];
+                @memcpy(pixels, job.encoded.pixels[y * width ..][0..pixels.len]);
+                var row: usize = 0;
+                while (row < pixels.len) : (row += width) predict(pixels[row..][0..width]);
+                const data = std.mem.sliceAsBytes(pixels);
+                var length: c.uLongf = @intCast(job.strips.slot_bytes);
+                job.results[index] = c.compress2(job.strips.bytes[index * job.strips.slot_bytes ..].ptr, &length, data.ptr, @intCast(data.len), deflate_level);
+                job.strips.lengths[index] = length;
+            }
+        }
+
+        /// Applies TIFF's horizontal predictor to `row`: each sample becomes its difference from
+        /// the same channel's sample in the pixel to its left, wrapping around. Then the samples
+        /// go into the file's byte order, which is little-endian (`write_mode`).
+        fn predict(row: []Pixel) void {
+            var x = row.len;
+            while (x > 1) {
+                x -= 1;
+                for (&row[x], row[x - 1]) |*sample, left| sample.* -%= left;
+            }
+            for (row) |*pixel| {
+                for (pixel) |*sample| sample.* = std.mem.nativeToLittle(Sample, sample.*);
+            }
+        }
+    };
+}
+
+/// Reads the pixels on all the cores if the file is laid out the way `write` writes a raw scan:
+/// 16-bit RGB in strips, chunky, with Deflate and the horizontal predictor or none. The strips
+/// don't depend on each other, so opening a raw scan is quicker this way. Returns false for any
+/// other layout, or a strip that doesn't come out the size it should, and LibTIFF reads it then.
+fn readOwnStrips(gpa: std.mem.Allocator, tif: *c.TIFF, bytes: []const u8, header: Header, scan: image.Scan) ReadError!bool {
+    const layout = header.layout;
+    if (header.depth != .sixteen or layout.colour != .rgb or layout.planar or layout.tiled or
+        layout.samples_per_pixel != image.channel_count) return false;
+    switch (header.compression) {
+        .adobe_deflate, .deflate => {},
+        else => return false,
+    }
+    var predictor_number: u16 = 0;
+    if (c.TIFFGetFieldDefaulted(tif, c.TIFFTAG_PREDICTOR, &predictor_number) == 0) return false;
+    const predictor: Predictor = @fromBackingInt(predictor_number);
+    switch (predictor) {
+        .none, .horizontal => {},
+        _ => return false,
+    }
+    const rows_per_strip: usize = layout.block_height;
+    const count: usize = c.TIFFNumberOfStrips(tif);
+    if (count != (scan.height + rows_per_strip - 1) / rows_per_strip) return false;
+    // The file is in memory already, so each strip is just its slice of it.
+    const strips = try gpa.alloc([]const u8, count);
+    defer gpa.free(strips);
+    for (strips, 0..) |*strip, index| {
+        const offset = c.TIFFGetStrileOffset(tif, @intCast(index));
+        const length = c.TIFFGetStrileByteCount(tif, @intCast(index));
+        if (offset > bytes.len or length > bytes.len - offset) return error.CorruptTiff;
+        strip.* = bytes[@intCast(offset)..][0..@intCast(length)];
+    }
+    const whole = try gpa.alloc(bool, count);
+    defer gpa.free(whole);
+    inBands(count, bandCount(count), InflateJob{
+        .strips = strips,
+        .scan = scan,
+        .rows_per_strip = rows_per_strip,
+        .predicted = predictor == .horizontal,
+        .big_endian = c.TIFFIsBigEndian(tif) != 0,
+        .whole = whole,
+    });
+    return std.mem.allEqual(bool, whole, true);
+}
+
+/// What each thread of `readOwnStrips` works on.
+const InflateJob = struct {
+    strips: []const []const u8,
+    scan: image.Scan,
+    rows_per_strip: usize,
+    predicted: bool,
+    big_endian: bool,
+    /// Whether each strip came out the size it should.
+    whole: []bool,
+
+    /// Decompresses strips `first` up to `end` straight into the scan's rows.
+    fn run(job: InflateJob, _: usize, first: usize, end: usize) void {
+        const width = job.scan.width;
+        for (first..end) |index| {
+            const y = index * job.rows_per_strip;
+            const pixels = job.scan.pixels[y * width ..][0 .. @min(job.rows_per_strip, job.scan.height - y) * width];
+            const data = std.mem.sliceAsBytes(pixels);
+            const strip = job.strips[index];
+            var length: c.uLongf = @intCast(data.len);
+            const result = c.uncompress(data.ptr, &length, strip.ptr, @intCast(strip.len));
+            job.whole[index] = result == c.Z_OK and length == data.len;
+            if (!job.whole[index]) continue;
+            var row: usize = 0;
+            while (row < pixels.len) : (row += width) job.unpredict(pixels[row..][0..width]);
+        }
+    }
+
+    /// Puts `row`'s samples in the host's byte order, then undoes the horizontal predictor if the
+    /// file has it, adding each sample to the one on its left.
+    fn unpredict(job: InflateJob, row: [][image.channel_count]u16) void {
+        for (row) |*pixel| {
+            for (pixel) |*sample| sample.* = if (job.big_endian) std.mem.bigToNative(u16, sample.*) else std.mem.littleToNative(u16, sample.*);
+        }
+        if (!job.predicted) return;
+        for (1..row.len) |x| {
+            for (&row[x], row[x - 1]) |*sample, left| sample.* +%= left;
+        }
+    }
+};
 
 /// Opens a TIFF through `Stream`'s callbacks, keeping LibTIFF's messages quiet. The errors that
 /// matter come back as results.
@@ -509,6 +757,93 @@ test "16-bit RGB comes back as written, with its ICC profile" {
     try std.testing.expectEqualStrings(profile, decoded.icc_profile.?);
 }
 
+/// A test image like a scan: smooth ramps with noise on top, different in each channel.
+fn noisyImage(gpa: std.mem.Allocator, comptime Sample: type, width: usize, height: usize) !image.Image([image.channel_count]Sample) {
+    const result: image.Image([image.channel_count]Sample) = try .init(gpa, width, height);
+    var random: std.Random.DefaultPrng = .init(width * height);
+    const noise = std.math.maxInt(Sample) / 64;
+    for (result.pixels, 0..) |*pixel, i| {
+        const ramp = (i % width) * 7 + (i / width) * 3;
+        for (pixel, 0..) |*sample, channel| {
+            sample.* = @truncate(ramp * (channel + 1) + random.random().uintLessThan(usize, noise));
+        }
+    }
+    return result;
+}
+
+test "a file of many strips, compressed on several threads, is what LibTIFF writes itself" {
+    const gpa = std.testing.allocator;
+    // Tall enough for a dozen strips.
+    var encoded = try noisyImage(gpa, u16, 500, 4000);
+    defer encoded.deinit(gpa);
+    const file = try write(gpa, u16, encoded, .{});
+    defer gpa.free(file);
+    var decoded = try read(gpa, file);
+    defer decoded.deinit(gpa);
+    try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, decoded.scan.pixels);
+
+    // The same tags and strips, encoded by LibTIFF's own Deflate and predictor.
+    var sink: Sink = .{ .gpa = gpa };
+    defer sink.bytes.deinit(gpa);
+    const tif = open(&sink, write_mode, Sink) orelse return error.TestUnexpectedResult;
+    var closed = false;
+    defer if (!closed) c.TIFFClose(tif);
+    const row_bytes = encoded.width * @sizeOf([image.channel_count]u16);
+    const rows_per_strip: u32 = @intCast(strip_bytes_target / row_bytes);
+    _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGEWIDTH, @as(u32, @intCast(encoded.width)));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGELENGTH, @as(u32, @intCast(encoded.height)));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_BITSPERSAMPLE, @as(c_int, 16));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_SAMPLESPERPIXEL, @as(c_int, image.channel_count));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_PHOTOMETRIC, @as(c_int, c.PHOTOMETRIC_RGB));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_PLANARCONFIG, @as(c_int, c.PLANARCONFIG_CONTIG));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_COMPRESSION, @as(c_int, c.COMPRESSION_ADOBE_DEFLATE));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_PREDICTOR, @as(c_int, c.PREDICTOR_HORIZONTAL));
+    _ = c.TIFFSetField(tif, c.TIFFTAG_ROWSPERSTRIP, rows_per_strip);
+    _ = c.TIFFSetField(tif, c.TIFFTAG_SOFTWARE, software.ptr);
+    const copy = try gpa.dupe(u8, std.mem.sliceAsBytes(encoded.pixels));
+    defer gpa.free(copy);
+    var y: usize = 0;
+    var index: u32 = 0;
+    while (y < encoded.height) : ({
+        y += rows_per_strip;
+        index += 1;
+    }) {
+        const strip = copy[y * row_bytes ..][0 .. @min(rows_per_strip, encoded.height - y) * row_bytes];
+        if (c.TIFFWriteEncodedStrip(tif, index, strip.ptr, @intCast(strip.len)) < 0) return error.TestUnexpectedResult;
+    }
+    try std.testing.expect(index > 10);
+    if (c.TIFFWriteDirectory(tif) == 0) return error.TestUnexpectedResult;
+    closed = true;
+    c.TIFFClose(tif);
+    try std.testing.expectEqualSlices(u8, sink.bytes.items, file);
+}
+
+test "the resolution goes in the file's tags" {
+    const gpa = std.testing.allocator;
+    var encoded = try testImage(gpa, u16, 4, 3);
+    defer encoded.deinit(gpa);
+    const file = try write(gpa, u16, encoded, .{ .dpi = 2400 });
+    defer gpa.free(file);
+    var source: Source = .{ .bytes = file };
+    const tif = open(&source, read_mode, Source) orelse return error.TestUnexpectedResult;
+    defer c.TIFFClose(tif);
+    var x: f32 = 0;
+    var y: f32 = 0;
+    var unit: u16 = 0;
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_XRESOLUTION, &x) != 0);
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_YRESOLUTION, &y) != 0);
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_RESOLUTIONUNIT, &unit) != 0);
+    try std.testing.expectEqual(@as(f32, 2400), x);
+    try std.testing.expectEqual(@as(f32, 2400), y);
+    try std.testing.expectEqual(@as(u16, c.RESUNIT_INCH), unit);
+}
+
+test "a file is only a BigTIFF when its compressed strips don't fit in a classic one" {
+    // A big scan, of more than 2 GiB of pixels, that Deflate brings well under 4 GiB.
+    try std.testing.expectEqualStrings(write_mode, modeFor(3 << 30));
+    try std.testing.expectEqualStrings(write_mode_big, modeFor(bigtiff_threshold + 1));
+}
+
 test "8-bit RGB comes back widened to 16 bits, without a profile" {
     const gpa = std.testing.allocator;
     var encoded = try testImage(gpa, u8, 5, 9);
@@ -534,6 +869,7 @@ const TestLayout = struct {
     compression: c_int,
     mode: [:0]const u8,
     grey: bool = false,
+    predictor: Predictor = .none,
 };
 
 /// Writes 16-bit `encoded` with LibTIFF directly, in a `layout` that `write` doesn't offer, so
@@ -554,6 +890,7 @@ fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLay
     _ = c.TIFFSetField(tif, c.TIFFTAG_PHOTOMETRIC, @as(c_int, if (layout.grey) c.PHOTOMETRIC_MINISBLACK else c.PHOTOMETRIC_RGB));
     _ = c.TIFFSetField(tif, c.TIFFTAG_PLANARCONFIG, @as(c_int, if (layout.planar) c.PLANARCONFIG_SEPARATE else c.PLANARCONFIG_CONTIG));
     _ = c.TIFFSetField(tif, c.TIFFTAG_COMPRESSION, layout.compression);
+    if (layout.predictor != .none) _ = c.TIFFSetField(tif, c.TIFFTAG_PREDICTOR, @as(c_int, @backingInt(layout.predictor)));
     const block_width: u32, const block_height: u32 = if (layout.tile) |tile| .{ tile, tile } else .{ width, 3 };
     if (layout.tile) |tile| {
         _ = c.TIFFSetField(tif, c.TIFFTAG_TILEWIDTH, tile);
@@ -602,6 +939,25 @@ test "planar, tiled, LZW, big-endian 16-bit RGB reads as written" {
     var decoded = try read(gpa, file);
     defer decoded.deinit(gpa);
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, decoded.scan.pixels);
+}
+
+test "16-bit Deflate strips read on all the cores, in either byte order, with the predictor or not" {
+    const gpa = std.testing.allocator;
+    var encoded = try noisyImage(gpa, u16, 29, 31);
+    defer encoded.deinit(gpa);
+    for ([_][:0]const u8{ "wl", "wb" }) |mode| {
+        for ([_]Predictor{ .none, .horizontal }) |predictor| {
+            const file = try writeLayout(gpa, encoded, .{ .planar = false, .tile = null, .compression = c.COMPRESSION_ADOBE_DEFLATE, .mode = mode, .predictor = predictor });
+            defer gpa.free(file);
+            var source: Source = .{ .bytes = file };
+            const tif = open(&source, read_mode, Source) orelse return error.TestUnexpectedResult;
+            defer c.TIFFClose(tif);
+            var scan: image.Scan = try .init(gpa, encoded.width, encoded.height);
+            defer scan.deinit(gpa);
+            try std.testing.expect(try readOwnStrips(gpa, tif, file, try readHeader(tif), scan));
+            try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, scan.pixels);
+        }
+    }
 }
 
 test "chunky PackBits strips and planar greyscale read as written" {

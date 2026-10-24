@@ -45,7 +45,7 @@ const full_colour_quality = 90;
 pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
 
 pub const Options = struct {
-    format: Format = .tiff,
+    format: Format = .jpeg,
     /// A TIFF's bits per sample. A JPEG always has 8.
     depth: Depth = .sixteen,
     /// A JPEG's quality, on libjpeg's scale of 1 to 100. From 90 up, the colour is kept at full
@@ -724,7 +724,7 @@ test "an export loses the dust when the frame's settings ask" {
     var values: [2]u16 = undefined;
     for (&values, [_]bool{ false, true }) |*value, remove| {
         frame.settings.dust.remove = remove;
-        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .depth = .sixteen, .space = .srgb }, null);
+        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .format = .tiff, .depth = .sixteen, .space = .srgb }, null);
         defer picture.deinit(gpa);
         const pixels = picture.pixels.sixteen;
         value.* = pixels.pixels[200 * pixels.width + 300][1];
@@ -831,6 +831,43 @@ test "a batch writes each frame's file with its metadata inside, and stops when 
     stopped.cancel.store(true, .release);
     stopped.run(gpa, io);
     try std.testing.expectEqual(@as(usize, 0), stopped.written.load(.acquire));
+}
+
+test "a roll from before, with its raw scans as PPMs, still exports, and JPEG is the default" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var made = try roll.Roll.create(gpa, io, library, .{ .name = "Roll from 0.5" });
+    made.close();
+    var scan = try testScan(gpa, 24, 16);
+    defer scan.deinit(gpa);
+    const ppm = try pnm.write(gpa, u16, scan);
+    defer gpa.free(ppm);
+    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/scans/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":24,\"height\":16}" });
+    const path = try std.fs.path.join(gpa, &.{ library, "Roll from 0.5" });
+    defer gpa.free(path);
+    var r: roll.Roll = try .open(gpa, io, path);
+    defer r.close();
+
+    const folder = try std.fs.path.join(gpa, &.{ r.path, roll.exports_dir });
+    defer gpa.free(folder);
+    var catalog: look.Catalog = try .init(gpa, library);
+    defer catalog.deinit(gpa);
+    const batch = try Batch.create(gpa, io, &catalog, &r, &.{0}, .{ .options = .{}, .pattern = "old_{frame}", .folder = folder });
+    defer batch.destroy(gpa);
+    batch.run(gpa, io);
+    try std.testing.expectEqual(@as(usize, 1), batch.written.load(.acquire));
+    const exported = try std.fs.path.join(gpa, &.{ folder, "old_1.jpg" });
+    defer gpa.free(exported);
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, exported, gpa, .limited(1 << 20));
+    defer gpa.free(bytes);
+    var decoded = try jpeg.read(gpa, bytes);
+    defer decoded.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 24), decoded.image.width);
 }
 
 test "frames of one strip export from the scan they share, each to its crop" {

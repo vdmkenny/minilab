@@ -151,8 +151,8 @@ The steps for a roll on a scanner:
    the film base in that scan's own margin.
 6. **Develop.** minilab works out automatic settings for each frame. Adjust them, pick a look,
    remove dust if you want, and sync settings across the roll.
-7. **Export.** TIFF (16 or 8 bit) or JPEG. HEIC with a gain map will come later; Export already
-   shows it, greyed out.
+7. **Export.** JPEG by default, or TIFF (16 or 8 bit) for more editing in another app. HEIC with a
+   gain map will come later; Export already shows it, greyed out.
 
 Camera scans and imported files skip steps 2 and 4. You import RAWs, linear TIFFs or PNM scans
 into a roll (`minilab import`, or drop them on the roll in the app), detect or draw the frames, and
@@ -271,8 +271,10 @@ binary PNM, which is what SANE's scanimage writes. They should be 16-bit and lin
 read too, with a warning: 8 bits is too few for linear data, so an 8-bit file almost always has a
 gamma curve applied, and nothing undoes that yet.
 
-A roll stores every raw scan as a 16-bit PPM, whatever it was imported from, so the rest of the app
-only has to read one format.
+A roll stores every raw scan as a 16-bit TIFF with lossless ZIP compression, whatever it was
+imported from, so the rest of the app only has to read one format, and other apps can open your
+raw scans too (section 11). Rolls from before that keep their raw scans as 16-bit PPMs, which read
+just the same.
 
 **Finished scans.** Lab scans, and scans from a scanner that inverts by itself (say a Kodak slide
 scanner), arrive as finished positives in JPEG. minilab doesn't invert them. The roll keeps the JPEG
@@ -734,15 +736,28 @@ Rolls/
   2026-10-22 Portra 400 Ghent/
     roll.json            film type, stock, format, camera, lens, dates, notes, scanner, own fields
     flat.ppm             camera rolls only: the flat field, as shot
-    scans/01.ppm ...     raw linear 16-bit scans, converted from TIFF or RAW on import and
-                         never changed; the frames of a strip share one. Finished scans
-                         are kept as their own JPEGs (scans/01.jpg)
+    scans/01.tif ...     raw linear 16-bit scans, converted from PNM, TIFF or RAW on import
+                         and never changed; the frames of a strip share one. Older rolls
+                         have PPMs (scans/01.ppm). Finished scans are kept as their own
+                         JPEGs (scans/01.jpg)
     frames/01.json ...   crop, turns, film base, look, develop settings (worked out), rating
     thumbs/01.ppm ...    reduced copies of the scans, for quick previews
     preview.ppm          the last preview of the film holder, from Scan
     preview.json         the frames' boxes on that preview, hand edits included
     exports/
 ```
+
+**Why TIFF for raw scans.** Your raw scans are your archive, so they shouldn't be locked into
+minilab. A 16-bit TIFF with ZIP compression (Deflate with the horizontal predictor) loses
+nothing, and Lightroom, Photoshop, Capture One and Apple Photos all open it. It's also what
+Lightroom and Photoshop write when you pick ZIP. On our scans it's about 30% smaller than the PPMs
+rolls kept before. DNG with lossless JPEG would be smaller still, but Capture One shows DNGs from
+scanners in generic colours, and Capture One can't open JPEG XL at all. Each raw scan carries a
+linear sRGB profile, so other apps show the negative at the right brightness instead of too dark,
+and the scan's resolution when it's known. minilab itself ignores the profile and reads the
+samples as they are. A scan's strips are compressed and decompressed on all the cores, so saving
+and opening one is about as quick as it was with a PPM. Thumbnails, the preview and a camera
+roll's flat field stay PPM, since only minilab reads them.
 
 Exports carry the roll's metadata (camera, lens, film stock, date, copyright, how the frame was
 developed, and its rating as `xmp:Rating`: 1 to 5 stars, or -1 for rejected, the way Lightroom and

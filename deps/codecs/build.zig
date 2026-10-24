@@ -1,6 +1,6 @@
 //! The image libraries minilab uses to read and write files, as one Zig module called "codecs".
-//! translate-c turns `c.h` into the C APIs of LibTIFF, libjpeg-turbo, LittleCMS 2 and LibRaw, and
-//! the module links the libraries, so anything that imports it links them too. It also holds
+//! translate-c turns `c.h` into the C APIs of LibTIFF, zlib, libjpeg-turbo, LittleCMS 2 and
+//! LibRaw, and the module links the libraries, so anything that imports it links them too. It also holds
 //! minilab's JPEG shim (`jpeg_shim.c`), which keeps libjpeg's `longjmp` error handling inside C.
 //!
 //! The libraries' licences are named lazy paths of this package, listed in `licences`, so
@@ -15,6 +15,8 @@ const Translator = @import("translate_c").Translator;
 
 /// The bindings in minilab's `src/io/codecs`, which the tests here compile.
 const bindings = [_][]const u8{ "tiff.zig", "jpeg.zig", "icc.zig", "raw.zig" };
+/// The files of minilab's `src/core` that the bindings import.
+const core_files = [_][]const u8{ "image.zig", "encode.zig" };
 
 /// The licence files this package names. Each name is also the file name to install it under.
 pub const licences = [_][]const u8{
@@ -60,7 +62,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .default_init = true,
     });
-    for ([_]*std.Build.Step.Compile{ libtiff.artifact("tiff"), jpeg, lcms2.artifact("lcms2"), libraw.artifact("raw"), shim }) |library| {
+    for ([_]*std.Build.Step.Compile{ libtiff.artifact("tiff"), zlib.artifact("z"), jpeg, lcms2.artifact("lcms2"), libraw.artifact("raw"), shim }) |library| {
         translator.linkLibrary(library);
     }
     b.modules.put(b.graph.arena, "codecs", translator.mod) catch @panic("OOM");
@@ -76,10 +78,10 @@ pub fn build(b: *std.Build) void {
     b.addNamedLazyPath("LICENSE-lcms2.txt", lcms2.builder.dependency("lcms2_c", .{}).path("LICENSE"));
     b.addNamedLazyPath("LICENSE-zlib.txt", zlib.builder.dependency("zlib", .{}).path("LICENSE"));
 
-    // The bindings import `../../core/image.zig`, and a module's files have to sit under its root
+    // The bindings import files from `../../core/`, and a module's files have to sit under its root
     // file's folder. So the tests compile copies, laid out the same way as in minilab's `src`.
     const tree = b.addWriteFiles();
-    _ = tree.addCopyFile(b.path("../../src/core/image.zig"), "core/image.zig");
+    for (core_files) |name| _ = tree.addCopyFile(b.path(b.fmt("../../src/core/{s}", .{name})), b.fmt("core/{s}", .{name}));
     for (bindings) |name| _ = tree.addCopyFile(b.path(b.fmt("../../src/io/codecs/{s}", .{name})), b.fmt("io/codecs/{s}", .{name}));
     const tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = tree.add("tests.zig", tests_root),

@@ -406,6 +406,44 @@ test "a point on the preview finds its pixel on the scan, however the frame is t
     }
 }
 
+test "a frame develops the same from a roll's TIFF raw scan as from an older roll's PPM, loupe too" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var scan: image.Scan = try .init(gpa, 120, 80);
+    defer scan.deinit(gpa);
+    for (scan.pixels, 0..) |*px, i| px.* = .{ @intCast(20000 + i % 120 * 300), @intCast(15000 + i / 120 * 400), @intCast(9000 + i % 7 * 50) };
+    const ppm = try minilab.pnm.write(gpa, u16, scan);
+    defer gpa.free(ppm);
+    const tif = try minilab.roll.encodeRaw(gpa, scan, null);
+    defer gpa.free(tif);
+    try tmp.dir.writeFile(io, .{ .sub_path = "01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = "01.tif", .data = tif });
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var catalog: look.Catalog = try .init(gpa, null);
+    defer catalog.deinit(gpa);
+
+    var frames: [2]Frame = undefined;
+    var patches: [2]Frame.Patch = undefined;
+    for ([_][]const u8{ "01.ppm", "01.tif" }, &frames, &patches) |name, *frame, *patch| {
+        const path = try std.fs.path.join(gpa, &.{ folder, name });
+        defer gpa.free(path);
+        frame.* = try .load(gpa, io, path, name, .{ .x = 10, .y = 5, .width = 100, .height = 70 }, 1, false);
+        frame.measure(.colour_negative);
+        try frame.render(gpa, io, &catalog);
+        patch.* = try frame.loupe(gpa, io, &catalog, .{ 20, 30 }, 24, false);
+    }
+    defer for (&frames, patches) |*frame, patch| {
+        gpa.free(patch.pixels);
+        frame.close(gpa);
+    };
+    try std.testing.expectEqualSlices([4]u8, frames[0].rendered, frames[1].rendered);
+    try std.testing.expectEqual(patches[0].width, patches[1].width);
+    try std.testing.expectEqualSlices([4]u8, patches[0].pixels, patches[1].pixels);
+}
+
 test "the loupe's square stays inside the crop" {
     try std.testing.expectEqual(@as(usize, 10), squareStart(5, 10, 10, 100));
     try std.testing.expectEqual(@as(usize, 45), squareStart(50, 10, 10, 100));

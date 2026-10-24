@@ -91,19 +91,19 @@ const small_line = gui.heading_size * gui.line_spacing;
 
 const path_field = 1024;
 
-/// The file choices, in the order the panel lists them.
+/// The file choices, in the order the panel lists them, with the default first.
 const FileChoice = enum {
+    jpeg,
     tiff16,
     tiff8,
-    jpeg,
     /// Shown, but the codecs can't write it yet.
     heic,
 
     fn label(choice: FileChoice) [:0]const u8 {
         return switch (choice) {
+            .jpeg => "JPEG",
             .tiff16 => "TIFF 16-bit",
             .tiff8 => "TIFF 8-bit",
-            .jpeg => "JPEG",
             .heic => "HEIC HDR",
         };
     }
@@ -116,6 +116,7 @@ fn spaceLabel(space: icc.Space) []const u8 {
         .adobe_rgb => "Adobe RGB",
         .prophoto => "ProPhoto RGB",
         .rec2020_linear => "Rec. 2020 linear",
+        .srgb_linear => "sRGB linear",
     };
 }
 
@@ -188,7 +189,7 @@ pub const State = struct {
     min_stars: usize = 0,
     /// The frame clicked last, which is where a shift-click's range starts.
     anchor: ?usize = null,
-    file: FileChoice = .tiff16,
+    file: FileChoice = .jpeg,
     quality: f32 = 92,
     space: icc.Space = .display_p3,
     size: SizeChoice = .full,

@@ -1,7 +1,7 @@
 //! Rolls on disk. A roll is a folder like this:
 //!
 //!     roll.json          what the roll is: film, format, camera, dates, notes
-//!     scans/01.ppm …     the raw scans, never changed
+//!     scans/01.tif …     the raw scans, never changed
 //!     frames/01.json …   each frame's crop and develop settings
 //!     thumbs/01.ppm …    reduced copies of the raw scans for quick previews, named like the scans
 //!     exports/           developed files
@@ -9,10 +9,13 @@
 //!     preview.json       the frames' boxes on it, hand edits included
 //!     flat.ppm           camera rolls only: the flat field, if the roll has one
 //!
-//! Raw scans are kept as 16-bit binary PPM, whatever they were imported from (`input.zig`): linear
-//! transmission in the scanner's or the camera's channels. A scan usually holds one frame. A
-//! strip holds several, which share the scan and each have their own crop. Finished pictures,
-//! such as a lab's scans, are kept as the files they came in (scans/01.jpg …), unchanged.
+//! Raw scans are kept as 16-bit TIFF with Deflate, which loses nothing, whatever they were
+//! imported from (`input.zig`): linear transmission in the scanner's or the camera's channels.
+//! Other apps, such as Lightroom, Capture One and Apple Photos, open them too. Rolls made before
+//! that keep their raw scans as 16-bit binary PPM (scans/01.ppm), and those read just the same,
+//! since a scan is read by its extension. A scan usually holds one frame. A strip holds several,
+//! which share the scan and each have their own crop. Finished pictures, such as a lab's scans,
+//! are kept as the files they came in (scans/01.jpg …), unchanged.
 //!
 //! A library is a folder of rolls.
 
@@ -23,6 +26,8 @@ const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
 const pnm = @import("../io/pnm.zig");
+const tiff = @import("../io/codecs/tiff.zig");
+const icc = @import("../io/codecs/icc.zig");
 const formats = @import("../frames/formats.zig");
 const framing = @import("framing.zig");
 const file_input = @import("input.zig");
@@ -35,6 +40,11 @@ pub const frames_dir = "frames";
 pub const exports_dir = "exports";
 pub const thumbs_dir = "thumbs";
 pub const flat_file = "flat.ppm";
+/// The extension of the raw scans a roll writes (`encodeRaw`).
+pub const raw_extension = ".tif";
+/// The colour space a raw scan's file says it's in: linear light, so other apps show the negative
+/// at the right brightness. minilab reads the samples as they are and doesn't use it (`input.zig`).
+pub const raw_space: icc.Space = .srgb_linear;
 /// A thumbnail's longer side, in pixels.
 pub const thumbnail_longest = 256;
 /// A strip's thumbnail is larger, so that each of its frames gets about `thumbnail_longest`. This
@@ -400,7 +410,7 @@ pub const Roll = struct {
         const first = roll.frames.items.len;
         // Frames added before a failure would have no file, so they're removed again.
         errdefer roll.dropFramesFrom(first);
-        const name = try roll.nextScanName(".ppm");
+        const name = try roll.nextScanName(raw_extension);
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
         defer reduced.deinit(gpa);
@@ -414,7 +424,7 @@ pub const Roll = struct {
         };
         defer gpa.free(found);
 
-        const scan_bytes = try pnm.write(gpa, u16, scan);
+        const scan_bytes = try encodeRaw(gpa, scan, dpi);
         defer gpa.free(scan_bytes);
         var thumbnail = try image.downscale(gpa, scan, thumbnailLongest(scan, found));
         defer thumbnail.deinit(gpa);
@@ -582,6 +592,15 @@ fn placeFile(gpa: std.mem.Allocator, io: Io, from: []const u8, to: []const u8, t
     defer gpa.free(bytes);
     try cwd.writeFile(io, .{ .sub_path = to, .data = bytes });
     if (transfer == .move) try cwd.deleteFile(io, from);
+}
+
+/// Encodes `scan`, made at `dpi` if that's known, the way a roll keeps a raw scan: a 16-bit TIFF
+/// with Deflate, which loses nothing and which other apps open, with `raw_space`'s profile. The
+/// caller owns the bytes.
+pub fn encodeRaw(gpa: std.mem.Allocator, scan: image.Scan, dpi: ?f32) ![]u8 {
+    const profile = try icc.profileBytes(gpa, raw_space);
+    defer gpa.free(profile);
+    return tiff.write(gpa, u16, scan, .{ .icc_profile = profile, .dpi = dpi });
 }
 
 /// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on
@@ -799,7 +818,6 @@ test "a frame saved before ratings and dust removal has neither, and too many st
 }
 
 const synthetic = @import("../frames/synthetic.zig");
-const codecs_tiff = @import("../io/codecs/tiff.zig");
 const codecs_jpeg = @import("../io/codecs/jpeg.zig");
 
 /// Makes a roll in a new folder of `tmp` for a test, along with the folder's path.
@@ -810,17 +828,15 @@ fn testRoll(tmp: *std.testing.TmpDir, info: Info) !Roll {
     return Roll.create(gpa, std.testing.io, library, info);
 }
 
-/// The scan the roll keeps for frame `index`.
+/// The scan the roll keeps for frame `index`, read by its extension the way the app reads it.
 fn keptScan(roll: *Roll, index: usize) !image.Scan {
     const gpa = std.testing.allocator;
     const path = try roll.scanPath(gpa, index);
     defer gpa.free(path);
-    const bytes = try Io.Dir.cwd().readFileAlloc(std.testing.io, path, gpa, .limited(file_input.max_file_bytes));
-    defer gpa.free(bytes);
-    return pnm.read(gpa, bytes);
+    return (try file_input.read(gpa, std.testing.io, path)).scan;
 }
 
-test "a 16-bit TIFF imports as the same pixels, kept as a PPM" {
+test "a 16-bit TIFF imports as the same pixels, kept as a TIFF" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -831,7 +847,7 @@ test "a 16-bit TIFF imports as the same pixels, kept as a PPM" {
     var encoded: image.Encoded16 = try .init(gpa, 37, 23);
     defer encoded.deinit(gpa);
     for (encoded.pixels, 0..) |*p, i| p.* = .{ @intCast(i * 41), @intCast(i * 29 + 7), @intCast(65535 - i * 31) };
-    const file = try codecs_tiff.write(gpa, u16, encoded, .{});
+    const file = try tiff.write(gpa, u16, encoded, .{});
     defer gpa.free(file);
     const path = try std.fs.path.join(gpa, &.{ roll.path, "strip.tif" });
     defer gpa.free(path);
@@ -840,10 +856,61 @@ test "a 16-bit TIFF imports as the same pixels, kept as a PPM" {
     const added = try roll.importFile(gpa, io, path, null, .copy);
     try std.testing.expectEqual(Added{ .first = 0, .count = 1 }, added);
     try std.testing.expectEqual(Input.tiff_files, roll.info.input);
-    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan.?);
+    try std.testing.expectEqualStrings("01.tif", roll.frames.items[0].scan.?);
     var kept = try keptScan(&roll, 0);
     defer kept.deinit(gpa);
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, kept.pixels);
+
+    // It says it's linear, so other apps show it at the right brightness.
+    const kept_path = try roll.scanPath(gpa, 0);
+    defer gpa.free(kept_path);
+    const kept_file = try Io.Dir.cwd().readFileAlloc(io, kept_path, gpa, .limited(file_input.max_file_bytes));
+    defer gpa.free(kept_file);
+    var decoded = try tiff.read(gpa, kept_file);
+    defer decoded.deinit(gpa);
+    const linear = try icc.profileBytes(gpa, raw_space);
+    defer gpa.free(linear);
+    try std.testing.expect(icc.sameProfile(linear, decoded.icc_profile.?));
+}
+
+test "a roll from before keeps reading its PPM scans, and new scans go in next to them as TIFFs" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var roll = try testRoll(&tmp, .{ .name = "Roll from 0.5" });
+    defer roll.close();
+
+    // An old roll's frame: its scan and its thumbnail as PPMs, the way minilab 0.5 wrote them.
+    var old: image.Scan = try .init(gpa, 48, 32);
+    defer old.deinit(gpa);
+    for (old.pixels, 0..) |*p, i| p.* = .{ @intCast(i * 13), @intCast(i * 7 + 3), @intCast(60000 - i * 11) };
+    const ppm = try pnm.write(gpa, u16, old);
+    defer gpa.free(ppm);
+    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/scans/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/thumbs/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":48,\"height\":32}" });
+
+    var again: Roll = try .open(gpa, io, roll.path);
+    defer again.close();
+    var new: image.Scan = try .init(gpa, 40, 30);
+    defer new.deinit(gpa);
+    for (new.pixels, 0..) |*p, i| p.* = .{ @intCast(65535 - i * 17), @intCast(i * 5), @intCast(i * 23 + 9) };
+    try std.testing.expectEqual(Added{ .first = 1, .count = 1 }, try again.addImage(gpa, io, new, null));
+    try std.testing.expectEqualStrings("02.tif", again.frames.items[1].scan.?);
+
+    for ([_]image.Scan{ old, new }, 0..) |written, index| {
+        var kept = try keptScan(&again, index);
+        defer kept.deinit(gpa);
+        try std.testing.expectEqualSlices([image.channel_count]u16, written.pixels, kept.pixels);
+        // Both scans are smaller than a thumbnail, so it shows the frame at full size.
+        var thumbnail = try again.frameThumbnail(gpa, io, index);
+        defer thumbnail.deinit(gpa);
+        const crop = again.frames.items[index].crop orelse image.Area.whole(written.width, written.height);
+        try std.testing.expectEqual(crop.width, thumbnail.width);
+    }
+    // The old scan stays a PPM: nothing rewrites a raw scan.
+    try tmp.dir.access(io, "Roll from 0.5/scans/01.ppm", .{});
 }
 
 test "a finished picture goes into the roll as it is, copied or moved, and develops unchanged" {
@@ -912,10 +979,10 @@ test "a strip imports as one frame per frame on it, sharing the scan" {
     const added = try roll.addImage(gpa, io, scan, strip.dpi);
     try std.testing.expectEqual(Added{ .first = 1, .count = on_film.len }, added);
 
-    try std.testing.expectEqualStrings("01.ppm", roll.frames.items[0].scan.?);
+    try std.testing.expectEqualStrings("01.tif", roll.frames.items[0].scan.?);
     var previous_end: usize = 0;
     for (roll.frames.items[added.first..], on_film) |f, expected| {
-        try std.testing.expectEqualStrings("02.ppm", f.scan.?);
+        try std.testing.expectEqualStrings("02.tif", f.scan.?);
         try std.testing.expectEqual(scan.width, f.width);
         const crop = f.crop.?;
         const centre = strip.centre(expected);
@@ -939,7 +1006,7 @@ test "a strip imports as one frame per frame on it, sharing the scan" {
     var again: Roll = try .open(gpa, io, roll.path);
     defer again.close();
     try std.testing.expectEqual(1 + on_film.len, again.frames.items.len);
-    try std.testing.expectEqualStrings("02.ppm", again.frames.items[on_film.len].scan.?);
+    try std.testing.expectEqualStrings("02.tif", again.frames.items[on_film.len].scan.?);
 }
 
 test "a camera roll's frames are divided by its flat field on import" {

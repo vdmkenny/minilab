@@ -20,6 +20,8 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 
 - **Raw scanning:** linear 16-bit scans straight from your scanner. The Mac download comes with
   SANE's drivers. On Windows, minilab uses your scanner's TWAIN driver.
+- **Raw scans that stay yours:** each roll keeps its raw scans as lossless 16-bit TIFFs, which
+  Lightroom, Photoshop, Capture One and Apple Photos open too.
 - **Frame detection:** finds the frames on a scanner preview, a strip scan or a camera shot, with
   several strips side by side in a flatbed's film holder.
 - **One workflow:** scanning, inversion, colour correction and batch export in one app.
@@ -105,10 +107,11 @@ The app has five workspaces, roughly one per step:
   the spot under the cursor at the scan's full resolution, to check focus and grain. You can also
   give a frame 1 to 5 stars or reject it, in the bar under the picture or with Lightroom's keys:
   0 to 5 for stars, X to reject, U to take the reject back.
-- **Export** saves TIFF or JPEG files in sRGB, Display P3, Adobe RGB or ProPhoto RGB, with the
-  roll's metadata in them, at full size or with the long edge cut down to a size you pick. A star
-  filter picks the frames by rating, and rejected frames start out unticked. You can also fix the
-  roll's camera, lens, date, copyright and notes there, and add metadata fields of your own.
+- **Export** saves JPEGs, or TIFFs for more editing elsewhere, in sRGB, Display P3, Adobe RGB or
+  ProPhoto RGB, with the roll's metadata in them, at full size or with the long edge cut down to
+  a size you pick. A star filter picks the frames by rating, and rejected frames start out
+  unticked. You can also fix the roll's camera, lens, date, copyright and notes there, and add
+  metadata fields of your own.
 - **Looks** lists the looks you can develop with, and lets you make your own (see below).
 
 Picking a film stock in Develop does more than label the roll. Film doesn't respond to light in a
