@@ -12,7 +12,7 @@ const stats = @import("stats.zig");
 /// How bright the clearest film shows, as a share of full brightness.
 pub const clearest = 0.92;
 /// Anything brighter than this is light through a hole in the holder, not film.
-const open_light = 0.95;
+pub const open_light = 0.95;
 /// The percentile we take as the clearest film, in parts per thousand. The 0.5% of the film that's
 /// clearer still is dust holes and scratches.
 const clearest_per_mille = 995;
