@@ -6,6 +6,7 @@ const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
+const labels = @import("labels.zig");
 
 const formats = minilab.formats;
 
@@ -16,8 +17,18 @@ const min_edge_text = 3;
 /// Where a frame's number goes after the frame starts, and the space after it, in mm.
 const edge_lead_mm = 1;
 const edge_space_mm = 2;
+/// The arrow before the half-frame number, as a share of the text's size.
+const edge_arrow_share = 0.5;
 /// The longest stock name the edge print holds.
 const max_edge_name = 48;
+
+/// A maker whose edge print comes out in a colour of its own on a contact print, and the name it
+/// prints when that's not how its stocks' names start.
+const EdgeMaker = struct { maker: []const u8, ink: theme.Color, written: ?[]const u8 = null };
+const edge_makers = [_]EdgeMaker{
+    .{ .maker = "Kodak", .ink = theme.edge_kodak },
+    .{ .maker = "Fujifilm", .ink = theme.edge_fuji, .written = "FUJI" },
+};
 
 /// A strip of film on screen. Along is the film's length and across is its width.
 pub const Strip = struct {
@@ -118,12 +129,18 @@ pub const EdgePrint = struct {
         var print: EdgePrint = .{};
         const full = stock orelse return print;
         const name = std.mem.trim(u8, full[0 .. std.mem.indexOfScalar(u8, full, '(') orelse full.len], " ");
-        const maker = name[0 .. std.mem.indexOfScalar(u8, name, ' ') orelse name.len];
-        const fuji = std.ascii.eqlIgnoreCase(maker, "Fujifilm");
-        const kodak = std.ascii.eqlIgnoreCase(maker, "Kodak") or std.ascii.eqlIgnoreCase(maker, "Eastman");
-        print.ink = if (kodak) theme.edge_kodak else if (fuji or std.ascii.eqlIgnoreCase(maker, "Fujichrome")) theme.edge_fuji else theme.edge_plain;
-        const written = if (fuji) "FUJI" else maker;
-        for ([_][]const u8{ written, name[maker.len..] }) |part| {
+        const first = name[0 .. std.mem.indexOfScalar(u8, name, ' ') orelse name.len];
+        // The preset knows the maker of a stock sold under another name, like Eastman's. Other
+        // stocks start with their maker's name.
+        const preset = if (labels.findStock(full)) |choice| choice.preset else null;
+        const maker = if (preset) |p| p.maker else first;
+        var written = first;
+        for (edge_makers) |known| {
+            if (!std.ascii.eqlIgnoreCase(known.maker, maker)) continue;
+            print.ink = known.ink;
+            if (std.ascii.eqlIgnoreCase(known.maker, first)) written = known.written orelse first;
+        }
+        for ([_][]const u8{ written, name[first.len..] }) |part| {
             for (part) |ch| {
                 if (print.len == max_edge_name) break;
                 print.buffer[print.len] = std.ascii.toUpper(ch);
@@ -133,6 +150,7 @@ pub const EdgePrint = struct {
         return print;
     }
 
+    /// The stock's name as it's printed.
     pub fn text(print: *const EdgePrint) [:0]const u8 {
         return print.buffer[0..print.len :0];
     }
@@ -164,7 +182,7 @@ pub fn edgePrint(list: *c.ImDrawList, strip: Strip, print: *const EdgePrint, sta
     const half = start + pitch / 2;
     const name = print.text();
     if (name.len > 0 and at + c.ImGui_CalcTextSize(name).x < half - size) _ = strip.label(list, at, middle, size, colour, name);
-    strip.arrow(list, half - size, middle, size / 2, colour);
+    strip.arrow(list, half - size, middle, size * edge_arrow_share, colour);
     _ = strip.label(list, half, middle, size, colour, gui.print("{d}A", .{number}));
 }
 
@@ -178,6 +196,17 @@ test "the edge print reads the way the maker writes it, in the maker's ink" {
     const hp5: EdgePrint = .of("Ilford HP5 Plus");
     try std.testing.expectEqualStrings("ILFORD HP5 PLUS", hp5.text());
     try std.testing.expectEqual(theme.edge_plain, hp5.ink);
+    // Sold under another name, in its maker's ink.
+    const double_x: EdgePrint = .of("Eastman Double-X 5222");
+    try std.testing.expectEqualStrings("EASTMAN DOUBLE-X 5222", double_x.text());
+    try std.testing.expectEqual(theme.edge_kodak, double_x.ink);
+    const velvia: EdgePrint = .of("Fujichrome Velvia 50");
+    try std.testing.expectEqualStrings("FUJICHROME VELVIA 50", velvia.text());
+    try std.testing.expectEqual(theme.edge_fuji, velvia.ink);
+    // A stock with no preset goes by the first word of its name.
+    const colorplus: EdgePrint = .of("Kodak ColorPlus 200");
+    try std.testing.expectEqualStrings("KODAK COLORPLUS 200", colorplus.text());
+    try std.testing.expectEqual(theme.edge_kodak, colorplus.ink);
     // Without a stock, only the frame numbers are printed.
     try std.testing.expectEqualStrings("", EdgePrint.of(null).text());
 }

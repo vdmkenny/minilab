@@ -1593,8 +1593,8 @@ fn drawFilm(state: *const State, preview: *const Preview, map: StripMap, format:
         }
         if (holes.edgeMm(film, format.height_mm)) |edge| for (state.boxes.items, 0..) |box, i| {
             if (box.opening != opening) continue;
-            const pitch = format.pitch_mm orelse box.length / preview.alongPerMm() + format.gapMm();
-            holes.edgePrint(list, strip, &print, map.corner.y + box.start() * map.along, pitch * per_mm, i + 1, edge, ink);
+            const pitch = format.pitchAfterMm(box.length / preview.alongPerMm()) * per_mm;
+            holes.edgePrint(list, strip, &print, map.corner.y + box.start() * map.along, pitch, i + 1, edge, ink);
         };
     }
     drawPictures(state, preview, map, list);
@@ -2035,7 +2035,7 @@ fn addFrame(state: *State, gpa: std.mem.Allocator, preview: *const Preview, form
         .hand = true,
         .opening = opening,
     };
-    const pitch = (format.pitch_mm orelse format.width_mm + format.gapMm()) * per_mm;
+    const pitch = format.pitchAfterMm(format.width_mm) * per_mm;
     if (selectedBox(state)) |selected| {
         box = selected;
         box.check = null;

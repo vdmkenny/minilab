@@ -413,26 +413,25 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
     const shown = @min(total, fit);
     const strip_end = strip_x + @as(f32, @floatFromInt(shown)) * step - gap + if (sheets) 0 else 2 * leader;
     const film_ink = theme.imU32(theme.film);
+    const strip: holes.Strip = .{ .axis = .x, .start = strip_x, .end = strip_end, .near = strip_top, .far = strip_top + band, .along_per_mm = per_mm, .across_per_mm = per_mm };
     if (shown > 0 and !sheets) {
         c.ImDrawList_AddRectFilledEx(list, gui.vec2(strip_x, strip_top), gui.vec2(strip_end, strip_top + band), film_ink, gui.px(film_rounding), 0);
         // Punched in the page's colour, so they look cut out.
-        const strip: holes.Strip = .{ .axis = .x, .start = strip_x, .end = strip_end, .near = strip_top, .far = strip_top + band, .along_per_mm = per_mm, .across_per_mm = per_mm };
         switch (format.size.holes()) {
             .none => {},
             .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.page),
             .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.page),
         }
-        // The maker's edge print, as it comes out on a contact print.
-        if (holes.edgeMm(format.size, format.height_mm)) |edge| {
-            const print: holes.EdgePrint = .of(r.info.stock);
-            for (0..shown) |i| holes.edgePrint(list, strip, &print, strip_x + leader + @as(f32, @floatFromInt(i)) * step, step, i + 1, edge, print.ink);
-        }
     }
 
+    // The maker's edge print, as it comes out on a contact print. Sheet film has none.
+    const edge = holes.edgeMm(format.size, format.height_mm);
+    const print: holes.EdgePrint = .of(r.info.stock);
     var x = strip_x + if (sheets) 0 else leader;
     for (0..shown) |frame| {
         const picture_x = x + if (sheets) leader else 0;
         if (sheets) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, strip_top), gui.vec2(x + width + 2 * leader, strip_top + band), film_ink, gui.px(film_rounding), 0);
+        if (edge) |e| holes.edgePrint(list, strip, &print, x, step, frame + 1, e, print.ink);
         const corner = gui.vec2(picture_x, thumbs_top);
         const far = gui.vec2(picture_x + width, thumbs_top + height);
         const numbers_y = strip_top + band + gui.px(number_gap);

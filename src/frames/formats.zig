@@ -145,6 +145,12 @@ pub const Format = struct {
         if (format.pitch_mm) |pitch| return pitch - format.width_mm;
         return format.size.typicalGapMm();
     }
+
+    /// How far the film advances from a frame `length_mm` long to the next, in mm: the fixed
+    /// pitch, or the frame and the film's typical gap.
+    pub fn pitchAfterMm(format: Format, length_mm: f32) f32 {
+        return format.pitch_mm orelse length_mm + format.gapMm();
+    }
 };
 
 /// A 135 camera advances the film 8 perforations per frame.
@@ -251,12 +257,15 @@ test "135 full frame is the default, 36 × 24 on a 38 mm pitch" {
     try std.testing.expectApproxEqAbs(1.5, f.ratio(), 1e-6);
     try std.testing.expectApproxEqAbs(38, f.pitch_mm.?, 1e-4);
     try std.testing.expectApproxEqAbs(2, f.gapMm(), 1e-4);
+    // The camera sets the pitch, however long the frame measures.
+    try std.testing.expectApproxEqAbs(38, f.pitchAfterMm(35), 1e-4);
 }
 
 test "120 has no fixed pitch and falls back to the film's typical gap" {
     const f = Standard.@"120_6x6".format();
     try std.testing.expectEqual(null, f.pitch_mm);
     try std.testing.expectEqual(FilmSize.@"120".typicalGapMm(), f.gapMm());
+    try std.testing.expectApproxEqAbs(57 + f.gapMm(), f.pitchAfterMm(57), 1e-4);
 }
 
 test "glass plates are listed under their own size, with no film width or holes" {
