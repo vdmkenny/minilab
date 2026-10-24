@@ -158,9 +158,6 @@ const view_overhang = 0.068;
 const max_margin_mm = 10;
 const max_inset = 5;
 const max_rotation = 5;
-/// A detected frame follows the roll's format if its length is within this share of its height
-/// times the roll's ratio. Otherwise it keeps its measured box.
-const ratio_tolerance = 0.03;
 /// Two boxes that overlap by more than this share of the shorter one's length are the same frame.
 const same_frame_overlap = 0.3;
 
@@ -2196,7 +2193,7 @@ fn boxOf(frame: frames.Frame, preview: Preview, format: formats.Format, fit: fra
         const cut = box.start() <= 1 or box.end() >= preview.alongSize() - 1;
         const picture: f32 = @floatFromInt(if (vertical) frame.picture.height else frame.picture.width);
         const nominal = format.width_mm * preview.alongPerMm();
-        const off = @abs(picture - nominal) > (frames.Options{}).length_tolerance * nominal;
+        const off = @abs(picture - nominal) > frames.detect.default_length_tolerance * nominal;
         box.check = if (cut) .cut else if (off) .length else .pitch;
     }
     return box;

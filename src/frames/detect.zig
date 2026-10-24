@@ -62,13 +62,11 @@ pub const Fit = enum {
 pub fn fitted(area: image.Area, axis: Axis, ratio: f32) image.Area {
     const along: f32 = @floatFromInt(if (axis == .y) area.height else area.width);
     const across: f32 = @floatFromInt(if (axis == .y) area.width else area.height);
-    const length = @min(along, across * ratio);
-    const height = @min(across, along / ratio);
-    const l: usize = @intFromFloat(@round(length));
-    const h: usize = @intFromFloat(@round(height));
-    const w = if (axis == .y) h else l;
-    const t = if (axis == .y) l else h;
-    return .{ .x = area.x + (area.width - @min(w, area.width)) / 2, .y = area.y + (area.height - @min(t, area.height)) / 2, .width = @min(w, area.width), .height = @min(t, area.height) };
+    const length: usize = @intFromFloat(@round(@min(along, across * ratio)));
+    const height: usize = @intFromFloat(@round(@min(across, along / ratio)));
+    const width = @min(if (axis == .y) height else length, area.width);
+    const tall = @min(if (axis == .y) length else height, area.height);
+    return .{ .x = area.x + (area.width - width) / 2, .y = area.y + (area.height - tall) / 2, .width = width, .height = tall };
 }
 
 pub const Holder = enum {
@@ -114,13 +112,15 @@ pub const Frame = struct {
     confidence: Confidence,
 };
 
+/// A frame whose measured length is off from the strip's by more than this fraction is marked for
+/// checking.
+pub const default_length_tolerance = 0.12;
+
 pub const Options = struct {
     /// The image axis the strip runs along, or null to detect it.
     axis: ?Axis = null,
     holder: Holder = .strip,
-    /// A frame whose measured length is off from the format's by more than this fraction is
-    /// marked for checking.
-    length_tolerance: f32 = 0.12,
+    length_tolerance: f32 = default_length_tolerance,
     /// In density. Null uses the kind's default.
     gap_tolerance: ?f32 = null,
     /// The largest skew of the strip we search for.
@@ -939,8 +939,9 @@ const Context = struct {
     kind: Kind,
     gap_tolerance: f32,
     length_tolerance: f32,
-    /// The frame's size. The height is the opening's height, and the length comes from the
-    /// format's ratio.
+    /// The frame's box. The height is the opening's height. The length comes from the format's
+    /// ratio when the picture fills the opening, and is the format's own length when it doesn't
+    /// (`min_fill`).
     frame_height: f32,
     frame_length: f32,
     /// The format's size.
@@ -950,6 +951,12 @@ const Context = struct {
     nominal_pitch: ?f32,
     nominal_gap: f32,
     px_per_mm: f32,
+
+    /// The picture height to go by where its edges don't show: the format's, as far as the opening
+    /// shows it.
+    fn pictureHeight(c: Context) f32 {
+        return @min(c.nominal_height, c.frame_height);
+    }
 };
 
 /// A frame in strip coordinates.
@@ -968,7 +975,24 @@ const Placed = struct {
     /// The picture's own edges, as a centre and size like the box's.
     picture: Picture,
 
-    const Picture = struct { along: f32, across: f32, length: f32, height: f32 };
+    /// A centre and size in strip coordinates, like the box's.
+    const Picture = struct {
+        along: f32,
+        across: f32,
+        length: f32,
+        height: f32,
+
+        /// The image area it covers before rotation, clipped to a `width` by `height` scan.
+        fn area(p: Picture, axis: Axis, width: usize, height: usize) image.Area {
+            const x_centre, const y_centre, const x_size, const y_size = switch (axis) {
+                .y => .{ p.across, p.along, p.height, p.length },
+                .x => .{ p.along, p.across, p.length, p.height },
+            };
+            const x = clippedSpan(x_centre, x_size, width);
+            const y = clippedSpan(y_centre, y_size, height);
+            return .{ .x = x.start, .y = y.start, .width = x.len(), .height = y.len() };
+        }
+    };
 
     fn before(_: void, a: Placed, b: Placed) bool {
         if (a.opening != b.opening) return a.opening < b.opening;
@@ -976,24 +1000,12 @@ const Placed = struct {
     }
 
     fn toFrame(placed: Placed, axis: Axis, width: usize, height: usize) Frame {
-        const x_centre, const y_centre, const x_size, const y_size = switch (axis) {
-            .y => .{ placed.across, placed.along, placed.height, placed.length },
-            .x => .{ placed.along, placed.across, placed.length, placed.height },
-        };
-        const x = clippedSpan(x_centre, x_size, width);
-        const y = clippedSpan(y_centre, y_size, height);
-        const p = placed.picture;
-        const px_centre, const py_centre, const px_size, const py_size = switch (axis) {
-            .y => .{ p.across, p.along, p.height, p.length },
-            .x => .{ p.along, p.across, p.length, p.height },
-        };
-        const px = clippedSpan(px_centre, px_size, width);
-        const py = clippedSpan(py_centre, py_size, height);
+        const box: Picture = .{ .along = placed.along, .across = placed.across, .length = placed.length, .height = placed.height };
         return .{
             .index = 0,
             .opening = placed.opening,
-            .area = .{ .x = x.start, .y = y.start, .width = x.len(), .height = y.len() },
-            .picture = .{ .x = px.start, .y = py.start, .width = px.len(), .height = py.len() },
+            .area = box.area(axis, width, height),
+            .picture = placed.picture.area(axis, width, height),
             .rotation_degrees = rotationDegrees(axis, placed.slope),
             .confidence = placed.confidence,
         };
@@ -1129,7 +1141,7 @@ fn placeStrip(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Prof
 /// far from the strip's usual edge (a dark scene there), takes the usual one.
 fn measurePictures(gpa: std.mem.Allocator, frames: []Placed, level: f32, c: Context) !void {
     if (frames.len == 0) return;
-    const nominal = @min(c.nominal_height, c.frame_height);
+    const nominal = c.pictureHeight();
     // Each side's edge, as a distance in from the opening's own edge on that side.
     const near = try gpa.alloc(?f32, frames.len);
     defer gpa.free(near);
@@ -1147,14 +1159,20 @@ fn measurePictures(gpa: std.mem.Allocator, frames: []Placed, level: f32, c: Cont
         const opening = c.opening.height(f.along);
         const own_near = keptEdge(n, usual_near, slack);
         const own_far = keptEdge(r, usual_far, slack);
-        // Where a side is still unknown, it's the format's height from the other side, or the
-        // format's height in the middle.
-        const top = own_near orelse if (own_far) |v| opening - v - nominal else (opening - nominal) / 2;
-        const bottom = opening - (own_far orelse if (own_near) |v| opening - v - nominal else (opening - nominal) / 2);
+        const top = sideOrGuess(own_near, own_far, opening, nominal);
+        const bottom = opening - sideOrGuess(own_far, own_near, opening, nominal);
         const near_edge = c.opening.centre(f.along) - opening / 2;
         f.picture.across = near_edge + (top + bottom) / 2;
         f.picture.height = @max(bottom - top, 1);
     }
+}
+
+/// A side's edge, as a distance in from its side of the opening. Where it's unknown, it's the
+/// picture height in from the other side, or the picture height in the middle.
+fn sideOrGuess(own: ?f32, other: ?f32, opening: f32, nominal: f32) f32 {
+    if (own) |v| return v;
+    if (other) |v| return opening - v - nominal;
+    return (opening - nominal) / 2;
 }
 
 /// A frame's own edge if it's close to the strip's usual one, or else the usual one.
@@ -1198,6 +1216,9 @@ fn pictureEdges(gpa: std.mem.Allocator, f: Placed, level: f32, c: Context, nomin
     defer gpa.free(column);
     const profile = try gpa.alloc(f32, width);
     defer gpa.free(profile);
+    const level_px: usize = @intFromFloat(@max(@round(picture_level_mm * c.px_per_mm), 1));
+    const inner = try gpa.alloc(f32, level_px);
+    defer gpa.free(inner);
     for (0..samples) |s| {
         const u = first + @as(f32, @floatFromInt(s * step));
         const start = c.opening.near.at(u);
@@ -1213,17 +1234,11 @@ fn pictureEdges(gpa: std.mem.Allocator, f: Placed, level: f32, c: Context, nomin
 
     const rising = picture_edge_factor * c.gap_tolerance;
     const reach = @min(@as(usize, @intFromFloat(@max((opening - nominal) / 2 + picture_rebate_slack_mm * c.px_per_mm, 1))), width);
-    const level_px: usize = @intFromFloat(@max(@round(picture_level_mm * c.px_per_mm), 1));
     var edges: [2]?f32 = .{ null, null };
     for (&edges, [_]bool{ false, true }) |*edge, from_far| {
-        const at = struct {
-            fn get(p: []const f32, far: bool, o: usize) f32 {
-                return p[if (far) p.len - 1 - o else o];
-            }
-        }.get;
         var clear: ?usize = null;
         const rise = for (0..reach) |o| {
-            if (at(profile, from_far, o) < rising) {
+            if (fromSide(profile, from_far, o) < rising) {
                 if (clear == null) clear = o;
             } else if (clear != null) break o;
         } else continue;
@@ -1233,16 +1248,20 @@ fn pictureEdges(gpa: std.mem.Allocator, f: Placed, level: f32, c: Context, nomin
             edge.* = @floatFromInt(rise);
             continue;
         }
-        // The samples are all in the profile by now, so their buffer holds the picture's level.
-        const inner = values[0 .. inside_end - rise];
-        for (inner, rise..) |*v, o| v.* = at(profile, from_far, o);
-        const inside = medianOf(inner) orelse rising;
-        const midway = (at(profile, from_far, rise - 1) + inside) / 2;
+        const level_of = inner[0 .. inside_end - rise];
+        for (level_of, rise..) |*v, o| v.* = fromSide(profile, from_far, o);
+        const inside = medianOf(level_of) orelse rising;
+        const midway = (fromSide(profile, from_far, rise - 1) + inside) / 2;
         var o = clear.?;
-        while (o < inside_end and at(profile, from_far, o) < midway) o += 1;
+        while (o < inside_end and fromSide(profile, from_far, o) < midway) o += 1;
         edge.* = @floatFromInt(o);
     }
     return edges;
+}
+
+/// The value `o` in from one end of `profile`: the near end, or the far end if `far`.
+fn fromSide(profile: []const f32, far: bool, o: usize) f32 {
+    return profile[if (far) profile.len - 1 - o else o];
 }
 
 /// Works out whether the content's `end` shows a frame edge, from the highest density within
@@ -1583,7 +1602,7 @@ const Strip = struct {
             .height = c.frame_height,
             .slope = c.opening.slope(),
             .confidence = confidence,
-            .picture = .{ .along = along, .across = across, .length = strip.film_length * strip.scale, .height = @min(c.nominal_height, c.frame_height) },
+            .picture = .{ .along = along, .across = across, .length = strip.film_length * strip.scale, .height = c.pictureHeight() },
         };
     }
 };
@@ -1633,15 +1652,16 @@ fn placeMounted(gpa: std.mem.Allocator, out: *std.ArrayList(Placed), profile: Pr
         const height = @max(local.height(middle), 1);
         const off_length = @abs(length - c.nominal_length) > c.length_tolerance * c.nominal_length;
         const off_height = @abs(height - c.nominal_height) > c.length_tolerance * c.nominal_height;
-        // A slide's picture is its mount's aperture.
+        const across = local.centre(middle);
         try out.append(gpa, .{
             .along = middle,
-            .across = local.centre(middle),
+            .across = across,
             .length = length,
             .height = height,
             .slope = local.slope(),
             .confidence = if (off_length or off_height) .check else .confident,
-            .picture = .{ .along = middle, .across = local.centre(middle), .length = length, .height = height },
+            // A slide's picture is its mount's aperture.
+            .picture = .{ .along = middle, .across = across, .length = length, .height = height },
         });
     }
 }
