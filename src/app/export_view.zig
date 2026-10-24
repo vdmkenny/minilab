@@ -237,8 +237,6 @@ pub const State = struct {
                 // HEIC can't be written yet, and Export is off while it's chosen.
                 .tiff16, .heic => .tiff,
             },
-            // A TIFF from Export is 16-bit, for more editing elsewhere. A JPEG is always 8-bit.
-            .depth = .sixteen,
             .quality = @intFromFloat(std.math.clamp(@round(state.quality), 1, 100)),
             .space = state.space,
             .long_edge = switch (state.size) {

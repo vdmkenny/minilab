@@ -16,7 +16,7 @@ const Translator = @import("translate_c").Translator;
 /// The bindings in minilab's `src/io/codecs`, which the tests here compile.
 const bindings = [_][]const u8{ "tiff.zig", "jpeg.zig", "icc.zig", "raw.zig" };
 /// The files of minilab's `src/core` that the bindings import.
-const core_files = [_][]const u8{ "image.zig", "encode.zig" };
+const core_files = [_][]const u8{ "image.zig", "encode.zig", "parallel.zig" };
 
 /// The licence files this package names. Each name is also the file name to install it under.
 pub const licences = [_][]const u8{

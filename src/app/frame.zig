@@ -425,23 +425,35 @@ test "a frame develops the same from a roll's TIFF raw scan as from an older rol
     var catalog: look.Catalog = try .init(gpa, null);
     defer catalog.deinit(gpa);
 
-    var frames: [2]Frame = undefined;
-    var patches: [2]Frame.Patch = undefined;
-    for ([_][]const u8{ "01.ppm", "01.tif" }, &frames, &patches) |name, *frame, *patch| {
-        const path = try std.fs.path.join(gpa, &.{ folder, name });
-        defer gpa.free(path);
-        frame.* = try .load(gpa, io, path, name, .{ .x = 10, .y = 5, .width = 100, .height = 70 }, 1, false);
-        frame.measure(.colour_negative);
-        try frame.render(gpa, io, &catalog);
-        patch.* = try frame.loupe(gpa, io, &catalog, .{ 20, 30 }, 24, false);
-    }
-    defer for (&frames, patches) |*frame, patch| {
-        gpa.free(patch.pixels);
-        frame.close(gpa);
+    // The frame from one of the two files, developed, with the loupe on it.
+    const Developed = struct {
+        frame: Frame,
+        loupe: Frame.Patch,
+
+        fn open(name: []const u8, in: []const u8, looks: *look.Catalog) !@This() {
+            const a = std.testing.allocator;
+            const path = try std.fs.path.join(a, &.{ in, name });
+            defer a.free(path);
+            var frame: Frame = try .load(a, std.testing.io, path, name, .{ .x = 10, .y = 5, .width = 100, .height = 70 }, 1, false);
+            errdefer frame.close(a);
+            frame.measure(.colour_negative);
+            try frame.render(a, std.testing.io, looks);
+            const patch = try frame.loupe(a, std.testing.io, looks, .{ 20, 30 }, 24, false);
+            return .{ .frame = frame, .loupe = patch };
+        }
+
+        fn close(developed: *@This()) void {
+            std.testing.allocator.free(developed.loupe.pixels);
+            developed.frame.close(std.testing.allocator);
+        }
     };
-    try std.testing.expectEqualSlices([4]u8, frames[0].rendered, frames[1].rendered);
-    try std.testing.expectEqual(patches[0].width, patches[1].width);
-    try std.testing.expectEqualSlices([4]u8, patches[0].pixels, patches[1].pixels);
+    var from_ppm: Developed = try .open("01.ppm", folder, &catalog);
+    defer from_ppm.close();
+    var from_tif: Developed = try .open("01.tif", folder, &catalog);
+    defer from_tif.close();
+    try std.testing.expectEqualSlices([4]u8, from_ppm.frame.rendered, from_tif.frame.rendered);
+    try std.testing.expectEqual(from_ppm.loupe.width, from_tif.loupe.width);
+    try std.testing.expectEqualSlices([4]u8, from_ppm.loupe.pixels, from_tif.loupe.pixels);
 }
 
 test "the loupe's square stays inside the crop" {

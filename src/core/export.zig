@@ -46,8 +46,6 @@ pub const spaces = [_]icc.Space{ .display_p3, .srgb, .adobe_rgb, .prophoto };
 
 pub const Options = struct {
     format: Format = .jpeg,
-    /// A TIFF's bits per sample. A JPEG always has 8.
-    depth: Depth = .sixteen,
     /// A JPEG's quality, on libjpeg's scale of 1 to 100. From 90 up, the colour is kept at full
     /// resolution (4:4:4). Below that, it's kept at half (4:2:0).
     quality: jpeg.Quality = 92,
@@ -56,11 +54,11 @@ pub const Options = struct {
     /// Frames that are already smaller keep their size.
     long_edge: ?usize = null,
 
-    /// The bits per sample of the file.
+    /// The bits per sample of the file. A TIFF has 16, for more editing in another app.
     pub fn bits(options: Options) Depth {
         return switch (options.format) {
             .jpeg => .eight,
-            .tiff => options.depth,
+            .tiff => .sixteen,
         };
     }
 };
@@ -695,7 +693,7 @@ test "sRGB red is inside Display P3, less saturated there" {
     var rendered: image.Rendered = try .init(gpa, 1, 1);
     defer rendered.deinit(gpa);
     rendered.pixels[0] = .{ 1, 0, 0 };
-    var pixels = try convert(gpa, &rendered, .{ .format = .tiff, .depth = .eight, .space = .display_p3 }, null);
+    var pixels = try convert(gpa, &rendered, .{ .format = .jpeg, .space = .display_p3 }, null);
     defer pixels.eight.deinit(gpa);
     // sRGB's red in Display P3 is (0.9175, 0.2003, 0.1386), encoded.
     const red = pixels.eight.pixels[0];
@@ -724,7 +722,7 @@ test "an export loses the dust when the frame's settings ask" {
     var values: [2]u16 = undefined;
     for (&values, [_]bool{ false, true }) |*value, remove| {
         frame.settings.dust.remove = remove;
-        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .format = .tiff, .depth = .sixteen, .space = .srgb }, null);
+        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
         defer picture.deinit(gpa);
         const pixels = picture.pixels.sixteen;
         value.* = pixels.pixels[200 * pixels.width + 300][1];
@@ -739,7 +737,7 @@ test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" 
     var scan = try testScan(gpa, 40, 30);
     defer scan.deinit(gpa);
     const frame: roll.FrameSettings = .{ .scan = "01.ppm", .crop = .{ .x = 5, .y = 5, .width = 20, .height = 10 }, .quarter_turns = 1 };
-    const options: Options = .{ .format = .tiff, .depth = .sixteen, .space = .adobe_rgb, .long_edge = 8 };
+    const options: Options = .{ .format = .tiff, .space = .adobe_rgb, .long_edge = 8 };
     var picture = try developPicture(gpa, scan, frame, .neutral, options, null);
     defer picture.deinit(gpa);
     // 20 × 10, turned to 10 × 20, reduced to 4 × 8.
@@ -840,17 +838,17 @@ test "a roll from before, with its raw scans as PPMs, still exports, and JPEG is
     defer tmp.cleanup();
     const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(library);
-    var made = try roll.Roll.create(gpa, io, library, .{ .name = "Roll from 0.5" });
-    made.close();
+    const name = "Roll from 0.5";
+    var made = try roll.Roll.create(gpa, io, library, .{ .name = name });
+    defer made.close();
     var scan = try testScan(gpa, 24, 16);
     defer scan.deinit(gpa);
     const ppm = try pnm.write(gpa, u16, scan);
     defer gpa.free(ppm);
-    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/scans/01.ppm", .data = ppm });
-    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":24,\"height\":16}" });
-    const path = try std.fs.path.join(gpa, &.{ library, "Roll from 0.5" });
-    defer gpa.free(path);
-    var r: roll.Roll = try .open(gpa, io, path);
+    try tmp.dir.writeFile(io, .{ .sub_path = name ++ "/scans/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = name ++ "/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":24,\"height\":16}" });
+    // Opened again, the roll has the frame put there by hand.
+    var r: roll.Roll = try .open(gpa, io, made.path);
     defer r.close();
 
     const folder = try std.fs.path.join(gpa, &.{ r.path, roll.exports_dir });
@@ -893,7 +891,7 @@ test "frames of one strip export from the scan they share, each to its crop" {
     var catalog: look.Catalog = try .init(gpa, library);
     defer catalog.deinit(gpa);
     const batch = try Batch.create(gpa, io, &catalog, &r, &.{ 0, 3 }, .{
-        .options = .{ .format = .tiff, .depth = .eight, .space = .srgb },
+        .options = .{ .format = .tiff, .space = .srgb },
         .pattern = "strip_{frame}",
         .folder = folder,
     });

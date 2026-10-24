@@ -878,7 +878,8 @@ test "a roll from before keeps reading its PPM scans, and new scans go in next t
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    var roll = try testRoll(&tmp, .{ .name = "Roll from 0.5" });
+    const name = "Roll from 0.5";
+    var roll = try testRoll(&tmp, .{ .name = name });
     defer roll.close();
 
     // An old roll's frame: its scan and its thumbnail as PPMs, the way minilab 0.5 wrote them.
@@ -887,9 +888,9 @@ test "a roll from before keeps reading its PPM scans, and new scans go in next t
     for (old.pixels, 0..) |*p, i| p.* = .{ @intCast(i * 13), @intCast(i * 7 + 3), @intCast(60000 - i * 11) };
     const ppm = try pnm.write(gpa, u16, old);
     defer gpa.free(ppm);
-    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/scans/01.ppm", .data = ppm });
-    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/thumbs/01.ppm", .data = ppm });
-    try tmp.dir.writeFile(io, .{ .sub_path = "Roll from 0.5/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":48,\"height\":32}" });
+    try tmp.dir.writeFile(io, .{ .sub_path = name ++ "/scans/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = name ++ "/thumbs/01.ppm", .data = ppm });
+    try tmp.dir.writeFile(io, .{ .sub_path = name ++ "/frames/01.json", .data = "{\"scan\":\"01.ppm\",\"width\":48,\"height\":32}" });
 
     var again: Roll = try .open(gpa, io, roll.path);
     defer again.close();
@@ -910,7 +911,7 @@ test "a roll from before keeps reading its PPM scans, and new scans go in next t
         try std.testing.expectEqual(crop.width, thumbnail.width);
     }
     // The old scan stays a PPM: nothing rewrites a raw scan.
-    try tmp.dir.access(io, "Roll from 0.5/scans/01.ppm", .{});
+    try tmp.dir.access(io, name ++ "/scans/01.ppm", .{});
 }
 
 test "a finished picture goes into the roll as it is, copied or moved, and develops unchanged" {
