@@ -87,6 +87,9 @@ pub const Event = union(enum) {
     /// The thread's list of devices. Whoever receives the event owns it now.
     devices: []scan.Device,
     opened: struct { device: usize, capabilities: scan.Capabilities },
+    /// The scanner was opened again after a scan failed, from a new list of devices, which the
+    /// receiver owns now.
+    reopened: struct { devices: []scan.Device, device: usize, capabilities: scan.Capabilities },
     failed: struct { stage: Stage, err: anyerror },
     preview: Preview,
     frame_started: usize,
@@ -102,6 +105,10 @@ pub const Event = union(enum) {
         switch (event.*) {
             .devices => |d| scan.freeDevices(gpa, d),
             .opened => |*o| o.capabilities.deinit(gpa),
+            .reopened => |*r| {
+                scan.freeDevices(gpa, r.devices);
+                r.capabilities.deinit(gpa);
+            },
             .preview => |*p| p.scan.deinit(gpa),
             .frame_done => |d| gpa.free(d.ppm),
             else => {},
@@ -155,6 +162,9 @@ pub const Worker = struct {
     library: ?scan.Library = null,
     devices: []scan.Device = &.{},
     scanner: ?scan.Scanner = null,
+    /// The device in `devices` the scanner was opened from. It stays when a failed scan closes
+    /// the scanner, so the next one can open it again.
+    device: ?usize = null,
     /// The scanner settings' changes, which every scan gets.
     raw: ?scan.Owned(scan.RawSetting) = null,
 
@@ -302,6 +312,7 @@ pub const Worker = struct {
                 worker.phase.store(.listing, .release);
                 if (worker.scanner) |*s| s.close();
                 worker.scanner = null;
+                worker.device = null;
                 const found = library.devices(gpa) catch |err| return worker.post(.{ .failed = .{ .stage = .list, .err = err } });
                 scan.freeDevices(gpa, worker.devices);
                 worker.devices = found;
@@ -312,19 +323,23 @@ pub const Worker = struct {
                 worker.phase.store(.opening, .release);
                 if (worker.scanner) |*s| s.close();
                 worker.scanner = null;
+                worker.device = null;
                 if (index >= worker.devices.len) return worker.post(.{ .failed = .{ .stage = .open, .err = error.NotFound } });
                 worker.scanner = library.open(gpa, worker.devices[index]) catch |err| return worker.post(.{ .failed = .{ .stage = .open, .err = err } });
-                // Film needs the transparency source. A scanner without one falls back to its
-                // default source.
-                const capabilities = worker.scanner.?.capabilities(gpa, .transparency) catch worker.scanner.?.capabilities(gpa, null) catch |err| {
+                const capabilities = filmCapabilities(gpa, &worker.scanner.?) catch |err| {
+                    worker.closeScanner();
                     return worker.post(.{ .failed = .{ .stage = .open, .err = err } });
                 };
+                worker.device = index;
                 worker.post(.{ .opened = .{ .device = index, .capabilities = capabilities } });
             },
             .preview => |request| {
+                const scanner = worker.connected(library) catch |err| return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
                 worker.phase.store(.previewing, .release);
-                const scanner = if (worker.scanner) |*s| s else return worker.post(.{ .failed = .{ .stage = .preview, .err = error.NotFound } });
-                const picture = scanner.scan(gpa, worker.withRaw(request), &worker.progress) catch |err| return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
+                const picture = scanner.scan(gpa, worker.withRaw(request), &worker.progress) catch |err| {
+                    worker.closeScanner();
+                    return worker.post(.{ .failed = .{ .stage = .preview, .err = err } });
+                };
                 worker.post(.{ .preview = .{
                     .scan = picture.scan,
                     .dpi = picture.dpi,
@@ -333,10 +348,49 @@ pub const Worker = struct {
             },
             .frames => |list| {
                 defer gpa.free(list);
-                worker.scanQueue(list);
+                worker.scanQueue(library, list);
             },
             .raw => unreachable,
         }
+    }
+
+    /// The open scanner. After a failed scan it's opened again first, since the scanner may have
+    /// been switched off and on, which leaves the old connection dead.
+    fn connected(worker: *Worker, library: *scan.Library) scan.Error!*scan.Scanner {
+        if (worker.scanner) |*s| return s;
+        const index = worker.device orelse return error.NotFound;
+        worker.phase.store(.opening, .release);
+        return worker.reopen(library, worker.devices[index]);
+    }
+
+    /// Lists the devices again and opens `old` among them, and tells the window. A scanner that's
+    /// been switched off and on can get a new device name, so if its name has gone, it's found by
+    /// its maker and model.
+    fn reopen(worker: *Worker, library: *scan.Library, old: scan.Device) scan.Error!*scan.Scanner {
+        const gpa = worker.gpa;
+        const found = try library.devices(gpa);
+        var keep = false;
+        defer if (!keep) scan.freeDevices(gpa, found);
+        const index = sameDevice(found, old) orelse return error.NotFound;
+        var scanner = try library.open(gpa, found[index]);
+        errdefer scanner.close();
+        var capabilities = try filmCapabilities(gpa, &scanner);
+        errdefer capabilities.deinit(gpa);
+        const copy = try scan.cloneDevices(gpa, found);
+        scan.freeDevices(gpa, worker.devices);
+        worker.devices = found;
+        keep = true;
+        worker.device = index;
+        worker.scanner = scanner;
+        std.log.info("opened {s} again as {s}", .{ old.model, found[index].id });
+        worker.post(.{ .reopened = .{ .devices = copy, .device = index, .capabilities = capabilities } });
+        return &worker.scanner.?;
+    }
+
+    /// Closes the scanner after a failed scan. `device` stays, so the next scan opens it again.
+    fn closeScanner(worker: *Worker) void {
+        if (worker.scanner) |*s| s.close();
+        worker.scanner = null;
     }
 
     /// `request` with the scanner settings' changes.
@@ -346,20 +400,25 @@ pub const Worker = struct {
         return with;
     }
 
-    fn scanQueue(worker: *Worker, list: []FrameJob) void {
+    fn scanQueue(worker: *Worker, library: *scan.Library, list: []FrameJob) void {
         const gpa = worker.gpa;
-        const scanner = if (worker.scanner) |*s| s else {
-            worker.post(.{ .failed = .{ .stage = .scan, .err = error.NotFound } });
-            return worker.post(.{ .queue_done = .{ .cancelled = false } });
-        };
         for (list) |job| {
             if (worker.cancel.load(.acquire)) {
                 worker.post(.{ .frame_cancelled = job.index });
                 continue;
             }
-            worker.phase.store(.scanning, .release);
             worker.post(.{ .frame_started = job.index });
+            const scanner = worker.connected(library) catch |err| {
+                worker.post(.{ .frame_failed = .{ .index = job.index, .err = err } });
+                continue;
+            };
+            if (worker.cancel.load(.acquire)) {
+                worker.post(.{ .frame_cancelled = job.index });
+                continue;
+            }
+            worker.phase.store(.scanning, .release);
             var picture = scanner.scan(gpa, worker.withRaw(job.request), &worker.progress) catch |err| {
+                worker.closeScanner();
                 worker.post(.{ .frame_failed = .{ .index = job.index, .err = err } });
                 continue;
             };
@@ -378,6 +437,21 @@ pub const Worker = struct {
         worker.post(.{ .queue_done = .{ .cancelled = worker.cancel.load(.acquire) } });
     }
 };
+
+/// What `scanner` can do with film, which needs the transparency source. A scanner without one
+/// falls back to its default source.
+fn filmCapabilities(gpa: std.mem.Allocator, scanner: *scan.Scanner) scan.Error!scan.Capabilities {
+    return scanner.capabilities(gpa, .transparency) catch scanner.capabilities(gpa, null);
+}
+
+/// Where `old` is in `devices`: by its device name, or else by its driver, maker and model.
+fn sameDevice(devices: []const scan.Device, old: scan.Device) ?usize {
+    for (devices, 0..) |d, i| if (std.mem.eql(u8, d.id, old.id)) return i;
+    for (devices, 0..) |d, i| {
+        if (std.mem.eql(u8, d.driver, old.driver) and std.mem.eql(u8, d.vendor, old.vendor) and std.mem.eql(u8, d.model, old.model)) return i;
+    }
+    return null;
+}
 
 /// Turns a frame's scan into what the roll keeps: its PPM bytes and the crop. If the frame was
 /// detected rather than placed by hand, the crop is found again on this scan.
@@ -561,6 +635,63 @@ test "the scan thread's jobs preview and scan frames on SANE's test backend" {
         }
     }
     try std.testing.expectEqual(@as(usize, 2), done);
+}
+
+test "after a failed preview, the next one opens the scanner again" {
+    if (scan.native != .sane) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    var worker: Worker = .{ .gpa = gpa, .io = std.testing.io, .thread = undefined };
+    defer {
+        for (worker.events.items) |*event| event.deinit(gpa);
+        worker.events.deinit(gpa);
+    }
+    worker.library = scan.Library.load(gpa, std.testing.io) catch return error.SkipZigTest;
+    defer worker.library.?.unload();
+    const test_device: scan.Device = .{ .id = "test", .vendor = "Noname", .model = "frontend-tester", .driver = "test", .kind = .sane };
+    // Opening it again needs SANE to list the test backend's devices.
+    const listed = worker.library.?.devices(gpa) catch return error.SkipZigTest;
+    defer scan.freeDevices(gpa, listed);
+    if (sameDevice(listed, test_device) == null) return error.SkipZigTest;
+    worker.devices = try gpa.alloc(scan.Device, 1);
+    worker.devices[0] = try test_device.clone(gpa);
+    defer {
+        if (worker.scanner) |*s| s.close();
+        scan.freeDevices(gpa, worker.devices);
+    }
+
+    worker.handle(.{ .open = 0 });
+    var opened = worker.take().?;
+    defer opened.deinit(gpa);
+    if (opened == .failed) return error.SkipZigTest;
+    const source = opened.opened.capabilities.source;
+
+    // An area off the scanner fails, and the scanner is closed.
+    worker.handle(.{ .preview = .{ .source = source, .dpi = 50, .area = .{ .x = 5000, .y = 5000, .width = 10, .height = 10 } } });
+    var failed = worker.take().?;
+    defer failed.deinit(gpa);
+    try std.testing.expect(failed == .failed);
+    try std.testing.expect(worker.scanner == null);
+
+    worker.handle(.{ .preview = .{ .source = source, .dpi = 50, .area = .{ .x = 0, .y = 0, .width = 40, .height = 80 } } });
+    var reopened = worker.take().?;
+    defer reopened.deinit(gpa);
+    try std.testing.expect(reopened == .reopened);
+    try std.testing.expectEqualStrings(test_device.model, reopened.reopened.devices[reopened.reopened.device].model);
+    var preview = worker.take().?;
+    defer preview.deinit(gpa);
+    try std.testing.expect(preview == .preview);
+}
+
+test "a scanner switched off and on is found again, under a new name if it has one" {
+    const old: scan.Device = .{ .id = "epkowa:interpreter:001:004", .vendor = "Epson", .model = "Perfection V200", .driver = "epkowa", .kind = .sane };
+    var devices = [_]scan.Device{
+        .{ .id = "epson2:libusb:001:009", .vendor = "Epson", .model = "GT-X980", .driver = "epson2", .kind = .sane },
+        .{ .id = "epkowa:interpreter:001:005", .vendor = "Epson", .model = "Perfection V200", .driver = "epkowa", .kind = .sane },
+    };
+    try std.testing.expectEqual(@as(?usize, 1), sameDevice(&devices, old));
+    devices[0].id = old.id;
+    try std.testing.expectEqual(@as(?usize, 0), sameDevice(&devices, old));
+    try std.testing.expectEqual(@as(?usize, null), sameDevice(devices[0..0], old));
 }
 
 const formats_for_test = minilab.formats.Standard.@"135_full_frame";

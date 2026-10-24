@@ -618,6 +618,17 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             sendRaw(state, ctx);
             return;
         },
+        // The same scanner, opened again after a scan failed. Its settings stay as they were.
+        .reopened => |reopened| {
+            scan.freeDevices(gpa, state.devices);
+            state.devices = reopened.devices;
+            if (state.capabilities) |*caps| caps.deinit(gpa);
+            state.capabilities = reopened.capabilities;
+            state.device = reopened.device;
+            state.problem = null;
+            state.dpi = chooseDpi(reopened.capabilities, state.dpi);
+            return;
+        },
         .failed => |failed| {
             std.log.err("scanner {t}: {t}", .{ failed.stage, failed.err });
             // Without drivers, the scanner panel already says what to install.
