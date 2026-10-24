@@ -1067,8 +1067,10 @@ fn sideAt(density: []const f32, run: Run, end: End, extent: Range, depth: usize,
 }
 
 /// Leaves out the bare light at either end of `extent`, where the strip is shorter than the
-/// holder's opening: flat lines as light as the lightest one, up to the holder's soft edge. Light
-/// that isn't clearly lighter than the film is the film's own clear base, and stays.
+/// holder's opening: flat lines as light as the lightest one, up to the holder's soft edge. Bare
+/// light always has the holder past it, so film that runs to the edge of the scan, like the gaps
+/// in a frame scan's margins, stays. So does light that isn't clearly lighter than the film,
+/// which is the film's own clear base.
 fn leaveOutBareLight(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !Range {
     const medians = profile.median[extent.start..extent.end];
     const spreads = profile.spread[extent.start..extent.end];
@@ -1086,23 +1088,27 @@ fn leaveOutBareLight(gpa: std.mem.Allocator, profile: Profile, extent: Range, c:
     const soft: usize = @intFromFloat(@round(soft_edge_mm * c.px_per_mm / scale));
     const shortest: usize = @intFromFloat(@max(@round(min_flat_mm * c.px_per_mm / scale), 1));
 
-    // From each end, past the holder's soft edge, then through the bare light.
+    // From each end with the holder past it, past the holder's soft edge, then through the bare
+    // light.
     var start: usize = 0;
-    const first = for (0..@min(soft, medians.len)) |i| {
-        if (bare(medians[i], spreads[i], lamp, c.gap_tolerance)) break i;
-    } else medians.len;
-    var i = first;
-    while (i < medians.len and bare(medians[i], spreads[i], lamp, c.gap_tolerance)) i += 1;
-    if (i - first >= shortest) start = i;
-
+    if (extent.start > 0) {
+        const first = for (0..@min(soft, medians.len)) |i| {
+            if (bare(medians[i], spreads[i], lamp, c.gap_tolerance)) break i;
+        } else medians.len;
+        var i = first;
+        while (i < medians.len and bare(medians[i], spreads[i], lamp, c.gap_tolerance)) i += 1;
+        if (i - first >= shortest) start = i;
+    }
     var end = medians.len;
-    const last = for (0..@min(soft, medians.len)) |k| {
-        const j = medians.len - 1 - k;
-        if (bare(medians[j], spreads[j], lamp, c.gap_tolerance)) break j + 1;
-    } else 0;
-    var j = last;
-    while (j > start and bare(medians[j - 1], spreads[j - 1], lamp, c.gap_tolerance)) j -= 1;
-    if (last >= j and last - j >= shortest) end = j;
+    if (extent.end < profile.median.len) {
+        const last = for (0..@min(soft, medians.len)) |k| {
+            const j = medians.len - 1 - k;
+            if (bare(medians[j], spreads[j], lamp, c.gap_tolerance)) break j + 1;
+        } else 0;
+        var j = last;
+        while (j > start and bare(medians[j - 1], spreads[j - 1], lamp, c.gap_tolerance)) j -= 1;
+        if (last >= j and last - j >= shortest) end = j;
+    }
     if (start == 0 and end == medians.len) return extent;
     if (end <= start) return extent;
 
@@ -1128,8 +1134,8 @@ fn filmExtent(median: []const f32, threshold: u16) ?Range {
 
 /// Finds the level of the gaps between frames. For negatives that's the film base, from the
 /// lightest line medians. Bare light past the end of a short strip is lighter still, so when light
-/// runs reach the ends, the base comes from the flat lines between them. For positives it's the
-/// darkest lines.
+/// runs reach the ends, the base comes from the stretches of flat lines between them, the way gaps
+/// look. A picture's odd flat line doesn't count. For positives it's the darkest lines.
 fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context) !f32 {
     const medians = profile.median[extent.start..extent.end];
     const sorted = try gpa.alloc(f32, medians.len);
@@ -1147,14 +1153,19 @@ fn gapLevel(gpa: std.mem.Allocator, profile: Profile, extent: Range, c: Context)
             while (end > start and medians[end - 1] >= limit) end -= 1;
             if (start == 0 and end == medians.len) return lightest;
 
+            const shortest: usize = @intFromFloat(@max(@round(min_flat_mm * c.px_per_mm), 1));
+            const spreads = profile.spread[extent.start..extent.end];
             var flat: usize = 0;
-            for (medians[start..end], profile.spread[extent.start + start .. extent.start + end]) |m, s| {
-                if (s < flat_spread) {
-                    sorted[flat] = m;
-                    flat += 1;
+            var stretch = start;
+            for (start..end + 1) |line| {
+                if (line < end and spreads[line] < flat_spread) continue;
+                if (line - stretch >= shortest) {
+                    @memcpy(sorted[flat..][0 .. line - stretch], medians[stretch..line]);
+                    flat += line - stretch;
                 }
+                stretch = line + 1;
             }
-            if (@as(f32, @floatFromInt(flat)) < min_flat_mm * c.px_per_mm) return lightest;
+            if (flat == 0) return lightest;
             std.mem.sortUnstable(f32, sorted[0..flat], {}, std.sort.asc(f32));
             return @max(quantile(f32, sorted[0..flat], gap_quantile), level_floor);
         },
@@ -1645,6 +1656,16 @@ test "bare light past the end of a strip shorter than the opening" {
     var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
     defer detection.deinit(testing_gpa);
     try expectFrames(detection, strip, &all_confident, 0.3);
+}
+
+test "a frame scan's gaps at its ends aren't bare light" {
+    // One frame and a little of the gaps on either side, the way a frame is scanned with a
+    // margin: the film runs to both ends of the scan.
+    const frames = [_]synthetic.Frame{.{ .start_mm = 1.5, .length_mm = synthetic.frame_135_mm }};
+    const strip: synthetic.Strip = .{ .along_mm = synthetic.frame_135_mm + 3, .frames = &frames };
+    var detection = try detectSynthetic(strip, formats.Standard.@"135_full_frame".format(), .{});
+    defer detection.deinit(testing_gpa);
+    try expectFrames(detection, strip, &.{.confident}, 0.3);
 }
 
 test "a clear leader isn't bare light" {
