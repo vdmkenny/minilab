@@ -3,10 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>minilab: scan, develop and export film</title>
-  <meta name="description" content="minilab scans, develops and exports film, a roll at a time. Colour and black and white negatives and slides, on macOS, Linux and Windows. Free and open source.">
+  <title>minilab: free film scanning and negative conversion software</title>
+  <meta name="description" content="Scan, convert and develop film negatives and slides, a roll at a time, with frame detection, dust removal and film looks. Free for macOS, Linux and Windows.">
+  <link rel="canonical" href="https://vdmkenny.github.io/minilab/">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#161617">
+
+  <!-- What a link to the site shows on social media and in chat apps. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="minilab">
+  <meta property="og:url" content="https://vdmkenny.github.io/minilab/">
+  <meta property="og:title" content="minilab: free film scanning and negative conversion software">
+  <meta property="og:description" content="Scan, convert and develop film negatives and slides, a roll at a time, with frame detection, dust removal and film looks. Free for macOS, Linux and Windows.">
+  <meta property="og:image" content="https://vdmkenny.github.io/minilab/images/rolls.webp">
+  <meta property="og:image:type" content="image/webp">
+  <meta property="og:image:width" content="2880">
+  <meta property="og:image:height" content="1800">
+  <meta property="og:image:alt" content="The Rolls workspace, with each roll as a contact sheet">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <!-- The app described for search engines. -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "minilab",
+    "description": "Scan, convert and develop film negatives and slides, a roll at a time, with frame detection, dust removal and film looks.",
+    "url": "https://vdmkenny.github.io/minilab/",
+    "downloadUrl": "https://github.com/vdmkenny/minilab/releases/latest",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "macOS, Linux, Windows",
+    "license": "https://www.mozilla.org/MPL/2.0/",
+    "isAccessibleForFree": true,
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+    "image": "https://vdmkenny.github.io/minilab/icon.svg",
+    "screenshot": "https://vdmkenny.github.io/minilab/images/rolls.webp",
+    "featureList": [
+      "Raw 16-bit scanning from flatbed scanners",
+      "Frame detection on scans and camera digitisations",
+      "Colour and black and white negative conversion",
+      "Film datasheet corrections",
+      "Dust removal",
+      "Frontier lab emulation and film looks",
+      "Batch export to TIFF and JPEG with EXIF and XMP metadata"
+    ]
+  }
+  </script>
 </head>
 <body>
   <header class="hero">
@@ -22,7 +65,7 @@
 
   <main>
     <figure class="shot wide">
-      <img src="images/rolls.webp" width="2880" height="1800" alt="The Rolls workspace, with each roll as a contact sheet">
+      <img src="images/rolls.webp" width="2880" height="1800" fetchpriority="high" alt="The Rolls workspace, with each roll as a contact sheet">
     </figure>
 
     <p class="intro">Whether you scan on a flatbed, digitise negatives with a digital camera, or
