@@ -10,6 +10,7 @@ finished scans from a lab, minilab handles frame detection, inversion, colour co
 export.
 
 It supports colour negatives, black and white negatives and slides, on macOS, Linux and Windows.
+Screenshots and downloads are on [the website](https://vdmkenny.github.io/minilab/).
 
 Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside, see
 [docs/design.md](docs/design.md).
@@ -40,9 +41,9 @@ Written in **Zig 0.17** with a **Dear ImGui** interface. For how it works inside
 
 ## Installation
 
-Download the archive for your platform from the [latest release](../../releases/latest). There
-are builds for Windows, macOS and Linux, on x86-64 and Arm, with a file of checksums to check your
-download against.
+Download the archive for your platform from [the website](https://vdmkenny.github.io/minilab/#download)
+or the [latest release](../../releases/latest). There are builds for Windows, macOS and Linux, on
+x86-64 and Arm, with a file of checksums to check your download against.
 
 ### macOS
 
