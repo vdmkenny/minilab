@@ -47,14 +47,20 @@ x86-64 and Arm, with a file of checksums to check your download against.
 
 ### macOS
 
-The macOS builds aren't signed, so run this once in the unpacked folder to let minilab and the
-scanner drivers it comes with through:
+The macOS download is an app, minilab.app, with the scanner drivers inside. Unpack it and move it
+to your Applications folder. It isn't signed, so macOS blocks it the first time you open it: open
+it once, then click **Open Anyway** in System Settings, under Privacy & Security. Or run this once
+instead:
 
 ```bash
-xattr -dr com.apple.quarantine .
+xattr -dr com.apple.quarantine /Applications/minilab.app
 ```
 
-`minilab --version` tells you which version you have.
+The command line program is inside the app, so
+`/Applications/minilab.app/Contents/MacOS/minilab --version` tells you which version you have.
+
+Mac builds up to 0.6.0 were a folder with the program in it, not an app. They can't update
+themselves to the app, so download it once by hand.
 
 ### Updates
 
@@ -62,9 +68,9 @@ The release builds look for a new version on GitHub each time they start, in the
 When there is one, the header says Update and its version. Click it to see what's new, then
 Update and restart: minilab downloads the new build, checks it against the release's checksums
 and GitHub's attestation that minilab's release workflow built it, swaps it in and starts again.
-If minilab's folder isn't writable, it offers the download instead. If macOS Gatekeeper stops the
-new version from launching, the update window has the `xattr` command for your folder, ready to
-copy.
+If minilab's folder (on a Mac, the app) isn't writable, it offers the download instead. If macOS
+Gatekeeper stops the new version from launching, the update window has the `xattr` command for
+the app, ready to copy.
 
 Builds you make yourself don't look for updates.
 
@@ -84,7 +90,8 @@ libjpeg-turbo, libtiff, LibRaw and Little CMS) and the film look collections. Yo
 install anything else, except SANE if you want to scan on macOS or Linux. On a Mac you can build
 the SANE the releases come with instead: `scripts/build-sane-macos.sh arm64 zig-out/bin/sane`
 (or `x86_64` on an Intel Mac) puts it next to the program, where minilab looks for it. It needs
-CMake and the Xcode command line tools.
+CMake and the Xcode command line tools. `zig build app` makes the app the Mac releases are,
+`zig-out/minilab.app`, without SANE in it.
 
 ## Using the app
 
@@ -153,7 +160,8 @@ colour) applied on top of Neutral.
 - `minilab detect` lists the frames it finds on a strip scan.
 - `minilab scan` makes one scan, and `minilab scan --list` lists the scanners.
 
-`minilab --help` lists every command with its options, and every command takes `--verbose`.
+`minilab --help` lists every command with its options, and every command takes `--verbose`. On a
+Mac the program is inside the app: `/Applications/minilab.app/Contents/MacOS/minilab`.
 `--look` takes a look name from `minilab looks`, like `glassmeter:kodak-portra-400`, or the path
 to a .cube file. `import`'s `--move` moves finished scans (JPEGs) into the roll instead of copying
 them. Raw scans are always converted, so their originals stay put.
@@ -163,7 +171,7 @@ them. Raw scans are always converted, so their originals stay put.
 minilab only looks for scanner drivers when you open Scan, so everything else works without them.
 
 **On a Mac** the download comes with the drivers, so there's nothing to install. They're SANE, a
-free collection of drivers for most scanners, in the `sane` folder next to the program. Plug the
+free collection of drivers for most scanners, in the app's `Contents/Resources/sane`. Plug the
 scanner in, open Scan, and it's in the list. You don't need the scanner's own Mac software,
 and you can leave it installed. Just don't have it open while minilab scans, since only one
 program can use the scanner at a time.
@@ -194,11 +202,12 @@ any of them. Your changes are saved per scanner, and Reset puts the scanner back
 ## Licence
 
 minilab is under the Mozilla Public License 2.0 (see `LICENSE`). The libraries it builds keep
-their own licences, and the build puts a copy of each next to the program. LibRaw is linked under
+their own licences, and the build puts a copy of each next to the program (in the Mac app, in
+`Contents/Resources`). LibRaw is linked under
 the LGPL 2.1, so you can relink minilab with your own LibRaw.
 
 The Mac download also carries SANE (under the GPL, mostly with an exception for programs that use
-it), libusb (LGPL 2.1) and libjpeg-turbo. Their licences are in its `sane` folder, along with a
+it), libusb (LGPL 2.1) and libjpeg-turbo. Their licences are in the app's `sane` folder, with a
 README that says where their source is, and each release has the source archives attached.
 
 The film stock presets are our own readings of the film datasheets;

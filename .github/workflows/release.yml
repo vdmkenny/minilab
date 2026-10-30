@@ -5,9 +5,9 @@
 # credited to them in its notes. Each archive, and each executable in it, gets a build provenance
 # attestation, which `gh attestation verify` checks.
 #
-# The macOS builds carry SANE, so scanning works with nothing to install
-# (`scripts/build-sane-macos.sh`). Its licence asks for the source to come with it, so the source
-# archives it's built from are attached to the release too.
+# The macOS builds are an app, minilab.app, and carry SANE in it, so scanning works with nothing to
+# install (`scripts/build-sane-macos.sh`). Its licence asks for the source to come with it, so the
+# source archives it's built from are attached to the release too.
 #
 # Run by hand from the Actions tab, it builds everything and keeps the archives as the run's
 # artifacts, but publishes nothing and makes no attestations.
@@ -74,8 +74,9 @@ jobs:
           version: 0.17.0
       # An explicit target builds for the architecture's baseline processor, so the binary runs on
       # any machine of that kind, not just ones like the runner.
-      # -Dupdates has the releases look for newer ones and offer to install them.
-      - run: zig build --release=fast -Dstrip -Dupdates -Dtarget=${{ matrix.target }}
+      # -Dupdates has the releases look for newer ones and offer to install them. The Macs build
+      # the app as well (`zig build app`).
+      - run: zig build install ${{ matrix.sane && 'app' || '' }} --release=fast -Dstrip -Dupdates -Dtarget=${{ matrix.target }}
       # SANE for the Mac, built from its pinned source, with the source archives kept for the release.
       - if: matrix.sane
         run: scripts/build-sane-macos.sh ${{ matrix.sane }} sane sane-source
@@ -85,28 +86,44 @@ jobs:
           VERSION: ${{ needs.release-please.outputs.tag || github.ref_name }}
         run: |
           name="minilab-$VERSION-${{ matrix.name }}"
-          mkdir -p "$name" dist
+          mkdir -p dist shipped
+          # The docs go with the program: in a folder of their own, or in the app's Resources on a
+          # Mac.
+          app=zig-out/minilab.app
+          case "${{ matrix.target }}" in
+            *macos*) docs="$app/Contents/Resources" ;;
+            *) docs="$name" && mkdir -p "$name" ;;
+          esac
           for file in README.md LICENSE CHANGELOG.md; do
-            if [ -f "$file" ]; then cp "$file" "$name"/; fi
+            if [ -f "$file" ]; then cp "$file" "$docs"/; fi
           done
           # The licences and notices of the libraries and fonts whose text has to go with every copy:
           # everything the build installs beside the program.
-          find zig-out -maxdepth 1 -type f -exec cp {} "$name"/ \;
-          # SANE goes next to the program, where minilab looks for it. Both Mac builds have the same
-          # source archives, so one of them puts them out for the release.
-          if [ -n "${{ matrix.sane }}" ]; then
-            cp -R sane "$name"/
-          fi
+          find zig-out -maxdepth 1 -type f -exec cp {} "$docs"/ \;
+          # Both Mac builds have the same SANE source archives, so one of them puts them out for the
+          # release.
           if [ "${{ matrix.name }}" = macos-aarch64 ]; then
             cp sane-source/* dist/
           fi
           case "${{ matrix.target }}" in
+            *macos*)
+              # SANE goes in the app's Resources, where minilab looks for it. Then the app is
+              # signed ad hoc as a whole, so macOS sees parts that belong together: signing
+              # rewrites the program's own signature, so the program that ships is the app's.
+              # Without a Developer ID, macOS still asks the first time it's opened.
+              cp -R sane "$app/Contents/Resources/"
+              codesign --force --deep --sign - "$app"
+              tar -czf "dist/$name.tar.gz" -C zig-out minilab.app
+              cp "$app/Contents/MacOS/minilab" shipped/
+              ;;
             *windows*)
               cp zig-out/bin/minilab.exe "$name"/
+              cp zig-out/bin/minilab.exe shipped/
               7z a -tzip "dist/$name.zip" "$name" > /dev/null
               ;;
             *)
               cp zig-out/bin/minilab "$name"/
+              cp zig-out/bin/minilab shipped/
               tar -czf "dist/$name.tar.gz" "$name"
               ;;
           esac
@@ -117,7 +134,7 @@ jobs:
         with:
           subject-path: |
             dist/*
-            zig-out/bin/*
+            shipped/*
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
@@ -157,7 +174,7 @@ jobs:
           # Run again, the job finds its note there already, and leaves the notes as they are.
           case "$body" in "The macOS builds come with scanner drivers"*) exit 0 ;; esac
           changelog="$(printf '%s\n' "$body" | scripts/release-credits.sh)"
-          note="The macOS builds come with scanner drivers (SANE). On Linux you need SANE, and on Windows your scanner maker's TWAIN driver (see the README). The macOS builds aren't signed, so macOS blocks them the first time you open one: run \`xattr -dr com.apple.quarantine .\` once in the folder you unpacked to let it through. The source of the SANE they carry is attached here too. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
+          note="The macOS builds come with scanner drivers (SANE). On Linux you need SANE, and on Windows your scanner maker's TWAIN driver (see the README). The macOS builds are an app, minilab.app, that isn't signed, so macOS blocks it the first time you open it: click Open Anyway in System Settings, under Privacy & Security, or run \`xattr -dr com.apple.quarantine minilab.app\` once. The source of the SANE they carry is attached here too. To check a download, compare it with \`minilab-$TAG-sha256sums.txt\`, or run \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`."
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes "$note
 
           $changelog"

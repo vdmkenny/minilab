@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     addSteps(b, exe, &.{ core, app, looks.tool });
+    addApp(b, exe, target);
 }
 
 /// SDL3, built for `target`. Building for a Mac other than the host needs the SDK at `macos_sdk`.
@@ -172,19 +173,75 @@ fn interfaceIncludes(b: *std.Build) [4]std.Build.LazyPath {
     return .{ imgui.path("."), imgui.path("backends"), bindings.path("."), bindings.path("backends") };
 }
 
-/// minilab's icon as a Windows resource. `src/make_icon.zig` draws it into an .ico file, and a
-/// resource script points to it.
-fn windowsIcon(b: *std.Build) std.Build.LazyPath {
+/// minilab's icon in a file called `name`, an .ico or an .icns, which `src/make_icon.zig` draws.
+fn iconFile(b: *std.Build, name: []const u8) std.Build.LazyPath {
     const tool = b.addExecutable(.{
         .name = "make_icon",
         .root_module = b.createModule(.{ .root_source_file = b.path("src/make_icon.zig"), .target = b.graph.host, .optimize = .ReleaseFast }),
     });
-    const run = b.addRunArtifact(tool);
-    const ico = run.addOutputFileArg("minilab.ico");
+    return b.addRunArtifact(tool).addOutputFileArg(name);
+}
+
+/// minilab's icon as a Windows resource: an .ico file, and a resource script that points to it.
+fn windowsIcon(b: *std.Build) std.Build.LazyPath {
     const files = b.addWriteFiles();
-    _ = files.addCopyFile(ico, "minilab.ico");
+    _ = files.addCopyFile(iconFile(b, "minilab.ico"), "minilab.ico");
     return files.add("minilab.rc", "1 ICON \"minilab.ico\"\n");
 }
+
+/// Adds `zig build app`, which makes minilab a macOS app in `zig-out/minilab.app`: the program,
+/// its icon, and an Info.plist that says what they are. The release workflow adds SANE and the
+/// licences to its Resources.
+fn addApp(b: *std.Build, exe: *std.Build.Step.Compile, target: std.Build.ResolvedTarget) void {
+    const step = b.step("app", "Make minilab a macOS app, zig-out/minilab.app");
+    if (target.result.os.tag != .macos) {
+        step.dependOn(&b.addFail("minilab.app is for macOS: build it with -Dtarget=aarch64-macos or x86_64-macos").step);
+        return;
+    }
+    const contents = "minilab.app/Contents";
+    step.dependOn(&b.addInstallArtifact(exe, .{ .dest_dir = .{ .override = .{ .custom = contents ++ "/MacOS" } } }).step);
+    step.dependOn(&b.addInstallFile(iconFile(b, "minilab.icns"), contents ++ "/Resources/minilab.icns").step);
+    const version = @import("build.zig.zon").version;
+    const oldest = target.result.os.version_range.semver.min;
+    const plist = b.addWriteFiles().add("Info.plist", b.fmt(info_plist, .{ version, version, oldest.major, oldest.minor }));
+    step.dependOn(&b.addInstallFile(plist, contents ++ "/Info.plist").step);
+}
+
+/// The macOS app's Info.plist: its name and identifier, its program and icon, its version (twice:
+/// as people read it and as macOS compares it), and the oldest macOS the build runs on.
+const info_plist =
+    \\<?xml version="1.0" encoding="UTF-8"?>
+    \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    \\<plist version="1.0">
+    \\<dict>
+    \\  <key>CFBundleName</key>
+    \\  <string>minilab</string>
+    \\  <key>CFBundleDisplayName</key>
+    \\  <string>minilab</string>
+    \\  <key>CFBundleIdentifier</key>
+    \\  <string>io.github.vdmkenny.minilab</string>
+    \\  <key>CFBundlePackageType</key>
+    \\  <string>APPL</string>
+    \\  <key>CFBundleExecutable</key>
+    \\  <string>minilab</string>
+    \\  <key>CFBundleIconFile</key>
+    \\  <string>minilab</string>
+    \\  <key>CFBundleShortVersionString</key>
+    \\  <string>{s}</string>
+    \\  <key>CFBundleVersion</key>
+    \\  <string>{s}</string>
+    \\  <key>CFBundleInfoDictionaryVersion</key>
+    \\  <string>6.0</string>
+    \\  <key>LSMinimumSystemVersion</key>
+    \\  <string>{d}.{d}</string>
+    \\  <key>LSApplicationCategoryType</key>
+    \\  <string>public.app-category.photography</string>
+    \\  <key>NSHighResolutionCapable</key>
+    \\  <true/>
+    \\</dict>
+    \\</plist>
+    \\
+;
 
 /// Sets up the looks from other people's collections (`src/presets/looks/bundled.zig`): fetches
 /// each collection, bakes its looks into one file for the core to embed, and installs its licence
