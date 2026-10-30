@@ -1,6 +1,6 @@
 .{
     .name = .minilab,
-    .version = "0.6.0", // x-release-please-version
+    .version = "0.7.0", // x-release-please-version
     .fingerprint = 0xa64db5ba5aa85082,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
