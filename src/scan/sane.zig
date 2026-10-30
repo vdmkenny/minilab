@@ -52,13 +52,16 @@ pub const library_paths: []const [:0]const u8 = switch (builtin.os.tag) {
     else => &.{ "libsane.so.1", "libsane.so" },
 };
 
-/// The SANE the macOS releases carry, in a folder next to the program. It has its backends and
-/// configs in folders of their own.
+/// The SANE the macOS releases carry, in minilab.app's Resources. It has its backends and configs
+/// in folders of their own.
 const bundle = struct {
     const folder = "sane";
     const library = "libsane.1.dylib";
     const backends = "backends";
     const config = "sane.d";
+    /// Where it is from the program's folder: in the app's Resources, as the releases have it, or
+    /// next to the program, where `scripts/build-sane-macos.sh` can put it for a build of your own.
+    const places = [_][]const u8{ "/../Resources/" ++ folder, "/" ++ folder };
 };
 
 /// The folder of the SANE that comes with minilab, written into `buffer`, or null when there isn't
@@ -66,12 +69,14 @@ const bundle = struct {
 fn bundledFolder(io: std.Io, buffer: []u8) ?[]const u8 {
     if (comptime builtin.os.tag != .macos) return null;
     const length = std.process.executableDirPath(io, buffer) catch return null;
-    const name = "/" ++ bundle.folder;
-    if (length + name.len > buffer.len) return null;
-    @memcpy(buffer[length..][0..name.len], name);
-    const folder = buffer[0 .. length + name.len];
-    std.Io.Dir.cwd().access(io, folder, .{}) catch return null;
-    return folder;
+    for (bundle.places) |place| {
+        if (length + place.len > buffer.len) continue;
+        @memcpy(buffer[length..][0..place.len], place);
+        const folder = buffer[0 .. length + place.len];
+        std.Io.Dir.cwd().access(io, folder, .{}) catch continue;
+        return folder;
+    }
+    return null;
 }
 
 /// The C library's functions for changing the environment, which `std.c` doesn't have.
@@ -309,11 +314,12 @@ pub const Library = struct {
         }
     }
 
-    /// Loads the SANE in the folder next to the program. SANE reads where its files are from the
-    /// environment when it starts, so we point it there first: at its own backends and configs,
-    /// then at the system's. Backends installed into the system's SANE, like epkowa for the V200,
-    /// still load that way. The dll backend searches `LD_LIBRARY_PATH` for backends on every
-    /// system (macOS's own loader ignores it). A `SANE_CONFIG_DIR` of your own is left as it is.
+    /// Loads the SANE that comes with minilab (`bundledFolder`). SANE reads where its files are
+    /// from the environment when it starts, so we point it there first: at its own backends and
+    /// configs, then at the system's. Backends installed into the system's SANE, like epkowa for
+    /// the V200, still load that way. The dll backend searches `LD_LIBRARY_PATH` for backends on
+    /// every system (macOS's own loader ignores it). A `SANE_CONFIG_DIR` of your own is left as it
+    /// is.
     fn loadBundled(gpa: std.mem.Allocator, io: std.Io) Error!Library {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
         const folder = bundledFolder(io, &buffer) orelse return error.Unavailable;

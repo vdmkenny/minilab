@@ -61,7 +61,10 @@ pub const Worker = struct {
         const gpa = worker.gpa;
         // The folder is found now, before an update moves the running program aside: on Linux,
         // the program's path follows it.
-        worker.folder = std.process.executableDirPathAlloc(worker.io, gpa) catch return worker.phase.store(.none, .release);
+        const program_folder = std.process.executableDirPathAlloc(worker.io, gpa) catch return worker.phase.store(.none, .release);
+        defer gpa.free(program_folder);
+        const folder = update.installFolder(program_folder) orelse return worker.phase.store(.none, .release);
+        worker.folder = gpa.dupe(u8, folder) catch return worker.phase.store(.none, .release);
         update.cleanUp(worker.io, worker.folder);
         var client: std.http.Client = .{ .allocator = gpa, .io = worker.io };
         defer client.deinit();
@@ -71,9 +74,7 @@ pub const Worker = struct {
         };
         worker.release = found orelse return worker.phase.store(.none, .release);
         worker.writable = update.writable(worker.io, worker.folder);
-        const program = std.fs.path.join(gpa, &.{ worker.folder, update.program_name }) catch return worker.phase.store(.available, .release);
-        defer gpa.free(program);
-        worker.signed = update.developerIdSigned(gpa, worker.io, program);
+        worker.signed = update.developerIdSigned(gpa, worker.io, worker.folder);
         worker.phase.store(.available, .release);
     }
 

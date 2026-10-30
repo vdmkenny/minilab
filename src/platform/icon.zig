@@ -1,6 +1,7 @@
 //! minilab's icon: the film strip from the logo, amber on a dark tile. The window uses it, and so
-//! does the Windows program. We draw it in code instead of keeping image files, so every size
-//! comes out sharp and the repository holds no images. `docs/icon.svg` is the same drawing.
+//! do the Windows program and the macOS app. We draw it in code instead of keeping image files, so
+//! every size comes out sharp and the repository holds no images. `docs/icon.svg` is the same
+//! drawing.
 
 const std = @import("std");
 
@@ -144,6 +145,106 @@ fn maskBytes(side: u16) u32 {
     return (@as(u32, side) + 31) / 32 * 4 * side;
 }
 
+/// One image in a macOS icon: its type in the .icns file and its size in pixels.
+const MacImage = struct { kind: *const [4]u8, side: u16 };
+
+/// The images we put in the macOS icon, the ones Apple's iconutil makes. The second of each
+/// pair of sizes is the one before it at twice the pixels, for Retina screens.
+pub const mac_images = [_]MacImage{
+    .{ .kind = "icp4", .side = 16 },
+    .{ .kind = "ic11", .side = 32 },
+    .{ .kind = "icp5", .side = 32 },
+    .{ .kind = "ic12", .side = 64 },
+    .{ .kind = "ic07", .side = 128 },
+    .{ .kind = "ic13", .side = 256 },
+    .{ .kind = "ic08", .side = 256 },
+    .{ .kind = "ic14", .side = 512 },
+    .{ .kind = "ic09", .side = 512 },
+    .{ .kind = "ic10", .side = 1024 },
+};
+
+/// The file's own header, and each image's, in an .icns file: a type and a length.
+const icns_header_bytes = 8;
+
+/// Returns the icon as a macOS .icns file, with a PNG for each image in `mac_images`. The caller
+/// frees the result.
+pub fn macIcon(gpa: std.mem.Allocator) ![]u8 {
+    return icns(gpa, &mac_images);
+}
+
+fn icns(gpa: std.mem.Allocator, images: []const MacImage) ![]u8 {
+    const pngs = try gpa.alloc([]u8, images.len);
+    defer gpa.free(pngs);
+    var made: usize = 0;
+    defer for (pngs[0..made]) |p| gpa.free(p);
+    var total: usize = icns_header_bytes;
+    for (images, pngs) |image, *p| {
+        p.* = try png(gpa, image.side);
+        made += 1;
+        total += icns_header_bytes + p.len;
+    }
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    const w = &out.writer;
+    try w.writeAll("icns");
+    try w.writeInt(u32, @intCast(total), .big);
+    for (images, pngs) |image, p| {
+        try w.writeAll(image.kind);
+        try w.writeInt(u32, @intCast(icns_header_bytes + p.len), .big);
+        try w.writeAll(p);
+    }
+    return out.toOwnedSlice();
+}
+
+/// Returns the icon `side` pixels square as a PNG file, in 8-bit RGBA. The caller frees the
+/// result.
+fn png(gpa: std.mem.Allocator, side: u16) ![]u8 {
+    const pixels = try gpa.alloc([4]u8, @as(usize, side) * side);
+    defer gpa.free(pixels);
+    render(side, pixels);
+
+    // The rows, each after a 0 that says it isn't filtered, compressed with zlib. The compressor
+    // needs room for a few bytes in its output from the start.
+    var data: std.Io.Writer.Allocating = try .initCapacity(gpa, @as(usize, side) * side);
+    defer data.deinit();
+    const window = try gpa.alloc(u8, std.compress.flate.max_window_len);
+    defer gpa.free(window);
+    const compress = try gpa.create(std.compress.flate.Compress);
+    defer gpa.destroy(compress);
+    compress.* = try .init(&data.writer, window, .zlib, .default);
+    for (0..side) |row| {
+        try compress.writer.writeByte(0);
+        try compress.writer.writeAll(std.mem.sliceAsBytes(pixels[row * side ..][0..side]));
+    }
+    try compress.finish();
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    const w = &out.writer;
+    try w.writeAll(png_signature);
+    var header: [13]u8 = undefined;
+    std.mem.writeInt(u32, header[0..4], side, .big);
+    std.mem.writeInt(u32, header[4..8], side, .big);
+    header[8..].* = .{ 8, 6, 0, 0, 0 }; // 8 bits, RGBA, deflate, no filter, not interlaced.
+    try pngChunk(w, "IHDR", &header);
+    try pngChunk(w, "IDAT", data.written());
+    try pngChunk(w, "IEND", "");
+    return out.toOwnedSlice();
+}
+
+const png_signature = "\x89PNG\r\n\x1a\n";
+
+/// Writes one chunk of a PNG file: its length, its type, `data`, and the CRC of the last two.
+fn pngChunk(w: *std.Io.Writer, kind: *const [4]u8, data: []const u8) !void {
+    try w.writeInt(u32, @intCast(data.len), .big);
+    try w.writeAll(kind);
+    try w.writeAll(data);
+    var crc: std.hash.Crc32 = .init();
+    crc.update(kind);
+    crc.update(data);
+    try w.writeInt(u32, crc.final(), .big);
+}
+
 test "the strip is amber on the dark tile, and the corners clear" {
     const gpa = std.testing.allocator;
     const side = 64;
@@ -175,4 +276,46 @@ test "a Windows icon holds every size, where its directory says" {
         expected_offset += std.mem.readInt(u32, entry[8..12], .little);
     }
     try std.testing.expectEqual(@as(usize, expected_offset), file.len);
+}
+
+test "a macOS icon holds each image as a PNG, where its lengths say" {
+    const gpa = std.testing.allocator;
+    const images = [_]MacImage{ .{ .kind = "icp4", .side = 16 }, .{ .kind = "ic11", .side = 32 } };
+    const file = try icns(gpa, &images);
+    defer gpa.free(file);
+    try std.testing.expectEqualStrings("icns", file[0..4]);
+    try std.testing.expectEqual(@as(u32, @intCast(file.len)), std.mem.readInt(u32, file[4..8], .big));
+    var at: usize = icns_header_bytes;
+    for (images) |image| {
+        try std.testing.expectEqualStrings(image.kind, file[at..][0..4]);
+        const data = file[at + icns_header_bytes .. at + std.mem.readInt(u32, file[at + 4 ..][0..4], .big)];
+        try std.testing.expectEqualStrings(png_signature, data[0..8]);
+        // IHDR comes first: its width after the chunk's length and type.
+        try std.testing.expectEqual(@as(u32, image.side), std.mem.readInt(u32, data[16..20], .big));
+        at += icns_header_bytes + data.len;
+    }
+    try std.testing.expectEqual(file.len, at);
+}
+
+test "a PNG's image data unpacks to the icon's rows" {
+    const gpa = std.testing.allocator;
+    const side = 16;
+    const file = try png(gpa, side);
+    defer gpa.free(file);
+    // The IDAT chunk follows the signature and the 13-byte IHDR chunk with its 12 bytes around it.
+    const idat = png_signature.len + 12 + 13;
+    try std.testing.expectEqualStrings("IDAT", file[idat + 4 ..][0..4]);
+    const length = std.mem.readInt(u32, file[idat..][0..4], .big);
+    var input: std.Io.Reader = .fixed(file[idat + 8 ..][0..length]);
+    var window: [std.compress.flate.max_window_len]u8 = undefined;
+    var unzip: std.compress.flate.Decompress = .init(&input, .zlib, &window);
+    const rows = try unzip.reader.allocRemaining(gpa, .unlimited);
+    defer gpa.free(rows);
+    try std.testing.expectEqual(@as(usize, side * (1 + side * 4)), rows.len);
+    var pixels: [side * side][4]u8 = undefined;
+    render(side, &pixels);
+    // The middle row, after its filter byte, is the icon's.
+    const row = side / 2;
+    try std.testing.expectEqual(@as(u8, 0), rows[row * (1 + side * 4)]);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(pixels[row * side ..][0..side]), rows[row * (1 + side * 4) + 1 ..][0 .. side * 4]);
 }

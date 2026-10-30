@@ -2,8 +2,9 @@
 # usage: build-sane-macos.sh <arm64|x86_64> <out folder> [<downloads folder>]
 #
 # Builds SANE for one Mac architecture and lays it out in <out folder>, which must be empty or not
-# there yet. That's the `sane` folder the macOS releases carry next to minilab, so scanning works
-# with nothing to install: `src/scan/sane.zig` looks for it before it looks for the system's SANE.
+# there yet. That's the `sane` folder the macOS releases carry in minilab.app's Resources, so
+# scanning works with nothing to install: `src/scan/sane.zig` looks for it there, and next to the
+# program for a build of your own, before it looks for the system's SANE.
 # It's all built from source archives pinned by version and SHA-256, and nothing comes from
 # Homebrew:
 #

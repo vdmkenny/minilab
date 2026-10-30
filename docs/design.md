@@ -175,9 +175,10 @@ low-resolution scan of the whole area.
 
 - minilab loads libsane when it runs (`std.DynLib`), not when it's built, so it starts fine
   without SANE. The types come from `sane.h`, which is public domain.
-- On macOS, where hardly anyone has SANE, the release carries its own in a `sane` folder next to
-  the program: libsane and every sane-backends backend that builds on macOS, with libusb and
-  libjpeg-turbo (`scripts/build-sane-macos.sh`, section 12). minilab tries it first. Before SANE
+- On macOS, where hardly anyone has SANE, the release carries its own in a `sane` folder in
+  minilab.app's `Contents/Resources`, or next to the program in a build of your own: libsane and
+  every sane-backends backend that builds on macOS, with libusb and libjpeg-turbo
+  (`scripts/build-sane-macos.sh`, section 12). minilab tries it first. Before SANE
   starts, minilab points `SANE_CONFIG_DIR` and the dll backend's search path (`LD_LIBRARY_PATH`,
   which the dll backend reads on every system) at the bundle's folders first and then the
   system's (Homebrew's and MacPorts'). The bundle has no `dll.d`, so SANE reads the system's,
@@ -874,11 +875,19 @@ repository; the build fetches them.
   trusted-root`, and needs refreshing when Sigstore changes its keys. Only Rekor's original log is
   handled; if GitHub's attestations move to Rekor v2, updates refuse to install until the verifier
   reads those too ([#47](https://github.com/vdmkenny/minilab/issues/47)).
+- **The Mac app.** The macOS release is an app, minilab.app, which `zig build app` makes: the
+  program, the icon (drawn by `src/platform/icon.zig`, like the Windows one) and an Info.plist.
+  The release workflow adds the docs, the licences and SANE to its `Contents/Resources`, then
+  signs the whole app ad hoc. SANE can't go next to the program in `Contents/MacOS`: macOS takes
+  everything there for code, and its config files stop the app from signing. Without a Developer
+  ID, macOS asks once before it opens the app.
 - **Installing an update** renames each of the archive's top-level files into the program's
-  folder, and the old ones into `.previous`, which the next start deletes. Renaming a running
+  folder, and the old ones into `.previous`, which the next start deletes. On macOS the archive
+  holds the app, and its one top-level folder, `Contents`, goes into the app. Renaming a running
   program works on every system. The app then closes as usual and starts the new program with the
   same arguments: in place of itself on macOS and Linux, as a new process on Windows. Only macOS
-  has been tried end to end ([#48](https://github.com/vdmkenny/minilab/issues/48)).
+  has been tried end to end, and only before its release was an app
+  ([#48](https://github.com/vdmkenny/minilab/issues/48)).
 - **Tests**, in `test` blocks next to the code:
   - the pipeline against the formulas: the inversion model against the equations in section 7,
     worked out by hand for a few pixels;

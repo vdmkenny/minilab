@@ -3,9 +3,10 @@
 //! running one. Only the release builds look for updates (`-Dupdates`), so a build from source
 //! leaves itself alone.
 //!
-//! Installing swaps the release archive's files into the program's folder. The files it replaces
-//! go into `.previous`, which the next start deletes. A running program can be renamed on every
-//! system, which is what lets it replace itself.
+//! Installing swaps the release archive's files into the program's folder, or on macOS, where a
+//! release is an app, into the app: its Contents. The files it replaces go into `.previous`, which
+//! the next start deletes. A running program can be renamed on every system, which is what lets
+//! it replace itself.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -40,6 +41,10 @@ fn platformName(comptime os: std.Target.Os.Tag, comptime arch: std.Target.Cpu.Ar
 
 pub const archive_extension = if (builtin.os.tag == .windows) ".zip" else ".tar.gz";
 pub const program_name = if (builtin.os.tag == .windows) "minilab.exe" else "minilab";
+/// The folder in a macOS app that holds its program.
+const app_program_folder = "Contents/MacOS";
+/// Where the program is in the folder an update goes into: in the app's Contents on macOS.
+pub const program_path = if (builtin.os.tag == .macos) app_program_folder ++ "/" ++ program_name else program_name;
 /// Where installing unpacks the new release, and where it keeps the files it replaced.
 const staging_folder = ".update";
 const previous_folder = ".previous";
@@ -244,6 +249,19 @@ fn fetch(gpa: std.mem.Allocator, client: *std.http.Client, url: []const u8, acce
 
 pub const InstallError = error{ NotWritable, NotABuild, BadArchive, OutOfMemory } || Io.Dir.RenameError;
 
+/// The folder an update goes into, from the folder the running program is in, or null when the
+/// program can't update itself where it is. On macOS that's the app the program is in, and a
+/// program outside an app is left as it is.
+pub fn installFolder(program_folder: []const u8) ?[]const u8 {
+    return installFolderOn(builtin.os.tag, program_folder);
+}
+
+fn installFolderOn(comptime os: std.Target.Os.Tag, program_folder: []const u8) ?[]const u8 {
+    if (os != .macos) return program_folder;
+    const app = std.mem.cutSuffix(u8, program_folder, "/" ++ app_program_folder) orelse return null;
+    return if (std.mem.endsWith(u8, app, ".app")) app else null;
+}
+
 /// Whether the program's folder can take an update.
 pub fn writable(io: Io, folder: []const u8) bool {
     var dir = Io.Dir.openDirAbsolute(io, folder, .{}) catch return false;
@@ -255,7 +273,7 @@ pub fn writable(io: Io, folder: []const u8) bool {
     return true;
 }
 
-/// Installs a release archive's files into `folder`, the program's folder. The files they replace
+/// Installs a release archive's files into `folder`, from `installFolder`. The files they replace
 /// go into `.previous`. If a swap fails partway, the ones already made are undone.
 pub fn install(gpa: std.mem.Allocator, io: Io, archive: []const u8, folder: []const u8) InstallError!void {
     var dir = Io.Dir.openDirAbsolute(io, folder, .{ .iterate = true }) catch return error.NotWritable;
@@ -268,7 +286,7 @@ pub fn install(gpa: std.mem.Allocator, io: Io, archive: []const u8, folder: []co
     }
     var unpacked = try unpack(io, archive, staging);
     defer unpacked.close(io);
-    unpacked.access(io, program_name, .{}) catch return error.NotABuild;
+    unpacked.access(io, program_path, .{}) catch return error.NotABuild;
 
     dir.deleteTree(io, previous_folder) catch return error.NotWritable;
     var previous = dir.createDirPathOpen(io, previous_folder, .{}) catch return error.NotWritable;
@@ -341,12 +359,13 @@ pub fn cleanUp(io: Io, folder: []const u8) void {
     dir.deleteTree(io, staging_folder) catch {};
 }
 
-/// Starts the program in `folder` again with `argv`, once the app has closed. On macOS and Linux
-/// the new program takes this process over. On Windows it starts on its own and this one ends.
+/// Starts the program in `folder`, from `installFolder`, again with `argv`, once the app has
+/// closed. On macOS and Linux the new program takes this process over. On Windows it starts on its
+/// own and this one ends.
 pub fn restart(io: Io, folder: []const u8, argv: []const []const u8) !void {
     var dir = try Io.Dir.openDirAbsolute(io, folder, .{});
     defer dir.close(io);
-    const exe: std.process.ReplaceOptions.Exe = .{ .explicit = .{ .dir = dir, .path = program_name } };
+    const exe: std.process.ReplaceOptions.Exe = .{ .explicit = .{ .dir = dir, .path = program_path } };
     if (builtin.os.tag == .windows) {
         _ = try std.process.spawn(io, .{ .exe = exe, .argv = argv });
         return;
@@ -354,7 +373,7 @@ pub fn restart(io: Io, folder: []const u8, argv: []const []const u8) !void {
     return std.process.replace(io, .{ .exe = exe, .argv = argv });
 }
 
-/// Whether the program at `path` carries a Developer ID signature, which macOS opens without
+/// Whether the app at `path` carries a Developer ID signature, which macOS opens without
 /// complaint. `codesign` reports the signing authority on standard error.
 pub fn developerIdSigned(gpa: std.mem.Allocator, io: Io, path: []const u8) bool {
     if (builtin.os.tag != .macos) return true;
@@ -406,16 +425,19 @@ test "a checksum is found by its file's name" {
     try std.testing.expectEqual(@as(?[Sha256.digest_length]u8, null), checksumOf(sums, "minilab-v0.3.1-linux-x86_64.tar.gz"));
 }
 
+/// Where a release has SANE's library, as a second file for the tests: in the app's Resources on
+/// macOS, and next to the program elsewhere.
+const test_library = if (builtin.os.tag == .macos) "Contents/Resources/sane/libsane.1.dylib" else "sane/libsane.1.dylib";
+
 /// A release-style .tar.gz holding `minilab-test/` with a program whose contents are `version`
-/// (or no program), and a folder.
+/// (or no program), and a library in a folder.
 fn testArchive(gpa: std.mem.Allocator, version: []const u8, with_program: bool) ![]u8 {
     var tar_bytes: Io.Writer.Allocating = .init(gpa);
     defer tar_bytes.deinit();
     var tar: std.tar.Writer = .{ .underlying_writer = &tar_bytes.writer };
     try tar.setRoot("minilab-test");
-    if (with_program) try tar.writeFileBytes(program_name, version, .{ .mode = 0o755 });
-    try tar.writeDir("sane", .{});
-    try tar.writeFileBytes("sane/libsane.1.dylib", version, .{});
+    if (with_program) try tar.writeFileBytes(program_path, version, .{ .mode = 0o755 });
+    try tar.writeFileBytes(test_library, version, .{});
     try tar.finishPedantically();
     var gzip_bytes: Io.Writer.Allocating = .init(gpa);
     errdefer gzip_bytes.deinit();
@@ -432,9 +454,8 @@ test "installing swaps the files in and keeps the old ones until the next start"
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = program_name, .data = "0.3.0" });
-    try tmp.dir.createDirPath(io, "sane");
-    try tmp.dir.writeFile(io, .{ .sub_path = "sane/libsane.1.dylib", .data = "0.3.0" });
+    try writeTestFile(io, tmp.dir, program_path, "0.3.0");
+    try writeTestFile(io, tmp.dir, test_library, "0.3.0");
     try tmp.dir.writeFile(io, .{ .sub_path = "notes.txt", .data = "mine" });
     const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(folder);
@@ -445,9 +466,9 @@ test "installing swaps the files in and keeps the old ones until the next start"
     try install(gpa, io, archive, folder);
 
     var buffer: [16]u8 = undefined;
-    try std.testing.expectEqualStrings("0.3.1", try tmp.dir.readFile(io, program_name, &buffer));
-    try std.testing.expectEqualStrings("0.3.1", try tmp.dir.readFile(io, "sane/libsane.1.dylib", &buffer));
-    try std.testing.expectEqualStrings("0.3.0", try tmp.dir.readFile(io, previous_folder ++ "/" ++ program_name, &buffer));
+    try std.testing.expectEqualStrings("0.3.1", try tmp.dir.readFile(io, program_path, &buffer));
+    try std.testing.expectEqualStrings("0.3.1", try tmp.dir.readFile(io, test_library, &buffer));
+    try std.testing.expectEqualStrings("0.3.0", try tmp.dir.readFile(io, previous_folder ++ "/" ++ program_path, &buffer));
     // Files the release doesn't have stay where they are.
     try std.testing.expectEqualStrings("mine", try tmp.dir.readFile(io, "notes.txt", &buffer));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, staging_folder, .{}));
@@ -462,7 +483,7 @@ test "a broken archive, or one without the program, changes nothing" {
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    try tmp.dir.writeFile(io, .{ .sub_path = program_name, .data = "0.3.0" });
+    try writeTestFile(io, tmp.dir, program_path, "0.3.0");
     const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(folder);
     var broken: [8]u8 = @splat(0);
@@ -471,8 +492,21 @@ test "a broken archive, or one without the program, changes nothing" {
     defer gpa.free(empty);
     try std.testing.expectError(error.NotABuild, install(gpa, io, empty, folder));
     var buffer: [16]u8 = undefined;
-    try std.testing.expectEqualStrings("0.3.0", try tmp.dir.readFile(io, program_name, &buffer));
+    try std.testing.expectEqualStrings("0.3.0", try tmp.dir.readFile(io, program_path, &buffer));
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, staging_folder, .{}));
+}
+
+/// Writes `data` to `path` in `dir`, making the folders it's in.
+fn writeTestFile(io: Io, dir: Io.Dir, path: []const u8, data: []const u8) !void {
+    if (std.fs.path.dirname(path)) |parent| try dir.createDirPath(io, parent);
+    try dir.writeFile(io, .{ .sub_path = path, .data = data });
+}
+
+test "on macOS an update goes into the app the program is in" {
+    try std.testing.expectEqualStrings("/Applications/minilab.app", installFolderOn(.macos, "/Applications/minilab.app/Contents/MacOS").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), installFolderOn(.macos, "/Users/me/minilab"));
+    try std.testing.expectEqual(@as(?[]const u8, null), installFolderOn(.macos, "/Users/me/tools/Contents/MacOS"));
+    try std.testing.expectEqualStrings("/opt/minilab", installFolderOn(.linux, "/opt/minilab").?);
 }
 
 test {

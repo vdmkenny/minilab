@@ -154,10 +154,11 @@
 
       <div class="setup">
         <h3>macOS</h3>
-        <p>The pre-built binaries are unsigned. To bypass macOS Gatekeeper, run this command once
-          inside your unzipped folder to allow minilab and its bundled scanner drivers to
-          execute:</p>
-        <pre><code>xattr -dr com.apple.quarantine .</code></pre>
+        <p>The download is an app, minilab.app, with the scanner drivers inside. Move it to your
+          Applications folder. It isn't signed, so macOS blocks it the first time you open it:
+          open it once, then click <strong>Open Anyway</strong> in System Settings, under Privacy
+          &amp; Security. Or run this once instead:</p>
+        <pre><code>xattr -dr com.apple.quarantine /Applications/minilab.app</code></pre>
         <h3>Linux &amp; Windows</h3>
         <p>On Linux, install your distribution's standard SANE package (e.g., <code>sane-utils</code>).
           On Windows, install your scanner's TWAIN driver.</p>
