@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/vdmkenny/minilab/compare/v0.6.0...v0.7.0) (2026-10-30)
+
+
+### Features
+
+* The Mac download is an app, minilab.app ([#71](https://github.com/vdmkenny/minilab/issues/71)) ([3df670b](https://github.com/vdmkenny/minilab/commit/3df670be0653086bdbd1a5d27334b421cd7c758d))
+* Website tags for search engines and link previews ([#68](https://github.com/vdmkenny/minilab/issues/68)) ([fb46e76](https://github.com/vdmkenny/minilab/commit/fb46e767fd55c2f1b6d2b9553f15db7f4d94693d))
+
 ## [0.6.0](https://github.com/vdmkenny/minilab/compare/v0.5.0...v0.6.0) (2026-10-24)
 
 
