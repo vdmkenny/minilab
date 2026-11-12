@@ -83,6 +83,9 @@ const flat_files = [_]c.SDL_DialogFileFilter{
 };
 
 pub const State = struct {
+    import_dialog: Dialog = .{ .many = true, .filters = &flat_files },
+    import_target: ?[]u8 = null,
+    import_failed: bool = false,
     search: [gui.text_capacity:0]u8 = @splat(0),
     /// The film size shown, or null for all of them.
     size_filter: ?formats.FilmSize = null,
@@ -97,6 +100,8 @@ pub const State = struct {
     deleting: ?[]u8 = null,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
+        state.import_dialog.deinit(gpa);
+        if (state.import_target) |path| gpa.free(path);
         state.flat_dialog.deinit(gpa);
         state.stopDeleting(gpa);
     }
@@ -120,6 +125,7 @@ pub const State = struct {
 
 /// The fields for the new roll.
 const Form = struct {
+    digital: bool = false,
     name: [gui.text_capacity:0]u8 = @splat(0),
     kind: develop.FilmKind = .colour_negative,
     /// Indices in the lists of stocks and formats, which depend on the film type and size.
@@ -176,6 +182,17 @@ fn formatsOf(size: formats.FilmSize, buffer: []formats.Standard) []formats.Stand
 /// Draws the sheet. `drop` is where files were dropped this frame, if any were.
 pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, drop: ?gui.Vec2) Action {
     var action: Action = .none;
+    const chosen = state.import_dialog.take(gpa, io);
+    defer Dialog.free(gpa, chosen);
+    if (chosen.len > 0) {
+        if (state.import_target) |path| {
+            if (library.find(path)) |index| {
+                const imported = library.importScans(gpa, io, index, chosen);
+                state.import_failed = imported.files != chosen.len;
+                if (imported.files > 0) action = .{ .open = .{ .roll = index, .frame = imported.first } };
+            }
+        }
+    }
     const available = c.ImGui_GetContentRegionAvail();
     const top = c.ImGui_GetCursorScreenPos();
     const form = if (state.show_form) gui.px(form_width) else 0;
@@ -185,6 +202,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     _ = c.ImGui_BeginChild("sheet", gui.vec2(available.x - form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
     c.ImGui_PopStyleVar();
     drawTitleRow(state, library);
+    if (state.import_failed) gui.paragraph(theme.text_tertiary, "Some files could not be imported");
     c.ImGui_Dummy(gui.vec2(0, gui.px(title_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
     var shown: usize = 0;
@@ -193,6 +211,13 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         shown += 1;
         c.ImGui_PushIDInt(@intCast(i));
         if (drawRow(state, library, gpa, r, i, drop)) |row_action| action = row_action;
+        if (gui.buttonOf(.normal, "Import files…", gui.vec2(0, gui.button_height))) {
+            if (!state.import_dialog.isShowing()) {
+                if (state.import_target) |path| gpa.free(path);
+                state.import_target = gpa.dupe(u8, r.path) catch null;
+                if (state.import_target != null) state.import_dialog.show(gpa, io);
+            }
+        }
         c.ImGui_PopID();
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
@@ -517,6 +542,13 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         gui.rowLabel("");
         gui.paragraph(theme.text_tertiary, problem);
     }
+    gui.rowLabel("Photos");
+    if (gui.combo("photo workflow", &.{ "Film scans", "Digital photos" }, if (form.digital) 1 else 0, 0)) |picked| {
+        form.digital = picked == 1;
+        if (form.digital) form.input = .camera_raw;
+    }
+    gui.paragraph(theme.text_tertiary, if (form.digital) "Full photos · adjustments and looks" else "Film scans · negatives or slides");
+    c.ImGui_BeginDisabled(form.digital);
     gui.rowLabel("Film type");
     if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, form.kind, labels.filmKind, 0)) |picked| {
         form.kind = picked;
@@ -538,6 +570,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     for (choices, 0..) |id, i| names[i] = labels.format(id);
     gui.rowLabel("Format");
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
+    c.ImGui_EndDisabled();
     gui.rowLabel("Camera");
     _ = gui.textField("camera", &form.camera, "[Camera]", 0);
     gui.rowLabel("Lens");
@@ -548,9 +581,11 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     gui.textColored(theme.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * notes_lines + gui.px(notes_padding)), 0, null, null);
+    c.ImGui_BeginDisabled(form.digital);
     gui.rowLabel("Input");
     if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, roll.Input.label, 0)) |picked| form.input = picked;
-    if (form.input == .camera_raw) drawFlatField(state, gpa, io);
+    c.ImGui_EndDisabled();
+    if (!form.digital and form.input == .camera_raw) drawFlatField(state, gpa, io);
 
     // The button sits at the bottom of the panel.
     const bottom = c.ImGui_GetWindowHeight() - gui.px(form_padding + create_height);
@@ -605,8 +640,9 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
     const stock_count = stock_names.len - 1;
     var made = roll.Roll.create(gpa, io, library.path, .{
         .name = name,
-        .kind = form.kind,
-        .stock = if (form.stock < stock_count) stock_names[form.stock] else null,
+        .digital = form.digital,
+        .kind = if (form.digital) .colour_positive else form.kind,
+        .stock = if (!form.digital and form.stock < stock_count) stock_names[form.stock] else null,
         .format = choices[form.format],
         .input = form.input,
         .camera = optional(&form.camera),
@@ -624,7 +660,7 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
     };
     const flat = std.mem.sliceTo(&form.flat, 0);
     var flat_failed = false;
-    if (form.input == .camera_raw and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
+    if (!form.digital and form.input == .camera_raw and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
         std.log.err("can't use {s} as the flat field: {t}", .{ flat, err });
         flat_failed = true;
     };

@@ -1814,7 +1814,7 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         if (s.finished) {
             // A finished picture is already a positive, so there's no film to invert.
             c.ImGui_BeginDisabled(true);
-            _ = gui.combo("film type", &.{"Finished scan"}, 0, 0);
+            _ = gui.combo("film type", &.{"Photo / finished scan"}, 0, 0);
             c.ImGui_EndDisabled();
         } else if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
             if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);

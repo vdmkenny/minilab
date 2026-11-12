@@ -186,6 +186,7 @@ pub const Frame = struct {
         // A finished picture has nothing to work out: it stays as it is.
         if (keep.finished) {
             frame.settings = .finishedPicture();
+            frame.settings.slide_colour = keep.slide_colour;
             frame.stale = true;
             return;
         }
@@ -198,7 +199,11 @@ pub const Frame = struct {
     /// The automatic settings for the frame on its current film base. Develop's sliders reset to
     /// these.
     pub fn automaticSettings(frame: *const Frame) develop.Settings {
-        if (frame.settings.finished) return .finishedPicture();
+        if (frame.settings.finished) {
+            var settings = develop.Settings.finishedPicture();
+            settings.slide_colour = frame.settings.slide_colour;
+            return settings;
+        }
         return develop.automatic(frame.settings.kind, frame.settings.base, frame.centre, frame.settings.curves());
     }
 
