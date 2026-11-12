@@ -94,6 +94,7 @@ pub const Added = struct {
 /// What a roll is. Anything the user types is free text.
 pub const Info = struct {
     name: []const u8,
+    digital: bool = false,
     kind: develop.FilmKind = .colour_negative,
     stock: ?[]const u8 = null,
     /// Whether the stock's datasheet corrects the frames: its curves, and its balance on a
@@ -414,7 +415,7 @@ pub const Roll = struct {
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
         defer reduced.deinit(gpa);
-        const found: []const framing.Found = framing.findAll(gpa, reduced, scan.width, scan.height, dpi orelse roll.info.dpi, roll.info.format.format(), roll.info.kind) catch |err| switch (err) {
+        const found: []const framing.Found = if (roll.info.digital) &.{} else framing.findAll(gpa, reduced, scan.width, scan.height, dpi orelse roll.info.dpi, roll.info.format.format(), roll.info.kind) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
             // No frames found: the scan goes in as one frame, uncropped.
             else => none: {
@@ -445,7 +446,8 @@ pub const Roll = struct {
             .width = scan.width,
             .height = scan.height,
             .dpi = dpi,
-            .settings = .{ .kind = roll.info.kind, .slide_colour = slide },
+            .developed = roll.info.digital,
+            .settings = if (roll.info.digital) digitalSettings(slide) else .{ .kind = roll.info.kind, .slide_colour = slide },
         };
         if (found.len == 0) try roll.appendFrame(frame);
         for (found) |f| {
@@ -1127,4 +1129,36 @@ test "a frame after a gap in the files keeps its own file" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Gaps/frames/02.json", .{}));
     try tmp.dir.access(io, "Gaps/frames/03.json", .{});
     try tmp.dir.access(io, "Gaps/frames/04.json", .{});
+}
+
+fn digitalSettings(camera: ?develop.SlideColour) develop.Settings {
+    var settings = develop.Settings.finishedPicture();
+    settings.slide_colour = camera;
+    return settings;
+}
+
+test "digital photos stay whole and keep camera colour on disk" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var roll = try testRoll(&tmp, .{ .name = "Digital", .digital = true, .kind = .colour_positive });
+    defer roll.close();
+    var scan: image.Scan = try .init(gpa, 40, 30);
+    defer scan.deinit(gpa);
+    for (scan.pixels) |*p| p.* = .{ 10000, 20000, 30000 };
+    const camera: develop.SlideColour = .{
+        .balance = .{ 2, 1, 1 },
+        .to_srgb = .{ .{ 1, 0, 0 }, .{ 0, 1, 0 }, .{ 0, 0, 1 } },
+    };
+    const added = try roll.addImageWith(gpa, io, scan, null, camera);
+    try std.testing.expectEqual(@as(usize, 1), added.count);
+    var reopened = try Roll.open(gpa, io, roll.path);
+    defer reopened.close();
+    try std.testing.expect(reopened.info.digital);
+    const frame = reopened.frames.items[0];
+    try std.testing.expect(frame.developed and frame.settings.finished);
+    try std.testing.expectEqualDeep(camera, frame.settings.slide_colour.?);
+    const pixel = develop.pixel(.init(frame.settings), scan.pixels[0]);
+    try std.testing.expectApproxEqAbs(pixel[0], pixel[1], 0.0001);
 }

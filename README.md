@@ -99,7 +99,10 @@ The app has five workspaces, roughly one per step:
 
 - **Rolls** shows each roll as a contact sheet, with its film, its format and how many frames
   you've developed. Click New roll to start one. Drop scans, or a folder of them, on a roll's row
-  to add them. The bin on a roll's card moves the whole roll to the Trash, after you confirm, so
+  to add them, or click **Import files** below the roll. Choose **Digital photos** when making
+  a roll for ordinary camera shots. RAW files then stay whole, use the camera white balance and
+  colour, and skip inversion. Develop applies adjustments and looks. For DSLR scans of film,
+  choose **Film scans** and **Camera RAW**, then the film type. The bin on a roll's card moves the whole roll to the Trash, after you confirm, so
   you can still put it back from there. Rolls added from outside the app, say with
   `minilab import`, show up by themselves.
 
