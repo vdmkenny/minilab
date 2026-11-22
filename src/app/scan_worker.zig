@@ -134,6 +134,9 @@ pub const Scanned = struct {
     /// The scan as a 16-bit binary PPM.
     ppm: []u8,
     dpi: f32,
+    native_tiff: ?[]u8 = null,
+    native_infrared_tiff: ?[]u8 = null,
+    capture_dpi: ?[2]f32 = null,
     /// The frame within the scan.
     crop: image.Area,
     /// Whether the crop was found again on this scan, rather than carried over from the preview.
@@ -143,6 +146,8 @@ pub const Scanned = struct {
 
     pub fn deinit(scanned: *Scanned, gpa: std.mem.Allocator) void {
         gpa.free(scanned.ppm);
+        if (scanned.native_tiff) |bytes| gpa.free(bytes);
+        if (scanned.native_infrared_tiff) |bytes| gpa.free(bytes);
         if (scanned.infrared) |*plane| plane.deinit(gpa);
         scanned.* = undefined;
     }
@@ -467,27 +472,55 @@ fn sameDevice(devices: []const scan.Device, old: scan.Device) ?usize {
 /// which it takes from `picture`. If the frame was detected rather than placed by hand, the crop is
 /// found again on this scan.
 fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: *scan.Image) !Scanned {
-    const whole = picture.scan;
-    const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
+    const captured = picture.*;
+    var working: ?image.Scan = null;
+    defer if (working) |*scan_| scan_.deinit(gpa);
+    var working_plane: ?image.Plane = null;
+    defer if (working_plane) |*plane| plane.deinit(gpa);
+    var native: ?[]u8 = null;
+    errdefer if (native) |bytes| gpa.free(bytes);
+    var native_infrared: ?[]u8 = null;
+    errdefer if (native_infrared) |bytes| gpa.free(bytes);
+    var adjusted = captured;
+    if (captured.dpi[0] != captured.dpi[1]) {
+        native = try minilab.roll.encodeRawAxes(gpa, captured.scan, captured.dpi[0], captured.dpi[1]);
+        working = try image.squarePixels(gpa, captured.scan, captured.dpi);
+        adjusted.scan = working.?;
+        adjusted.dpi = @splat(@max(captured.dpi[0], captured.dpi[1]));
+        if (captured.infrared) |plane| {
+            native_infrared = try minilab.codecs.tiff.writePlane(gpa, plane, .{ .dpi = captured.dpi[0], .dpi_y = captured.dpi[1] });
+            working_plane = try image.squarePixels(gpa, plane, captured.dpi);
+        }
+    }
+    const whole = adjusted.scan;
+    const px_per_mm = [2]f32{ adjusted.dpi[0] / minilab.formats.mm_per_inch, adjusted.dpi[1] / minilab.formats.mm_per_inch };
     // Where the preview says the crop is, in this scan's pixels.
     const planned = toPixels(job.crop, picture.area, px_per_mm, whole.width, whole.height);
     var crop = planned;
     var refined = false;
     if (job.refine) |refine| {
-        if (refineCrop(gpa, whole, picture.dpi[0], planned, refine)) |found| {
+        if (refineCrop(gpa, whole, adjusted.dpi[0], planned, refine)) |found| {
             crop = found;
             refined = true;
         }
     }
     const ppm = try minilab.pnm.write(gpa, u16, whole);
-    defer picture.infrared = null;
+    const plane_to_keep = working_plane orelse picture.infrared;
+    if (working_plane != null) {
+        if (picture.infrared) |*plane| plane.deinit(gpa);
+        working_plane = null;
+    }
+    picture.infrared = null;
     return .{
         .index = job.index,
         .ppm = ppm,
-        .dpi = picture.dpi[0],
+        .native_tiff = native,
+        .native_infrared_tiff = native_infrared,
+        .capture_dpi = if (native != null) captured.dpi else null,
+        .dpi = adjusted.dpi[0],
         .crop = crop,
         .refined = refined,
-        .infrared = picture.infrared,
+        .infrared = plane_to_keep,
     };
 }
 
@@ -710,3 +743,50 @@ test "a scanner switched off and on is found again, under a new name if it has o
 }
 
 const formats_for_test = minilab.formats.Standard.@"135_full_frame";
+
+test "rectangular capture is archived natively and developed with square pixels" {
+    const gpa = std.testing.allocator;
+    var original = try image.Scan.init(gpa, 2, 3);
+    defer original.deinit(gpa);
+    for (original.pixels) |*pixel| pixel.* = .{ 1000, 30000, 60000 };
+    const area: scan.Area = .{ .x = 0, .y = 0, .width = 25.4 * 2 / 6400.0, .height = 25.4 * 3 / 9600.0 };
+    const job: FrameJob = .{ .index = 0, .request = .{ .source = .transparency, .dpi = 6400, .dpi_y = 9600 }, .crop = area, .refine = null };
+    var captured: scan.Image = .{ .scan = original, .depth = .sixteen, .dpi = .{ 6400, 9600 }, .area = area };
+    var event: Event = .{ .frame_done = try finish(gpa, job, &captured) };
+    defer event.deinit(gpa);
+    const done = event.frame_done;
+    try std.testing.expectEqual(@as(f32, 9600), done.dpi);
+    try std.testing.expectEqual([2]f32{ 6400, 9600 }, done.capture_dpi.?);
+    var native = try minilab.codecs.tiff.read(gpa, done.native_tiff.?);
+    defer native.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 2), native.scan.width);
+    try std.testing.expectEqual(@as(usize, 3), native.scan.height);
+    try std.testing.expectEqualSlices([3]u16, original.pixels, native.scan.pixels);
+    var working = try minilab.pnm.read(gpa, done.ppm);
+    defer working.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 3), working.width);
+    try std.testing.expectEqual(@as(usize, 3), working.height);
+}
+
+test "rectangular infrared captures retain native planes and hand over a square working plane" {
+    const gpa = std.testing.allocator;
+    const rgb = try image.Scan.init(gpa, 2, 3);
+    @memset(rgb.pixels, .{ 1200, 2200, 3200 });
+    const plane = try image.Plane.init(gpa, 2, 3);
+    @memset(plane.pixels, .{45000});
+    const area: scan.Area = .{ .x = 0, .y = 0, .width = 0.01, .height = 0.01 };
+    var captured: scan.Image = .{ .scan = rgb, .infrared = plane, .depth = .sixteen, .dpi = .{ 6400, 9600 }, .area = area };
+    defer captured.deinit(gpa);
+    const job: FrameJob = .{ .index = 0, .request = .{ .source = .transparency, .dpi = 6400, .dpi_y = 9600, .infrared = true }, .crop = area, .refine = null };
+    var done = try finish(gpa, job, &captured);
+    defer done.deinit(gpa);
+    try std.testing.expect(captured.infrared == null);
+    try std.testing.expectEqual(@as(usize, 3), done.infrared.?.width);
+    try std.testing.expectEqual(@as(usize, 3), done.infrared.?.height);
+    try std.testing.expectEqual(@as(u16, 45000), done.infrared.?.pixels[4][0]);
+    var native = try minilab.codecs.tiff.readPlane(gpa, done.native_infrared_tiff.?);
+    defer native.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 2), native.width);
+    try std.testing.expectEqual(@as(usize, 3), native.height);
+    try std.testing.expectEqual(@as(u16, 45000), native.pixels[4][0]);
+}

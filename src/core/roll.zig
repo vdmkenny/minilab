@@ -157,6 +157,10 @@ pub const FrameSettings = struct {
     /// 16-bit greyscale TIFF the size of the scan, lined up with it (`infrared.alignment`), and
     /// infrared dust removal finds the dust in it.
     infrared: ?[]const u8 = null,
+    /// Unresampled capture, retained when the scanner used rectangular pixels.
+    native_scan: ?[]const u8 = null,
+    native_infrared: ?[]const u8 = null,
+    capture_dpi: ?[2]f32 = null,
     /// The frame within the scan, in the scan's pixels. Null means the whole scan.
     crop: ?image.Area = null,
     /// Quarter turns clockwise after cropping, 0 to 3.
@@ -672,9 +676,14 @@ fn placeFile(gpa: std.mem.Allocator, io: Io, from: []const u8, to: []const u8, t
 /// with Deflate, which loses nothing and which other apps open, with `raw_space`'s profile. The
 /// caller owns the bytes.
 pub fn encodeRaw(gpa: std.mem.Allocator, scan: image.Scan, dpi: ?f32) ![]u8 {
+    return encodeRawAxes(gpa, scan, dpi, null);
+}
+
+/// Keeps the scanner's native pixel grid and both resolution tags.
+pub fn encodeRawAxes(gpa: std.mem.Allocator, scan: image.Scan, dpi: ?f32, dpi_y: ?f32) ![]u8 {
     const profile = try icc.profileBytes(gpa, raw_space);
     defer gpa.free(profile);
-    return tiff.write(gpa, u16, scan, .{ .icc_profile = profile, .dpi = dpi });
+    return tiff.write(gpa, u16, scan, .{ .icc_profile = profile, .dpi = dpi, .dpi_y = dpi_y });
 }
 
 /// Works out the longer side of the thumbnail for `scan`, given the frames detection `found` on

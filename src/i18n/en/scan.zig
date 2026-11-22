@@ -91,6 +91,10 @@ pub const Messages = struct {
     // A check box for scanners that can scan in infrared too: a second pass that finds dust.
     infrared_pass: [:0]const u8 = "Infrared pass",
     infrared_pass_help: [:0]const u8 = "For infrared dust removal · each frame takes about twice as long",
+    native_resolution: [:0]const u8 = "Native X / Y resolution",
+    native_archive_note: [:0]const u8 = "Native TIFF kept; square-pixel working copy at {0} dpi",
+    native_save_failed: [:0]const u8 = "Native TIFF could not be saved; working scan kept",
+
     // How big each frame's scan will be. {0} by {1} is its size in pixels, and {2} its size in
     // MB. "About" when the size is from the roll's format, not a frame on the preview.
     size_about: [:0]const u8 = "About {0} × {1} px per frame",

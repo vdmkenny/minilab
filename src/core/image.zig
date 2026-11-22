@@ -312,3 +312,48 @@ test "a very long thin scan still downscales to a picture" {
     try std.testing.expectEqual(@as(usize, 1), tiny.height);
     try std.testing.expectEqual(@as(u16, 40), tiny.pixels[0][1]);
 }
+
+/// Makes square pixels at the higher sampling density. Only the less-dense axis grows;
+/// native scanner samples are archived separately before this working copy is made.
+pub fn squarePixels(gpa: std.mem.Allocator, source: anytype, dpi: [2]f32) !@TypeOf(source) {
+    const pixel_centre = 0.5;
+    const target = @max(dpi[0], dpi[1]);
+    if (!std.math.isFinite(dpi[0]) or !std.math.isFinite(dpi[1]) or dpi[0] <= 0 or dpi[1] <= 0 or source.width == 0 or source.height == 0) return error.InvalidResolution;
+    const width: usize = @max(1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(source.width)) * target / dpi[0]))));
+    const height: usize = @max(1, @as(usize, @intFromFloat(@round(@as(f64, @floatFromInt(source.height)) * target / dpi[1]))));
+    var result = try @TypeOf(source).init(gpa, width, height);
+    for (0..height) |y| {
+        const sy = std.math.clamp((@as(f64, @floatFromInt(y)) + pixel_centre) * @as(f64, @floatFromInt(source.height)) / @as(f64, @floatFromInt(height)) - pixel_centre, 0, @as(f64, @floatFromInt(source.height - 1)));
+        const y0: usize = @intFromFloat(sy);
+        const y1 = @min(y0 + 1, source.height - 1);
+        const fy = sy - @as(f64, @floatFromInt(y0));
+        for (result.row(y), 0..) |*pixel, x| {
+            const sx = std.math.clamp((@as(f64, @floatFromInt(x)) + pixel_centre) * @as(f64, @floatFromInt(source.width)) / @as(f64, @floatFromInt(width)) - pixel_centre, 0, @as(f64, @floatFromInt(source.width - 1)));
+            const x0: usize = @intFromFloat(sx);
+            const x1 = @min(x0 + 1, source.width - 1);
+            const fx = sx - @as(f64, @floatFromInt(x0));
+            for (pixel, 0..) |*sample, channel| {
+                const top = @as(f64, source.at(x0, y0)[channel]) * (1 - fx) + @as(f64, source.at(x1, y0)[channel]) * fx;
+                const bottom = @as(f64, source.at(x0, y1)[channel]) * (1 - fx) + @as(f64, source.at(x1, y1)[channel]) * fx;
+                sample.* = @intFromFloat(@round(top * (1 - fy) + bottom * fy));
+            }
+        }
+    }
+    return result;
+}
+
+test "rectangular scanner pixels keep physical proportions and 16-bit values" {
+    const gpa = std.testing.allocator;
+    var source = try Scan.init(gpa, 2, 3);
+    defer source.deinit(gpa);
+    for (source.pixels, 0..) |*p, i| p.* = @splat(@as(u16, @intCast(i * 10000)));
+    var square = try squarePixels(gpa, source, .{ 6400, 9600 });
+    defer square.deinit(gpa);
+    try std.testing.expectEqual(@as(usize, 3), square.width);
+    try std.testing.expectEqual(@as(usize, 3), square.height);
+    try std.testing.expectEqual(@as(u16, 5000), square.at(1, 0)[0]);
+    try std.testing.expectEqual(@as(u16, 50000), square.at(2, 2)[2]);
+    var same = try squarePixels(gpa, source, .{ 6400, 6400 });
+    defer same.deinit(gpa);
+    try std.testing.expectEqualSlices([3]u16, source.pixels, same.pixels);
+}
