@@ -129,6 +129,12 @@ pub const FrameSettings = struct {
     height: usize = 0,
     /// The scan's resolution in pixels per inch, if the scanner gave one.
     dpi: ?f32 = null,
+    /// Uncorrected RGB capture and the infrared plane used for its working copy.
+    original_scan: ?[]const u8 = null,
+    infrared_scan: ?[]const u8 = null,
+    infrared_corrected: bool = true,
+    infrared_pixels: usize = 0,
+
     /// The frame within the scan, in the scan's pixels. Null means the whole scan.
     crop: ?image.Area = null,
     /// Quarter turns clockwise after cropping, 0 to 3.
@@ -145,6 +151,10 @@ pub const FrameSettings = struct {
     /// The stars and the reject flag you give the frame in Develop. Export starts with rejected
     /// frames unchecked.
     rating: Rating = .{},
+
+    pub fn activeScan(frame: FrameSettings) ?[]const u8 {
+        return if (!frame.infrared_corrected) frame.original_scan orelse frame.scan else frame.scan;
+    }
 };
 
 /// A frame's rating: up to five stars, and whether it's rejected. Rejecting a frame keeps its
@@ -295,7 +305,7 @@ pub const Roll = struct {
 
     /// Returns the path of frame `index`'s scan file. The caller frees it.
     pub fn scanPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
-        const scan = roll.frames.items[index].scan orelse return error.UnreadableFrame;
+        const scan = roll.frames.items[index].activeScan() orelse return error.UnreadableFrame;
         return std.fs.path.join(gpa, &.{ roll.path, scans_dir, scan });
     }
 
@@ -308,7 +318,10 @@ pub const Roll = struct {
     /// Returns frame `index`'s thumbnail, cut and turned the way `frame` says, which may not match
     /// what the roll has saved for it yet.
     pub fn thumbnailAs(roll: *Roll, gpa: std.mem.Allocator, io: Io, index: usize, frame: FrameSettings) !image.Scan {
-        const path = try roll.thumbnailPath(gpa, index);
+        _ = index;
+        var name: [std.fs.max_name_bytes]u8 = undefined;
+        const scan = frame.activeScan() orelse return error.UnreadableFrame;
+        const path = try std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, try thumbnailName(&name, scan) });
         defer gpa.free(path);
         const bytes = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_thumbnail_bytes));
         defer gpa.free(bytes);
@@ -324,8 +337,43 @@ pub const Roll = struct {
     /// The caller frees it.
     pub fn thumbnailPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) ![]u8 {
         var name: [std.fs.max_name_bytes]u8 = undefined;
-        const scan = roll.frames.items[index].scan orelse return error.UnreadableFrame;
+        const scan = roll.frames.items[index].activeScan() orelse return error.UnreadableFrame;
         return std.fs.path.join(gpa, &.{ roll.path, thumbs_dir, try thumbnailName(&name, scan) });
+    }
+
+    /// Attaches a corrected working copy and infrared plane to an original scan.
+    /// The existing scan stays intact even if writing a sidecar fails.
+    pub fn attachInfrared(roll: *Roll, gpa: std.mem.Allocator, io: Io, index: usize, corrected: ?[]const u8, infrared: []const u8, pixels: usize) !void {
+        const a = roll.arena.allocator();
+        const frame = &roll.frames.items[index];
+        const original = frame.scan orelse return error.UnreadableFrame;
+        const corrected_name = try std.fmt.allocPrint(a, "{s}.ir-corrected.tiff", .{std.fs.path.stem(original)});
+        const infrared_name = try std.fmt.allocPrint(a, "{s}.infrared.pgm", .{std.fs.path.stem(original)});
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, scans_dir, infrared_name }), .data = infrared });
+        const before = frame.*;
+        errdefer frame.* = before;
+        if (corrected == null) {
+            frame.infrared_scan = infrared_name;
+            frame.infrared_corrected = false;
+            try roll.saveFrame(io, index);
+            return;
+        }
+        const corrected_path = try std.fs.path.join(a, &.{ roll.path, scans_dir, corrected_name });
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = corrected_path, .data = corrected.? });
+        var read = try file_input.read(gpa, io, corrected_path);
+        defer read.deinit(gpa);
+        var thumb = try image.downscale(gpa, read.scan, thumbnail_longest);
+        defer thumb.deinit(gpa);
+        const bytes = try pnm.write(gpa, u16, thumb);
+        defer gpa.free(bytes);
+        var name: [std.fs.max_name_bytes]u8 = undefined;
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, thumbs_dir, try thumbnailName(&name, corrected_name) }), .data = bytes });
+        frame.original_scan = original;
+        frame.scan = corrected_name;
+        frame.infrared_scan = infrared_name;
+        frame.infrared_corrected = true;
+        frame.infrared_pixels = pixels;
+        try roll.saveFrame(io, index);
     }
 
     /// Adds the scan in `bytes` (a binary PNM) the way `addImage` does, and returns the index of
@@ -642,6 +690,60 @@ fn today(arena: std.mem.Allocator, io: Io) ![]const u8 {
 /// .ppm, which a finished picture's JPEG scan gets too.
 fn thumbnailName(buffer: []u8, scan: []const u8) ![]const u8 {
     return std.fmt.bufPrint(buffer, "{s}.ppm", .{std.fs.path.stem(scan)});
+}
+
+test "infrared sidecars retain the original and the selected copy survives reopening" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var rl = try Roll.create(gpa, io, library, .{ .name = "IR test" });
+    defer rl.close();
+    var raw = try image.Scan.init(gpa, 16, 16);
+    defer raw.deinit(gpa);
+    @memset(raw.pixels, .{ 1000, 30000, 60000 });
+    const ppm = try pnm.write(gpa, u16, raw);
+    defer gpa.free(ppm);
+    const index = try rl.addScanAt(gpa, io, ppm, 800);
+    const original_path = try rl.scanPath(gpa, index);
+    defer gpa.free(original_path);
+    @memset(raw.pixels, .{ 1234, 34567, 54321 });
+    const corrected = try encodeRaw(gpa, raw, 800);
+    defer gpa.free(corrected);
+    var ir = try image.Gray.init(gpa, 16, 16);
+    defer ir.deinit(gpa);
+    @memset(ir.pixels, 50000);
+    const pgm = try pnm.writeGray(gpa, ir);
+    defer gpa.free(pgm);
+    try rl.attachInfrared(gpa, io, index, corrected, pgm, 9);
+    const corrected_path = try rl.scanPath(gpa, index);
+    defer gpa.free(corrected_path);
+    try std.testing.expect(!std.mem.eql(u8, original_path, corrected_path));
+    var untouched = try file_input.read(gpa, io, original_path);
+    defer untouched.deinit(gpa);
+    try std.testing.expectEqual([3]u16{ 1000, 30000, 60000 }, untouched.scan.pixels[0]);
+    var thumb = try rl.frameThumbnail(gpa, io, index);
+    defer thumb.deinit(gpa);
+    try std.testing.expectEqual(raw.pixels[0], thumb.pixels[0]);
+    rl.frames.items[index].infrared_corrected = false;
+    try rl.saveFrame(io, index);
+    const chosen = try rl.scanPath(gpa, index);
+    defer gpa.free(chosen);
+    try std.testing.expectEqualStrings(original_path, chosen);
+    var original_thumb = try rl.frameThumbnail(gpa, io, index);
+    defer original_thumb.deinit(gpa);
+    try std.testing.expectEqual([3]u16{ 1000, 30000, 60000 }, original_thumb.pixels[0]);
+    var reopened = try listRolls(gpa, io, library);
+    defer {
+        for (reopened.items) |*r| r.close();
+        reopened.deinit(gpa);
+    }
+    const saved = reopened.items[0].frames.items[index];
+    try std.testing.expect(!saved.infrared_corrected);
+    try std.testing.expect(saved.infrared_scan != null and saved.original_scan != null);
+    try std.testing.expectEqual(@as(usize, 9), saved.infrared_pixels);
 }
 
 /// The number in a frame's file name, such as 3 for 03.json, or null when it isn't a frame's.
@@ -1127,4 +1229,35 @@ test "a frame after a gap in the files keeps its own file" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Gaps/frames/02.json", .{}));
     try tmp.dir.access(io, "Gaps/frames/03.json", .{});
     try tmp.dir.access(io, "Gaps/frames/04.json", .{});
+}
+
+test "a refused infrared correction stores its plane and retains the original frame" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var r = try Roll.create(gpa, io, folder, .{ .name = "IR refused" });
+    defer r.close();
+    var raw = try image.Scan.init(gpa, 16, 16);
+    defer raw.deinit(gpa);
+    @memset(raw.pixels, .{ 1000, 30000, 60000 });
+    const ppm = try pnm.write(gpa, u16, raw);
+    defer gpa.free(ppm);
+    const index = try r.addScanAt(gpa, io, ppm, 800);
+    const original = r.frames.items[index].scan.?;
+    var ir = try image.Gray.init(gpa, 16, 16);
+    defer ir.deinit(gpa);
+    @memset(ir.pixels, 54000);
+    const pgm = try pnm.writeGray(gpa, ir);
+    defer gpa.free(pgm);
+    try r.attachInfrared(gpa, io, index, null, pgm, 0);
+    const saved = r.frames.items[index];
+    try std.testing.expectEqualStrings(original, saved.activeScan().?);
+    try std.testing.expect(saved.infrared_scan != null and saved.original_scan == null);
+    try std.testing.expect(!saved.infrared_corrected);
+    var thumb = try r.frameThumbnail(gpa, io, index);
+    defer thumb.deinit(gpa);
+    try std.testing.expectEqual(raw.pixels[0], thumb.pixels[0]);
 }

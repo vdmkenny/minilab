@@ -724,6 +724,7 @@ pub const Scanner = struct {
     }
 
     pub fn scan(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request, progress: *interface.Progress) Error!interface.Image {
+        if (request.infrared) return error.Unsupported;
         if (comptime !supported) return error.Unavailable;
         progress.reset();
         try scanner.setLightPath(request.source);

@@ -542,11 +542,13 @@ pub const Batch = struct {
         for (batch.jobs, indices) |*job, index| {
             var frame = r.frames.items[index];
             if (frame.scan) |scan| frame.scan = try arena.dupe(u8, scan);
+            if (frame.original_scan) |scan| frame.original_scan = try arena.dupe(u8, scan);
+            if (frame.infrared_scan) |scan| frame.infrared_scan = try arena.dupe(u8, scan);
             frame.film_base = r.baseFor(index);
             if (!frame.developed) frame.settings.stock_curves = request.stock_curves;
             job.* = .{
                 .number = index + 1,
-                .scan_path = if (frame.scan) |scan| try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, scan }) else null,
+                .scan_path = if (frame.activeScan()) |scan| try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, scan }) else null,
                 .frame = frame,
                 .look = try (try catalog.resolve(gpa, io, frame.look)).copy(arena),
                 .stem = try fileStem(arena, request.pattern, .{
@@ -909,4 +911,35 @@ test "frames of one strip export from the scan they share, each to its crop" {
         try std.testing.expectEqual(crop.width, decoded.scan.width);
         try std.testing.expectEqual(crop.height, decoded.scan.height);
     }
+}
+
+test "export batches use the selected infrared copy and keep their own choice" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var r = try roll.Roll.create(gpa, io, library, .{ .name = "IR export" });
+    defer r.close();
+    var scan = try testScan(gpa, 24, 16);
+    defer scan.deinit(gpa);
+    const ppm = try pnm.write(gpa, u16, scan);
+    defer gpa.free(ppm);
+    _ = try r.addScan(gpa, io, ppm);
+    const frame = &r.frames.items[0];
+    frame.original_scan = frame.scan;
+    frame.scan = "corrected.tiff";
+    frame.infrared_scan = "infrared.pgm";
+    var catalog: look.Catalog = try .init(gpa, library);
+    defer catalog.deinit(gpa);
+    const corrected = try Batch.create(gpa, io, &catalog, &r, &.{0}, .{ .options = .{}, .pattern = "{frame}", .folder = library });
+    defer corrected.destroy(gpa);
+    try std.testing.expect(std.mem.endsWith(u8, corrected.jobs[0].scan_path.?, "corrected.tiff"));
+    frame.infrared_corrected = false;
+    const raw = try Batch.create(gpa, io, &catalog, &r, &.{0}, .{ .options = .{}, .pattern = "{frame}", .folder = library });
+    defer raw.destroy(gpa);
+    try std.testing.expect(std.mem.endsWith(u8, raw.jobs[0].scan_path.?, frame.original_scan.?));
+    try std.testing.expect(corrected.jobs[0].frame.infrared_corrected);
+    try std.testing.expect(!raw.jobs[0].frame.infrared_corrected);
 }

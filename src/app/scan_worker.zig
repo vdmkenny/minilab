@@ -112,7 +112,11 @@ pub const Event = union(enum) {
                 r.capabilities.deinit(gpa);
             },
             .preview => |*p| p.scan.deinit(gpa),
-            .frame_done => |d| gpa.free(d.ppm),
+            .frame_done => |d| {
+                gpa.free(d.ppm);
+                if (d.corrected_tiff) |bytes| gpa.free(bytes);
+                if (d.infrared_pgm) |bytes| gpa.free(bytes);
+            },
             else => {},
         }
         event.* = undefined;
@@ -134,6 +138,9 @@ pub const Scanned = struct {
     /// The scan as a 16-bit binary PPM.
     ppm: []u8,
     dpi: f32,
+    corrected_tiff: ?[]u8 = null,
+    infrared_pgm: ?[]u8 = null,
+    infrared_pixels: usize = 0,
     /// The frame within the scan.
     crop: image.Area,
     /// Whether the crop was found again on this scan, rather than carried over from the preview.
@@ -457,7 +464,29 @@ fn sameDevice(devices: []const scan.Device, old: scan.Device) ?usize {
 
 /// Turns a frame's scan into what the roll keeps: its PPM bytes and the crop. If the frame was
 /// detected rather than placed by hand, the crop is found again on this scan.
-fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
+fn finish(gpa: std.mem.Allocator, job: FrameJob, captured: scan.Image) !Scanned {
+    var picture = captured;
+    var corrected_bytes: ?[]u8 = null;
+    errdefer if (corrected_bytes) |bytes| gpa.free(bytes);
+    var infrared_pgm: ?[]u8 = null;
+    errdefer if (infrared_pgm) |bytes| gpa.free(bytes);
+    var corrected: ?image.Scan = null;
+    defer if (corrected) |*s| s.deinit(gpa);
+    var infrared_pixels: usize = 0;
+    if (captured.infrared) |ir| {
+        if (captured.dpi[0] != captured.dpi[1]) return error.Unsupported;
+        infrared_pgm = try minilab.pnm.writeGray(gpa, ir);
+        const cleaned = minilab.infrared.clean(gpa, captured.scan, ir, captured.dpi[0]) catch |err| switch (err) {
+            error.UnreliableInfrared => null,
+            else => return err,
+        };
+        if (cleaned) |clean| {
+            corrected = clean.scan;
+            corrected_bytes = try minilab.roll.encodeRaw(gpa, clean.scan, captured.dpi[0]);
+            infrared_pixels = clean.pixels;
+            picture.scan = clean.scan;
+        }
+    }
     const whole = picture.scan;
     const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
     // Where the preview says the crop is, in this scan's pixels.
@@ -472,7 +501,10 @@ fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
     }
     return .{
         .index = job.index,
-        .ppm = try minilab.pnm.write(gpa, u16, whole),
+        .ppm = try minilab.pnm.write(gpa, u16, if (captured.infrared != null) captured.scan else whole),
+        .corrected_tiff = corrected_bytes,
+        .infrared_pgm = infrared_pgm,
+        .infrared_pixels = infrared_pixels,
         .dpi = picture.dpi[0],
         .crop = crop,
         .refined = refined,
@@ -698,3 +730,50 @@ test "a scanner switched off and on is found again, under a new name if it has o
 }
 
 const formats_for_test = minilab.formats.Standard.@"135_full_frame";
+
+test "infrared capture keeps raw pixels and a separate corrected working copy" {
+    const gpa = std.testing.allocator;
+    var original = try image.Scan.init(gpa, 64, 64);
+    defer original.deinit(gpa);
+    var ir = try image.Gray.init(gpa, 64, 64);
+    defer ir.deinit(gpa);
+    @memset(original.pixels, .{ 1234, 30001, 60003 });
+    @memset(ir.pixels, 54000);
+    const defect = 32 * 64 + 32;
+    original.pixels[defect] = @splat(1000);
+    ir.pixels[defect] = 15000;
+    const area: scan.Area = .{ .x = 0, .y = 0, .width = 2.032, .height = 2.032 };
+    const job: FrameJob = .{ .index = 0, .request = .{ .source = .transparency, .dpi = 800, .infrared = true }, .crop = area, .refine = null };
+    var event: Event = .{ .frame_done = try finish(gpa, job, .{ .scan = original, .infrared = ir, .depth = .sixteen, .dpi = .{ 800, 800 }, .area = area }) };
+    defer event.deinit(gpa);
+    const done = event.frame_done;
+    var raw = try minilab.pnm.read(gpa, done.ppm);
+    defer raw.deinit(gpa);
+    try std.testing.expectEqualSlices([3]u16, original.pixels, raw.pixels);
+    var corrected = try minilab.codecs.tiff.read(gpa, done.corrected_tiff.?);
+    defer corrected.deinit(gpa);
+    try std.testing.expectEqual([3]u16{ 1234, 30001, 60003 }, corrected.scan.pixels[defect]);
+    var saved_ir = try minilab.pnm.readGray(gpa, done.infrared_pgm.?);
+    defer saved_ir.deinit(gpa);
+    try std.testing.expectEqualSlices(u16, ir.pixels, saved_ir.pixels);
+    try std.testing.expect(done.infrared_pixels > 0);
+}
+
+test "a rejected infrared mask still hands over the original and IR for storage" {
+    const gpa = std.testing.allocator;
+    var rgb = try image.Scan.init(gpa, 32, 32);
+    defer rgb.deinit(gpa);
+    var ir = try image.Gray.init(gpa, 32, 32);
+    defer ir.deinit(gpa);
+    @memset(rgb.pixels, .{ 1001, 30003, 60005 });
+    for (ir.pixels, 0..) |*p, i| p.* = if (i % 2 == 0) 10000 else 50000;
+    const area: scan.Area = .{ .x = 0, .y = 0, .width = 1.016, .height = 1.016 };
+    const job: FrameJob = .{ .index = 0, .request = .{ .source = .transparency, .dpi = 800, .infrared = true }, .crop = area, .refine = null };
+    var event: Event = .{ .frame_done = try finish(gpa, job, .{ .scan = rgb, .infrared = ir, .depth = .sixteen, .dpi = .{ 800, 800 }, .area = area }) };
+    defer event.deinit(gpa);
+    try std.testing.expect(event.frame_done.corrected_tiff == null);
+    try std.testing.expect(event.frame_done.infrared_pgm != null);
+    var raw = try minilab.pnm.read(gpa, event.frame_done.ppm);
+    defer raw.deinit(gpa);
+    try std.testing.expectEqualSlices([3]u16, rgb.pixels, raw.pixels);
+}

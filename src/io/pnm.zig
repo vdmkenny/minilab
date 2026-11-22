@@ -8,6 +8,38 @@ const image = @import("../core/image.zig");
 const magic = "P6";
 const grey_magic = "P5";
 
+/// Reads a grayscale PGM without expanding it into three colour channels.
+pub fn readGray(gpa: std.mem.Allocator, bytes: []const u8) !image.Gray {
+    var header: Header = .{ .bytes = bytes };
+    if (!std.mem.eql(u8, try header.field(), grey_magic)) return error.InvalidHeader;
+    const width = std.fmt.parseInt(usize, try header.field(), 10) catch return error.InvalidHeader;
+    const height = std.fmt.parseInt(usize, try header.field(), 10) catch return error.InvalidHeader;
+    const maximum = std.fmt.parseInt(u16, try header.field(), 10) catch return error.InvalidHeader;
+    const depth: image.Depth = switch (maximum) {
+        255 => .eight,
+        65535 => .sixteen,
+        else => return error.UnsupportedDepth,
+    };
+    const count = std.math.mul(usize, width, height) catch return error.InvalidHeader;
+    const size = std.math.mul(usize, count, depth.bytes()) catch return error.InvalidHeader;
+    if (count == 0 or header.position >= bytes.len) return error.InvalidHeader;
+    const data = bytes[header.position + 1 ..];
+    if (data.len != size) return error.Truncated;
+    const gray = try image.Gray.init(gpa, width, height);
+    for (gray.pixels, 0..) |*sample, i| sample.* = image.sampleAt(data, i, depth, .big);
+    return gray;
+}
+
+/// Writes the complete linear grayscale plane as a 16-bit PGM.
+pub fn writeGray(gpa: std.mem.Allocator, gray: image.Gray) ![]u8 {
+    const header = try std.fmt.allocPrint(gpa, "P5\n{d} {d}\n65535\n", .{ gray.width, gray.height });
+    defer gpa.free(header);
+    const data = try gpa.alloc(u8, header.len + gray.pixels.len * 2);
+    @memcpy(data[0..header.len], header);
+    for (gray.pixels, 0..) |sample, i| std.mem.writeInt(u16, data[header.len + i * 2 ..][0..2], sample, .big);
+    return data;
+}
+
 pub const Error = error{ NotAPpm, UnsupportedDepth, Truncated, InvalidHeader };
 
 /// Bits per sample in the file.
@@ -78,6 +110,23 @@ const Header = struct {
         return b[start..header.position];
     }
 };
+
+test "infrared PGM preserves 16-bit samples and reads the scanner's 8-bit plane" {
+    const gpa = std.testing.allocator;
+    var gray = try image.Gray.init(gpa, 3, 1);
+    defer gray.deinit(gpa);
+    @memcpy(gray.pixels, &[_]u16{ 1, 32769, 65535 });
+    const encoded = try writeGray(gpa, gray);
+    defer gpa.free(encoded);
+    var decoded = try readGray(gpa, encoded);
+    defer decoded.deinit(gpa);
+    try std.testing.expectEqualSlices(u16, gray.pixels, decoded.pixels);
+    var eight = try readGray(gpa, "P5\n3 1\n255\n\x00\x80\xff");
+    defer eight.deinit(gpa);
+    try std.testing.expectEqualSlices(u16, &.{ 0, 32896, 65535 }, eight.pixels);
+    try std.testing.expectError(error.Truncated, readGray(gpa, "P5\n3 1\n255\n\x00\x80"));
+    try std.testing.expectError(error.InvalidHeader, readGray(gpa, "P6\n3 1\n255\n"));
+}
 
 /// Writes an encoded image as a binary PPM, with 8 or 16 bits per sample.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample)) ![]u8 {

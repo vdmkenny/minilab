@@ -493,6 +493,7 @@ pub const State = struct {
     /// How detected frames fit their pictures.
     fit: frames.Fit = .format,
     dpi: u32 = default_dpi,
+    infrared: bool = false,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
     editing_margin: bool = false,
@@ -671,13 +672,17 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             item.* = .checking;
         },
         .frame_done => |done| {
-            defer gpa.free(done.ppm);
+            defer event.deinit(gpa);
             const item = queueItem(state, done.index);
             const frame = addToRoll(state, ctx, done) catch |err| {
                 std.log.err("can't add frame {d} to the roll: {t}", .{ done.index + 1, err });
                 if (item) |i| i.* = .{ .failed = err };
                 return;
             };
+            if (done.infrared_pgm != null and done.corrected_tiff == null) {
+                if (item) |i| i.* = .{ .failed = error.InfraredCorrectionRejectedOriginalSaved };
+                return;
+            }
             if (item) |i| i.* = if (done.refined) .{ .done = frame } else .{ .check_crop = frame };
             return;
         },
@@ -724,6 +729,7 @@ fn addToRoll(state: *State, ctx: context.Context, done: scan_worker.Scanned) !us
     const r = &ctx.library.rolls.items[index];
     const frame = try r.addScanAt(ctx.gpa, ctx.io, done.ppm, done.dpi);
     const saved = &r.frames.items[frame];
+    if (done.infrared_pgm) |ir| try r.attachInfrared(ctx.gpa, ctx.io, frame, done.corrected_tiff, ir, done.infrared_pixels);
     saved.crop = done.crop;
     saved.quarter_turns = state.queue_turns;
     try r.saveFrame(ctx.io, frame);
@@ -853,6 +859,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     y = drawDevice(state, panel, y);
     y = drawSetup(state, panel, y);
     y = drawFilmChoice(state, panel, y);
+    y = drawInfrared(state, panel, y);
     y = drawResolution(state, panel, y);
     y = drawMargin(state, panel, y);
     y = drawFit(state, panel, y);
@@ -912,10 +919,15 @@ fn drawSetup(state: *State, panel: ScannerPanel, top: f32) f32 {
     const ctx = panel.ctx;
     var y = top;
     if (state.capabilities) |caps| {
-        y += drawProfile(panel.list, panel.x, y, panel.width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
+        y += if (state.infrared)
+            gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_secondary, "Raw RGB + infrared") + gui.px(scanner_gap)
+        else
+            drawProfile(panel.list, panel.x, y, panel.width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
         if (caps.options != null) {
             c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
+            c.ImGui_BeginDisabled(state.infrared);
             if (gui.buttonOf(.normal, "Scanner settings", gui.vec2(0, pill_height))) state.settings_open = true;
+            c.ImGui_EndDisabled();
             y += gui.px(pill_height + scanner_gap);
         }
         return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, filmAreaNote(caps, ctx, panel.roll_index)) + gui.px(scanner_gap);
@@ -960,11 +972,33 @@ fn drawFilmChoice(state: *State, panel: ScannerPanel, top: f32) f32 {
     return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.text_tertiary, film_note) + gui.px(scanner_gap);
 }
 
+fn drawInfrared(state: *State, panel: ScannerPanel, top: f32) f32 {
+    const caps = state.capabilities orelse return top;
+    if (!caps.infrared) {
+        state.infrared = false;
+        return top;
+    }
+    const colour = state.film != .bw_negative and if (panel.roll_index) |r| panel.ctx.library.rolls.items[r].info.kind != .bw_negative else false;
+    if (!colour) state.infrared = false;
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, top));
+    c.ImGui_BeginDisabled(state.scanning or !colour);
+    if (gui.checkbox("Infrared dust removal", &state.infrared)) {
+        if (state.infrared) {
+            state.settings_open = false;
+            if (std.mem.indexOfScalar(u32, &minilab.scan.sane_ir.resolutions, state.dpi) == null) state.dpi = 3200;
+        }
+    }
+    c.ImGui_EndDisabled();
+    gui.tooltip("Separate infrared scan. Color film only; unsuitable for silver B&W and Kodachrome.");
+    const note = if (!colour) "Color film only" else if (state.infrared) "Original and IR saved; correction can be turned off in Develop" else "800, 1600 or 3200 dpi";
+    return top + gui.px(pill_height + group_gap) + gui.paragraphAt(panel.list, panel.x, top + gui.px(pill_height + group_gap), panel.width, theme.text_tertiary, note) + gui.px(scanner_gap);
+}
+
 /// Draws the resolution menu at `y`, with the size of the scans. Returns the y below.
 fn drawResolution(state: *State, panel: ScannerPanel, top: f32) f32 {
     var y = top;
     y += gui.lineAt(panel.list, panel.x, y, theme.text_secondary, "Resolution") + gui.px(group_gap);
-    const resolutions = listedResolutions(state);
+    const resolutions = if (state.infrared) &minilab.scan.sane_ir.resolutions else listedResolutions(state);
     if (resolutions.len > 0) {
         var labels_: [max_resolutions][]const u8 = undefined;
         for (labels_[0..resolutions.len], resolutions) |*label, r| label.* = gui.print("{d} dpi", .{r});
@@ -2239,7 +2273,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         area = area.clip(caps.area) orelse caps.area;
         job.* = .{
             .index = i,
-            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area },
+            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area, .infrared = state.infrared and caps.infrared and info.kind != .bw_negative },
             .crop = crop,
             .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .fit = state.fit, .inset = box.inset / 100 },
         };
@@ -2427,6 +2461,7 @@ fn errorText(e: anyerror) []const u8 {
         error.Jammed => "jammed",
         error.CoverOpen => "cover open",
         error.Unsupported => "not supported",
+        error.InfraredCorrectionRejectedOriginalSaved => "IR mask rejected; original saved",
         error.OutOfMemory => "out of memory",
         error.NotFound => "scanner gone",
         else => @errorName(e),

@@ -67,7 +67,18 @@ pub fn build(b: *std.Build) void {
     const exe = b.addExecutable(.{ .name = "minilab", .root_module = app });
     b.installArtifact(exe);
 
-    addSteps(b, exe, &.{ core, app, looks.tool });
+    // Epson's optional Linux command library lives outside the app. A small child
+    // process contains driver failures and streams separate RGB and IR captures.
+    var infrared_helper: ?*std.Build.Step.Compile = null;
+    if (target.result.os.tag == .linux) {
+        const helper_module = b.createModule(.{ .target = target, .optimize = optimize, .link_libcpp = true });
+        helper_module.addCSourceFile(.{ .file = b.path("src/scan/epson_ir.cpp"), .flags = &.{"-std=c++17"} });
+        const helper = b.addExecutable(.{ .name = "minilab-epson-ir", .root_module = helper_module });
+        b.installArtifact(helper);
+        infrared_helper = helper;
+    }
+
+    addSteps(b, exe, &.{ core, app, looks.tool }, infrared_helper);
     addApp(b, exe, target);
 }
 
@@ -100,13 +111,14 @@ fn cModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builti
 
 /// Adds `zig build run`, which runs `exe`, and `zig build test` and `zig build check` for the
 /// modules with tests.
-fn addSteps(b: *std.Build, exe: *std.Build.Step.Compile, tested: []const *std.Build.Module) void {
+fn addSteps(b: *std.Build, exe: *std.Build.Step.Compile, tested: []const *std.Build.Module, infrared_helper: ?*std.Build.Step.Compile) void {
     const run = b.addRunArtifact(exe);
     run.step.dependOn(b.getInstallStep());
     run.addPassthruArgs();
     b.step("run", "Run minilab").dependOn(&run.step);
 
     const tests = b.step("test", "Run tests");
+    if (infrared_helper) |helper| tests.dependOn(&helper.step);
     // `zig build check` compiles the program and the tests without linking them, so
     // `zig build check -fincremental --watch` reports errors moments after you save.
     const check = b.step("check", "Check that the program and the tests compile, without writing binaries");
@@ -114,6 +126,7 @@ fn addSteps(b: *std.Build, exe: *std.Build.Step.Compile, tested: []const *std.Bu
         tests.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = module })).step);
         check.dependOn(&b.addTest(.{ .root_module = module }).step);
     }
+    if (infrared_helper) |helper| check.dependOn(&helper.step);
     check.dependOn(&b.addExecutable(.{ .name = "minilab", .root_module = exe.root_module }).step);
 }
 

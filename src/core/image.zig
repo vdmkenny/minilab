@@ -4,6 +4,8 @@ const std = @import("std");
 
 pub const Channel = enum { r, g, b };
 pub const channel_count = @typeInfo(Channel).@"enum".field_names.len;
+/// A single linear transmission plane, such as a scanner's infrared channel.
+pub const Gray = Image(u16);
 
 /// The largest 16-bit sample. In a scan it means full transmission.
 pub const full_scale = std.math.maxInt(u16);

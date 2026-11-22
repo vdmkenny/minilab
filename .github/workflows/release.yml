@@ -123,7 +123,9 @@ jobs:
               ;;
             *)
               cp zig-out/bin/minilab "$name"/
+              cp zig-out/bin/minilab-epson-ir "$name"/
               cp zig-out/bin/minilab shipped/
+              cp zig-out/bin/minilab-epson-ir shipped/
               tar -czf "dist/$name.tar.gz" "$name"
               ;;
           esac

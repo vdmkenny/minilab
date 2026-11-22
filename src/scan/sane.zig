@@ -20,6 +20,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const interface = @import("root.zig");
 const image = @import("../core/image.zig");
+const epson_ir = @import("epson_ir.zig");
 
 const Error = interface.Error;
 
@@ -287,6 +288,7 @@ const DynLib = if (supported) std.DynLib else void;
 
 /// libsane, loaded and initialised.
 pub const Library = struct {
+    io: ?std.Io = null,
     dynlib: DynLib,
     api: Api,
 
@@ -296,7 +298,11 @@ pub const Library = struct {
             return error.Unavailable;
         } else {
             if (comptime builtin.os.tag == .macos) {
-                if (loadBundled(gpa, io)) |library| return library else |err| switch (err) {
+                if (loadBundled(gpa, io)) |loaded| {
+                    var library = loaded;
+                    library.io = io;
+                    return library;
+                } else |err| switch (err) {
                     // There's no bundle, as when minilab is built from source.
                     error.Unavailable => {},
                     else => std.log.warn("the SANE that comes with minilab doesn't load ({t}); trying the system's", .{err}),
@@ -308,6 +314,7 @@ pub const Library = struct {
                     library.dynlib.close();
                     continue;
                 };
+                library.io = io;
                 return library;
             }
             return error.Unavailable;
@@ -404,10 +411,14 @@ pub const Library = struct {
             std.log.warn("SANE can't open {s}: {s}", .{ device.id, status.text() });
             return errorOf(status);
         }
+        errdefer if (handle) |h| library.api.close(h);
         return .{
             .api = &library.api,
             .handle = handle orelse return error.Failed,
             .profile = interface.profileOf(device.driver, device.model),
+            .io = library.io,
+            .owned_device = try device.clone(gpa),
+            .allocator = gpa,
         };
     }
 };
@@ -417,9 +428,25 @@ pub const Scanner = struct {
     api: *const Api,
     handle: Handle,
     profile: ?*const interface.Profile,
+    io: ?std.Io = null,
+    owned_device: ?interface.Device = null,
+    allocator: std.mem.Allocator = undefined,
+    suspended: bool = false,
+
+    fn ensureOpen(scanner: *Scanner, gpa: std.mem.Allocator) Error!void {
+        if (!scanner.suspended) return;
+        const device = scanner.owned_device orelse return error.Failed;
+        const name = try gpa.dupeSentinel(u8, device.id, 0);
+        defer gpa.free(name);
+        var handle: ?Handle = null;
+        try check(scanner.api.open(name, &handle));
+        scanner.handle = handle orelse return error.Failed;
+        scanner.suspended = false;
+    }
 
     pub fn close(scanner: *Scanner) void {
-        scanner.api.close(scanner.handle);
+        if (!scanner.suspended) scanner.api.close(scanner.handle);
+        if (scanner.owned_device) |*device| device.deinit(scanner.allocator);
         scanner.* = undefined;
     }
 
@@ -528,6 +555,7 @@ pub const Scanner = struct {
     }
 
     pub fn capabilities(scanner: *Scanner, gpa: std.mem.Allocator, wanted: ?interface.Source) Error!interface.Capabilities {
+        try scanner.ensureOpen(gpa);
         var sources: std.EnumSet(interface.Source) = .empty;
         var current: interface.Source = .flatbed;
         if (scanner.find("source")) |found| {
@@ -566,6 +594,7 @@ pub const Scanner = struct {
             .film_setting = scanner.hasFilmSetting() or raw_film,
             .profile = scanner.profile,
             .options = options,
+            .infrared = if (scanner.io) |io| if (scanner.owned_device) |device| current == .transparency and epson_ir.available(io, device) else false else false,
         };
     }
 
@@ -805,6 +834,16 @@ pub const Scanner = struct {
     }
 
     pub fn scan(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request, progress: *interface.Progress) Error!interface.Image {
+        if (request.infrared) {
+            try epson_ir.validate(request);
+            const io = scanner.io orelse return error.Unavailable;
+            const device = scanner.owned_device orelse return error.Unsupported;
+            if (!epson_ir.available(io, device)) return error.Unsupported;
+            if (!scanner.suspended) scanner.api.close(scanner.handle);
+            scanner.suspended = true;
+            return epson_ir.acquire(gpa, io, device, request, progress);
+        }
+        try scanner.ensureOpen(gpa);
         progress.reset();
         try scanner.prepare(gpa, request);
         const area = scanner.usedArea();

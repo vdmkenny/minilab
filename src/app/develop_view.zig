@@ -876,6 +876,36 @@ pub const State = struct {
         if (state.frame) |*f| state.setLook(f, id);
     }
 
+    /// Switches between a captured frame's original and IR-corrected RGB. Build
+    /// the replacement before changing the saved selection or the current view.
+    fn setInfrared(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, r: usize, index: usize, enabled: bool) !void {
+        state.save(io, library);
+        const rl = &library.rolls.items[r];
+        const saved = &rl.frames.items[index];
+        var choice = saved.*;
+        choice.infrared_corrected = enabled;
+        const path = try std.fs.path.join(gpa, &.{ rl.path, minilab.roll.scans_dir, choice.activeScan() orelse return error.UnreadableFrame });
+        defer gpa.free(path);
+        const old = &state.frame.?;
+        var replacement = try Frame.load(gpa, io, path, old.name, old.crop, old.quarter_turns, old.mirrored);
+        errdefer replacement.close(gpa);
+        replacement.settings = old.settings;
+        replacement.look = old.look;
+        replacement.stock_slopes = old.stock_slopes;
+        replacement.gap_base = old.gap_base;
+        replacement.base_from_roll = old.base_from_roll;
+        replacement.fillNegative();
+        const before = saved.infrared_corrected;
+        saved.infrared_corrected = enabled;
+        errdefer saved.infrared_corrected = before;
+        try rl.saveFrame(io, index);
+        state.closeFrame(gpa);
+        state.frame = replacement;
+        state.committed = .of(&replacement);
+        state.markStale();
+        library.invalidate(.{ .roll = r, .frame = index });
+    }
+
     /// The settings changed: render again, and save once the control is let go.
     fn changed(state: *State) void {
         if (state.frame) |*f| f.stale = true;
@@ -1766,12 +1796,30 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     }
     gui.endSection(true);
 
-    drawDust(state);
+    drawDust(state, gpa, io, library, roll_index);
 }
 
 /// Draws the dust section: its heading is the check box that turns dust removal on, then how far
 /// above the grain a speck stands, and the limits that keep the picture's own small highlights.
-fn drawDust(state: *State) void {
+fn drawDust(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
+    if (roll_index) |r| if (state.selected) |index| {
+        const saved = &library.rolls.items[r].frames.items[index];
+        if (saved.original_scan == null and saved.infrared_scan != null) {
+            gui.paragraph(theme.text_secondary, "IR mask rejected; original retained");
+        }
+        if (saved.original_scan != null and saved.infrared_scan != null) {
+            var enabled = saved.infrared_corrected;
+            gui.beginSection("infrared");
+            const toggled = gui.checkbox("INFRARED DUST REMOVAL", &enabled);
+            gui.tooltip("Use the correction guided by the scanner's infrared channel. Off shows the untouched RGB capture.");
+            gui.endSection(false);
+            if (toggled) {
+                state.setInfrared(gpa, io, library, r, index, enabled) catch |err| std.log.err("can't switch infrared correction: {t}", .{err});
+                return;
+            }
+        }
+    };
+
     const d = &state.frame.?.settings.dust;
     const Dust = minilab.dust.Settings;
     gui.beginSection("dust");
@@ -2254,4 +2302,56 @@ test "dragging a crop corner keeps the opposite one and the format's shape" {
     // A drag onto the fixed corner leaves the smallest box, its long side `min_crop`.
     edit.dragCorner(.bottom_right, edit.min, size, 1.5);
     try std.testing.expectApproxEqAbs(@as(f32, min_crop), edit.max[0] - edit.min[0], 1e-4);
+}
+
+test "switching infrared correction preserves geometry and develop settings" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var rl = try roll.Roll.create(gpa, io, folder, .{ .name = "IR toggle" });
+    var raw = try minilab.image.Scan.init(gpa, 64, 64);
+    defer raw.deinit(gpa);
+    @memset(raw.pixels, .{ 1234, 23456, 54321 });
+    const ppm = try minilab.pnm.write(gpa, u16, raw);
+    defer gpa.free(ppm);
+    const index = try rl.addScanAt(gpa, io, ppm, 800);
+    @memset(raw.pixels, .{ 4321, 34567, 65432 });
+    const corrected = try minilab.roll.encodeRaw(gpa, raw, 800);
+    defer gpa.free(corrected);
+    var ir = try minilab.image.Gray.init(gpa, 64, 64);
+    defer ir.deinit(gpa);
+    @memset(ir.pixels, 54000);
+    const pgm = try minilab.pnm.writeGray(gpa, ir);
+    defer gpa.free(pgm);
+    try rl.attachInfrared(gpa, io, index, corrected, pgm, 9);
+    rl.close();
+    var library = try Library.load(gpa, io, folder, null);
+    // No textures are created by this test, so deinit never uses a GPU.
+    defer library.deinit(gpa, undefined);
+    const path = try library.rolls.items[0].scanPath(gpa, index);
+    defer gpa.free(path);
+    const crop: minilab.image.Area = .{ .x = 4, .y = 5, .width = 40, .height = 32 };
+    var state: State = .{
+        .roll_path = try gpa.dupe(u8, library.rolls.items[0].path),
+        .selected = index,
+        .frame = try Frame.load(gpa, io, path, "IR test", crop, 1, true),
+    };
+    defer {
+        state.closeFrame(gpa);
+        gpa.free(state.roll_path.?);
+    }
+    state.frame.?.settings.saturation = 1.37;
+    state.dirty = true;
+    try state.setInfrared(gpa, io, &library, 0, index, false);
+    try std.testing.expectEqual([3]u16{ 1234, 23456, 54321 }, state.frame.?.full.pixels[0]);
+    try std.testing.expectEqual(crop, state.frame.?.crop.?);
+    try std.testing.expectEqual(@as(u2, 1), state.frame.?.quarter_turns);
+    try std.testing.expect(state.frame.?.mirrored);
+    try std.testing.expectEqual(@as(f32, 1.37), state.frame.?.settings.saturation);
+    try state.setInfrared(gpa, io, &library, 0, index, true);
+    try std.testing.expectEqual([3]u16{ 4321, 34567, 65432 }, state.frame.?.full.pixels[0]);
+    try std.testing.expect(library.rolls.items[0].frames.items[index].infrared_corrected);
 }

@@ -38,7 +38,7 @@ const usage =
     \\                                   base for all of them
     \\  minilab scan --list              list the scanners
     \\  minilab scan <out.ppm> [--device <id or model>] [--dpi <n>] [--area x,y,w,h]
-    \\      [--flatbed] [--film positive|negative]
+    \\      [--flatbed] [--film positive|negative] [--infrared]
     \\                                   make one scan of film, at 300 dpi unless you give
     \\                                   --dpi. --area is in mm from the scanner's origin.
     \\                                   --flatbed scans from the glass instead of the film
@@ -224,19 +224,24 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     var output: ?[]const u8 = null;
     var wanted: ?[]const u8 = null;
     var dpi: u32 = default_scan_dpi;
+    var dpi_given = false;
     var area: ?scan.Area = null;
     var film: scan.Film = .positive;
     var flatbed = false;
+    var infrared = false;
     var each: Args = .{ .list = args };
     while (each.next()) |arg| {
         if (eql(arg, "--list")) {
             list = true;
+        } else if (eql(arg, "--infrared")) {
+            infrared = true;
         } else if (eql(arg, "--flatbed")) {
             flatbed = true;
         } else if (eql(arg, "--device")) {
             wanted = try each.value();
         } else if (eql(arg, "--dpi")) {
             dpi = std.fmt.parseInt(u32, try each.value(), 10) catch return error.Usage;
+            dpi_given = true;
         } else if (eql(arg, "--film")) {
             film = std.meta.stringToEnum(scan.Film, try each.value()) orelse return error.Usage;
         } else if (eql(arg, "--area")) {
@@ -247,6 +252,13 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         } else return error.Usage;
     }
     if (!list and output == null) return error.Usage;
+    if (infrared) {
+        if (!dpi_given) dpi = 800;
+        if (flatbed or std.mem.indexOfScalar(u32, &scan.sane_ir.resolutions, dpi) == null) {
+            std.log.err("Infrared capture needs film and square pixels at 800, 1600 or 3200 dpi", .{});
+            return error.Usage;
+        }
+    }
 
     var library = scan.Library.load(gpa, io) catch |err| {
         std.log.err("no scanner library: {t}. On macOS and Linux minilab uses SANE, on Windows TWAIN.", .{err});
@@ -271,14 +283,35 @@ fn scanCommand(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
     defer scanner.close();
     var capabilities = try scanner.capabilities(gpa, if (flatbed) .flatbed else .transparency);
     defer capabilities.deinit(gpa);
-    const resolution = capabilities.resolutionFrom(dpi) orelse return error.NoResolutions;
+    if (infrared and !capabilities.infrared) return error.Unsupported;
+    const resolution = if (infrared) dpi else capabilities.resolutionFrom(dpi) orelse return error.NoResolutions;
     var raw_buffer: [96]u8 = undefined;
     const setup = if (capabilities.profile) |p| p.summary else if (capabilities.options) |o| scan.rawSetup(o.items, &.{}).report.label(&raw_buffer) else "no profile: the data may not be linear";
     std.log.info("{s} {s}: {t}, {d} dpi, {s}", .{ device.vendor, device.model, capabilities.source, resolution, setup });
     var progress: scan.Progress = .{};
-    var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = area }, &progress);
+    var image = try scanner.scan(gpa, .{ .source = capabilities.source, .film = film, .dpi = resolution, .area = if (infrared) area orelse capabilities.area else area, .infrared = infrared }, &progress);
     defer image.deinit(gpa);
-    const ppm = try minilab.pnm.write(gpa, u16, image.scan);
+    const is_tiff = std.mem.endsWith(u8, output.?, ".tiff") or std.mem.endsWith(u8, output.?, ".tif");
+    if (image.dpi[0] != image.dpi[1] and !is_tiff) return error.Usage;
+    var corrected: ?minilab.image.Scan = null;
+    defer if (corrected) |*s| s.deinit(gpa);
+    if (image.infrared) |ir| {
+        const original = try minilab.roll.encodeRaw(gpa, image.scan, image.dpi[0]);
+        defer gpa.free(original);
+        const original_path = try std.fmt.allocPrint(gpa, "{s}.original.tiff", .{output.?});
+        defer gpa.free(original_path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = original_path, .data = original });
+        const infrared_path = try std.fmt.allocPrint(gpa, "{s}.infrared.pgm", .{output.?});
+        defer gpa.free(infrared_path);
+        const plane = try minilab.pnm.writeGray(gpa, ir);
+        defer gpa.free(plane);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = infrared_path, .data = plane });
+        const cleaned = try minilab.infrared.clean(gpa, image.scan, ir, image.dpi[0]);
+        corrected = cleaned.scan;
+        std.log.info("Infrared correction: {d} pixels; original and IR saved", .{cleaned.pixels});
+    }
+    const working = corrected orelse image.scan;
+    const ppm = if (is_tiff) try minilab.roll.encodeRaw(gpa, working, image.dpi[0]) else try minilab.pnm.write(gpa, u16, working);
     defer gpa.free(ppm);
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = output.?, .data = ppm });
     std.log.info("{s}: {d} × {d} px, {d}-bit, {d:.2} × {d:.2} mm at {d:.2}, {d:.2} mm", .{ output.?, image.scan.width, image.scan.height, image.depth.bits(), image.area.width, image.area.height, image.area.x, image.area.y });

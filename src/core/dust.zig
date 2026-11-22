@@ -266,7 +266,7 @@ const column_tile = 32;
 
 /// Replaces each value of the `width` × `height` image `values` with the minimum (or maximum) over
 /// the square reaching `radius` from it. Past the edges counts as nothing.
-fn filter(comptime T: type, comptime op: Op, gpa: std.mem.Allocator, values: []T, width: usize, height: usize, radius: usize) !void {
+pub fn filter(comptime T: type, comptime op: Op, gpa: std.mem.Allocator, values: []T, width: usize, height: usize, radius: usize) !void {
     const padded = @max(width, height) + 2 * radius;
     const forward = try gpa.alloc(T, padded);
     defer gpa.free(forward);
