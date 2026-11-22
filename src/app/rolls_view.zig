@@ -9,6 +9,7 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
+const saved_details = @import("saved_details.zig");
 const shortcuts = @import("shortcuts.zig");
 const holes = @import("holes.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
@@ -88,6 +89,7 @@ pub const State = struct {
     size_filter: ?formats.FilmSize = null,
     show_form: bool = false,
     form: Form = .{},
+    saved: saved_details.State = .{},
     /// Move the keyboard focus to the search field on the next frame.
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
@@ -126,9 +128,9 @@ const Form = struct {
     stock: usize = 0,
     size: formats.FilmSize = .@"135",
     format: usize = 0,
-    camera: [gui.text_capacity:0]u8 = @splat(0),
-    lens: [gui.text_capacity:0]u8 = @splat(0),
-    copyright: [gui.text_capacity:0]u8 = @splat(0),
+    camera: [minilab.saved_details.value_capacity:0]u8 = @splat(0),
+    lens: [minilab.saved_details.value_capacity:0]u8 = @splat(0),
+    copyright: [minilab.saved_details.value_capacity:0]u8 = @splat(0),
     notes: [gui.text_capacity * 4:0]u8 = @splat(0),
     input: roll.Input = .scanner,
     /// The flat field for a camera roll: a file with a shot of the light source and no film.
@@ -156,6 +158,7 @@ pub const Created = struct {
     roll: usize,
     /// Set when the flat field given couldn't be used, so the roll has none.
     flat_failed: bool = false,
+    details_failed: bool = false,
 };
 
 const film_sizes = std.enums.values(formats.FilmSize);
@@ -215,6 +218,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         if (drawForm(state, library, gpa, io)) |created| action = .{ .created = created };
         c.ImGui_EndChild();
     }
+    saved_details.manager(&state.saved, &library.saved_details, io);
     return action;
 }
 
@@ -539,11 +543,13 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     gui.rowLabel("Format");
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
     gui.rowLabel("Camera");
-    _ = gui.textField("camera", &form.camera, "[Camera]", 0);
+    _ = saved_details.field(&state.saved, &library.saved_details, .camera, "camera", &form.camera, "[Camera]", 0);
     gui.rowLabel("Lens");
-    _ = gui.textField("lens", &form.lens, "[Lens]", 0);
+    _ = saved_details.field(&state.saved, &library.saved_details, .lens, "lens", &form.lens, "[Lens]", 0);
     gui.rowLabel("Copyright");
-    _ = gui.textField("copyright", &form.copyright, "[Your name]", 0);
+    _ = saved_details.field(&state.saved, &library.saved_details, .copyright, "copyright", &form.copyright, "[Your name]", 0);
+    gui.rowLabel("");
+    if (gui.buttonOf(.quiet, "Saved entries...", gui.vec2(0, 0))) state.saved.manage(state.saved.kind);
     const notes_x = c.ImGui_GetCursorPosX();
     gui.textColored(theme.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
@@ -622,6 +628,11 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
         };
         return null;
     };
+    var details_failed = false;
+    library.saved_details.rememberInfo(io, made.info) catch |err| {
+        std.log.warn("roll created, but saved details were not updated: {t}", .{err});
+        details_failed = true;
+    };
     const flat = std.mem.sliceTo(&form.flat, 0);
     var flat_failed = false;
     if (form.input == .camera_raw and flat.len > 0) setFlatField(gpa, io, &made, flat) catch |err| {
@@ -640,7 +651,7 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
         std.log.err("can't read the library again: {t}", .{err});
         return null;
     };
-    return .{ .roll = library.find(path) orelse return null, .flat_failed = flat_failed };
+    return .{ .roll = library.find(path) orelse return null, .flat_failed = flat_failed, .details_failed = details_failed };
 }
 
 /// Sets the shot in the file at `path` as the flat field of roll `r`.
@@ -653,4 +664,59 @@ fn setFlatField(gpa: std.mem.Allocator, io: std.Io, r: *roll.Roll, path: []const
 fn optional(buffer: anytype) ?[]const u8 {
     const text = std.mem.sliceTo(buffer, 0);
     return if (text.len == 0) null else text;
+}
+
+test "new rolls remember their details and removed suggestions stay hidden on refresh" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var library = try Library.load(gpa, io, folder, null);
+    // No textures are created, so deinit never uses a GPU.
+    defer library.deinit(gpa, undefined);
+    var state: State = .{};
+    defer state.deinit(gpa);
+    state.form.name = gui.initText(gui.text_capacity, "First");
+    state.form.camera = gui.initText(minilab.saved_details.value_capacity, "Nikon F3");
+    state.form.lens = gui.initText(minilab.saved_details.value_capacity, "50 mm");
+    state.form.copyright = gui.initText(minilab.saved_details.value_capacity, "Ada");
+    state.form.input = .tiff_files;
+    const made = createRoll(&state, &library, gpa, io, &.{"Other"}, &.{.@"135_full_frame"}).?;
+    try std.testing.expect(!made.details_failed);
+    try std.testing.expectEqual(@as(usize, 1), library.saved_details.count(.camera));
+    try std.testing.expectEqual(@as(usize, 1), library.saved_details.count(.lens));
+    try std.testing.expectEqual(@as(usize, 1), library.saved_details.count(.copyright));
+    try library.saved_details.forget(io, .camera, "Nikon F3");
+    try library.reload(gpa, io);
+    try std.testing.expectEqual(@as(usize, 0), library.saved_details.count(.camera));
+    try std.testing.expectEqualStrings("Nikon F3", library.rolls.items[0].info.camera.?);
+    state.form.name = gui.initText(gui.text_capacity, "Second");
+    state.form.camera = gui.initText(minilab.saved_details.value_capacity, "Nikon F3");
+    state.form.input = .tiff_files;
+    _ = createRoll(&state, &library, gpa, io, &.{"Other"}, &.{.@"135_full_frame"}).?;
+    try std.testing.expectEqual(@as(usize, 1), library.saved_details.count(.camera));
+}
+
+test "a saved-entry failure does not lose the roll or its metadata" {
+    std.testing.log_level = .err;
+    defer std.testing.log_level = .warn;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var library = try Library.load(gpa, io, folder, null);
+    defer library.deinit(gpa, undefined);
+    library.saved_details.readable = false;
+    var state: State = .{};
+    defer state.deinit(gpa);
+    state.form.name = gui.initText(gui.text_capacity, "Kept");
+    state.form.copyright = gui.initText(minilab.saved_details.value_capacity, "Ada");
+    state.form.input = .tiff_files;
+    const made = createRoll(&state, &library, gpa, io, &.{"Other"}, &.{.@"135_full_frame"}).?;
+    try std.testing.expect(made.details_failed);
+    try std.testing.expectEqualStrings("Ada", library.rolls.items[made.roll].info.copyright.?);
 }

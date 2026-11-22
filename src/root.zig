@@ -14,6 +14,8 @@ pub const look = @import("core/look.zig");
 pub const calibration = @import("core/calibration.zig");
 /// Changes to how a scanner is set up for raw scans, per scanner.
 pub const scanner_settings = @import("core/scanner_settings.zig");
+/// Reusable camera, lens and copyright entries for rolls.
+pub const saved_details = @import("core/saved_details.zig");
 /// Medians, percentiles and histogram ranks.
 pub const stats = @import("core/stats.zig");
 /// Splitting work over the cores.

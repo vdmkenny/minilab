@@ -13,6 +13,7 @@ const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
 const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
+const saved_details = @import("saved_details.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
 
 const exporting = minilab.@"export";
@@ -199,6 +200,7 @@ pub const State = struct {
     include: exporting.Include = .{},
     /// What's in each detail's field. It follows the roll, except while you're typing in it.
     details: std.EnumArray(roll.Detail, [detail_capacity:0]u8) = .initFill(@splat(0)),
+    saved: saved_details.State = .{},
     /// The boxes for the roll's own fields, filled from the roll.
     custom: std.ArrayList(FieldBoxes) = .empty,
     /// The field being typed in, if any.
@@ -424,6 +426,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     drawSettings(state, ctx, roll_index);
     c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.divider));
     c.ImGui_EndChild();
+    saved_details.manager(&state.saved, &ctx.library.saved_details, ctx.io);
     return null;
 }
 
@@ -1059,12 +1062,32 @@ fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.D
     c.ImGui_SetCursorScreenPos(at);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
     c.ImGui_BeginDisabled(!fits);
-    _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
+    var committed = false;
+    const kind = minilab.saved_details.Kind.fromDetail(which);
+    if (kind) |k| {
+        const edit = saved_details.field(&state.saved, &ctx.library.saved_details, k, @tagName(which), buffer, "Not set", width / gui.scale);
+        if (edit.active) state.editing = .{ .detail = which } else if (state.isEditing(.{ .detail = which })) {
+            state.editing = null;
+        }
+        committed = edit.committed;
+    } else {
+        _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
+        committed = trackEdit(state, .{ .detail = which });
+    }
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (which == .shot) gui.tooltip("YYYY, YYYY-MM or YYYY-MM-DD");
-    if (trackEdit(state, .{ .detail = which }) and fits) {
-        r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
+    if (committed and fits) {
+        const text = std.mem.sliceTo(buffer, 0);
+        r.setDetail(ctx.io, which, text) catch |err| {
+            std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
+            ctx.notice.set("Roll detail could not be saved", .{});
+            return;
+        };
+        if (kind) |k| ctx.library.saved_details.remember(ctx.io, k, text) catch |err| {
+            std.log.warn("roll detail saved, but suggestions were not updated: {t}", .{err});
+            ctx.notice.set("Roll detail saved; saved entries could not be updated", .{});
+        };
     }
 }
 

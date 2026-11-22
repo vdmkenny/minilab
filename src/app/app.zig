@@ -278,6 +278,7 @@ const App = struct {
             },
             .created => |created| {
                 if (created.flat_failed) app.notice.set("Flat field not set", .{});
+                if (created.details_failed) app.notice.set("Roll created; saved entries could not be updated", .{});
                 try app.develop.openRoll(gpa, io, library, library.rolls.items[created.roll].path);
                 app.workspace = if (library.rolls.items[created.roll].info.input == .scanner) .scan else .develop;
             },
