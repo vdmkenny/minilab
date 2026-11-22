@@ -39,6 +39,8 @@ pub const framing = @import("core/framing.zig");
 pub const scan = @import("scan/root.zig");
 /// Finding, checking and installing new releases.
 pub const update = @import("update/root.zig");
+/// Appearance shared by all libraries in the user account.
+pub const preferences = @import("core/preferences.zig");
 /// Film stock presets from the makers' datasheets.
 pub const stocks = @import("presets/stocks.zig");
 pub const @"export" = @import("core/export.zig");

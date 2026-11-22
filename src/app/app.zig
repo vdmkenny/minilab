@@ -1,6 +1,7 @@
 //! The app: its window, the workspaces in the header, and the one loop that draws them.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const minilab = @import("minilab");
 const c = @import("c");
 const Window = @import("../platform/window.zig").Window;
@@ -69,6 +70,7 @@ const header = struct {
     const tab_padding_y = 8;
     const tab_gap = 2;
     const tab_rounding = 4;
+    const appearance_width = 90;
     /// The amber line under the current tab.
     const tab_underline = 2;
     /// The dot that shows whether the scanner is ready.
@@ -84,6 +86,11 @@ const Notice = context.Notice;
 /// Runs the app until it's closed. After an update, returns the program's folder, for the new
 /// version to start from there.
 pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
+    const preferences_path = try minilab.preferences.pathFor(gpa, builtin.os.tag, options.home, environment("XDG_CONFIG_HOME"), environment("APPDATA"));
+    defer if (preferences_path) |path| gpa.free(path);
+    var preferences = try minilab.preferences.Settings.load(gpa, io, preferences_path);
+    defer preferences.deinit();
+    theme.choose(preferences.theme);
     var window: Window = try .open("minilab", start_width, start_height, options.screenshot != null);
     defer window.close();
     gui.scale = window.scale;
@@ -94,6 +101,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         .library = try .load(gpa, io, options.library, options.home),
         .workspace = options.workspace,
         .show_help = options.shortcuts,
+        .preferences = &preferences,
     };
     defer app.deinit(gpa, io, window.gpu);
     try app.openAtStart(gpa, io, options);
@@ -110,6 +118,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
             library_checked = c.SDL_GetTicks();
             app.library.refresh(gpa, io);
+        }
+        if (theme.mode != preferences.theme) {
+            theme.choose(preferences.theme);
+            theme.applyColors();
         }
         gui.newFrame();
         const keys = shortcuts.poll();
@@ -164,6 +176,7 @@ const App = struct {
     workspace: Workspace,
     panels: Panels = .all,
     show_help: bool,
+    preferences: *minilab.preferences.Settings,
     /// Looks for an update, and installs one.
     updates: ?*update_worker.Worker = null,
     update_window: update_view.State = .{},
@@ -238,7 +251,7 @@ const App = struct {
         _ = c.ImGui_Begin("minilab", null, c.ImGuiWindowFlags_NoDecoration | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoBringToFrontOnFocus);
         c.ImGui_PopStyleVar();
         defer c.ImGui_End();
-        if (app.panels != .viewer and drawHeader(&app.workspace, &app.notice, &app.library, &app.develop, scan_view.status(&app.scan), update_view.headerLabel(app.updates))) app.update_window.open = true;
+        if (app.panels != .viewer and drawHeader(&app.workspace, &app.notice, &app.library, &app.develop, scan_view.status(&app.scan), update_view.headerLabel(app.updates), app.preferences, ctx.io)) app.update_window.open = true;
         // A scan or an export running would be cut short by restarting into an update.
         if (app.updates) |worker| {
             if (update_view.draw(&app.update_window, worker, ctx, app.scan.scanning or app.exporting.running != null)) app.restart = true;
@@ -333,7 +346,7 @@ fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *de
 }
 
 /// Draws the header. Returns true when the update notice, `update`, was clicked.
-fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Library, develop: *const develop_view.State, scanner: @TypeOf(scan_view.status(undefined)), update: ?[:0]const u8) bool {
+fn drawHeader(workspace: *Workspace, notice: *Notice, library: *const Library, develop: *const develop_view.State, scanner: @TypeOf(scan_view.status(undefined)), update: ?[:0]const u8, preferences: *minilab.preferences.Settings, io: std.Io) bool {
     var update_clicked = false;
     const origin = c.ImGui_GetCursorScreenPos();
     const width = c.ImGui_GetContentRegionAvail().x;
@@ -382,7 +395,17 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
 
     // On the right: what just happened, the open roll, and the scanner.
     var right = origin.x + width - gui.px(header.padding);
-    const scanner_text = gui.print("{s}", .{scanner.text});
+    right -= gui.px(header.appearance_width);
+    c.ImGui_SetCursorScreenPos(gui.vec2(right, middle - tab_height / 2));
+    if (gui.comboOf(theme.Mode, "appearance", std.enums.values(theme.Mode), preferences.theme, theme.Mode.label, header.appearance_width)) |picked| {
+        preferences.setTheme(io, picked) catch |err| {
+            std.log.warn("theme changed, but preference was not saved: {t}", .{err});
+            notice.set("Theme changed; preference not saved", .{});
+        };
+    }
+    gui.tooltip("Appearance");
+    right -= gui.px(header.padding);
+    const scanner_text = gui.elideEnd(scanner.text, @max(0, right - x - gui.px(header.dot_gap + 2 * header.dot_radius + header.padding)));
     const scanner_size = c.ImGui_CalcTextSize(scanner_text);
     right -= scanner_size.x;
     c.ImDrawList_AddText(list, gui.vec2(right, middle - scanner_size.y / 2), theme.imU32(theme.text_secondary), scanner_text);
@@ -402,7 +425,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
         if (develop.rollIndex(library)) |r| {
             const info = library.rolls.items[r].info;
             const film = info.format.format().size;
-            const roll_text = gui.print("{s} · {s} · {s}", .{ info.name, info.stock orelse labels.filmKind(info.kind), labels.filmSize(film) });
+            const roll_text = gui.elideEnd(gui.print("{s} · {s} · {s}", .{ info.name, info.stock orelse labels.filmKind(info.kind), labels.filmSize(film) }), @max(0, right - x - gui.px(header.padding)));
             const size = c.ImGui_CalcTextSize(roll_text);
             right -= size.x;
             c.ImDrawList_AddText(list, gui.vec2(right, middle - size.y / 2), theme.imU32(theme.text_secondary), roll_text);
@@ -432,4 +455,8 @@ fn drawMark(list: *c.ImDrawList, corner: gui.Vec2) void {
     const max = p(corner, .{ o.centre[0] + o.half[0], o.centre[1] + o.half[1] });
     c.ImDrawList_AddRectEx(list, min, max, ink, gui.px(o.radius), thickness, 0);
     for (icon.segments) |s| c.ImDrawList_AddLineEx(list, p(corner, s[0]), p(corner, s[1]), ink, thickness);
+}
+
+fn environment(name: [:0]const u8) ?[]const u8 {
+    return if (std.c.getenv(name.ptr)) |value| std.mem.span(value) else null;
 }

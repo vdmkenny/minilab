@@ -275,9 +275,9 @@ fn drawTitleRow(state: *State, library: *Library) void {
     shortcuts.tooltip("New roll", .new_roll);
     // The plus sign, then the label: the button's padding in, the icon, then a gap.
     const list = c.ImGui_GetWindowDrawList();
-    gui.plus(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon / 2), corner.y + height / 2), gui.px(new_plus_arm), gui.px(new_plus_thickness), theme.on_accent);
+    gui.plus(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon / 2), corner.y + height / 2), gui.px(new_plus_arm), gui.px(new_plus_thickness), theme.on_primary);
     fonts.push(.semibold);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon + new_icon_gap), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.on_accent), new_label);
+    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon + new_icon_gap), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.on_primary), new_label);
     fonts.pop();
 }
 

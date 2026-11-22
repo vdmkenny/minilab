@@ -237,7 +237,7 @@ pub const Kind = enum {
 pub fn buttonOf(kind: Kind, label: [:0]const u8, size: Vec2) bool {
     const colours: struct { fill: theme.Color, hover: theme.Color, line: theme.Color, ink: theme.Color } = switch (kind) {
         .normal => .{ .fill = theme.control, .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
-        .primary => .{ .fill = theme.accent, .hover = theme.accent, .line = theme.withAlpha(theme.accent, 0), .ink = theme.on_accent },
+        .primary => .{ .fill = theme.primary, .hover = theme.primary, .line = theme.withAlpha(theme.primary, 0), .ink = theme.on_primary },
         .outline => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text },
         .secondary => .{ .fill = theme.withAlpha(theme.page, 0), .hover = theme.control_hover, .line = theme.border, .ink = theme.text_secondary },
         .selected => .{ .fill = theme.accent_fill, .hover = theme.accent_fill, .line = theme.accent, .ink = theme.text },
@@ -570,7 +570,7 @@ pub const CheckboxOptions = struct {
     gap: f32 = 6,
     /// The row's height, or null for a control's height.
     height: ?f32 = null,
-    label_color: theme.Color = theme.text_secondary,
+    label_color: ?theme.Color = null,
 };
 
 /// The size of a check box with a label, in the design's pixels.
@@ -592,7 +592,7 @@ pub fn checkboxWith(label: [:0]const u8, checked: *bool, options: CheckboxOption
     const list = c.ImGui_GetWindowDrawList();
     const min = vec2(origin.x, origin.y + (height - box) / 2);
     checkBox(list, min, box, checked.*, c.ImGui_IsItemHovered(0));
-    c.ImDrawList_AddText(list, vec2(min.x + box + px(options.gap), origin.y + (height - label_size.y) / 2), theme.imU32(options.label_color), label.ptr);
+    c.ImDrawList_AddText(list, vec2(min.x + box + px(options.gap), origin.y + (height - label_size.y) / 2), theme.imU32(options.label_color orelse theme.text_secondary), label.ptr);
     return clicked;
 }
 
