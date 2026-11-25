@@ -14,6 +14,7 @@ const shortcuts = @import("shortcuts.zig");
 const labels = @import("labels.zig");
 const Library = @import("library.zig").Library;
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
+const roll_details = @import("roll_details.zig");
 
 const exporting = minilab.@"export";
 const icc = minilab.codecs.icc;
@@ -38,10 +39,8 @@ const grid_gap = 10;
 /// A Metadata row, tall enough for a text field, and the gap between rows.
 const detail_row = 28;
 const metadata_gap = 6;
-/// The longest a detail or a field's value can be, in bytes, and a field's name. A detail holds
-/// more than New roll's notes box, so notes typed there fit. A longer one, say from a roll.json
-/// edited by hand, is shown cut short and can't be edited here (`showCut`).
-const detail_capacity = 1024;
+/// The longest a field's value can be, in bytes, as long as a detail, and a field's name.
+const detail_capacity = roll_details.capacity;
 const field_name_capacity = 64;
 const metadata_check = 13;
 /// A Metadata row's columns: the check box, its name and the gaps between them.
@@ -146,7 +145,6 @@ const default_pattern = "{roll}_{frame:02}";
 /// A field you can type in on Metadata: one of the roll's details, or the name or value of one of
 /// its own fields.
 const Editing = union(enum) {
-    detail: roll.Detail,
     field_name: usize,
     field_value: usize,
 };
@@ -197,8 +195,8 @@ pub const State = struct {
     /// Where the files go: a path relative to the library's folder, or an absolute one.
     folder: [path_field:0]u8 = @splat(0),
     include: exporting.Include = .{},
-    /// What's in each detail's field. It follows the roll, except while you're typing in it.
-    details: std.EnumArray(roll.Detail, [detail_capacity:0]u8) = .initFill(@splat(0)),
+    /// The boxes for the roll's details.
+    details: roll_details.Boxes = .{},
     /// The boxes for the roll's own fields, filled from the roll.
     custom: std.ArrayList(FieldBoxes) = .empty,
     /// The field being typed in, if any.
@@ -299,7 +297,7 @@ pub const State = struct {
             state.last = null;
             state.setFolder(defaultFolder(library, r));
             // The boxes held the last roll's details.
-            state.details = .initFill(@splat(0));
+            state.details = .{};
             state.custom.clearRetainingCapacity();
             state.editing = null;
         }
@@ -938,12 +936,12 @@ fn drawMetadata(state: *State, ctx: context.Context, roll_index: usize, x: f32, 
     var y = top;
 
     const rows = [_]MetadataRow{
-        .{ .label = "Camera", .flag = &state.include.camera, .value = .{ .detail = .camera } },
-        .{ .label = "Lens", .flag = &state.include.lens, .value = .{ .detail = .lens } },
+        .{ .label = roll_details.label(.camera), .flag = &state.include.camera, .value = .{ .detail = .camera } },
+        .{ .label = roll_details.label(.lens), .flag = &state.include.lens, .value = .{ .detail = .lens } },
         .{ .label = "Film stock", .flag = &state.include.stock, .value = .{ .fixed = .{ .text = r.info.stock, .why = "Set in Develop" } } },
-        .{ .label = "Date shot", .flag = &state.include.shot, .value = .{ .detail = .shot } },
-        .{ .label = "Copyright", .flag = &state.include.copyright, .value = .{ .detail = .copyright } },
-        .{ .label = "Notes", .flag = &state.include.notes, .value = .{ .detail = .notes } },
+        .{ .label = roll_details.label(.shot), .flag = &state.include.shot, .value = .{ .detail = .shot } },
+        .{ .label = roll_details.label(.copyright), .flag = &state.include.copyright, .value = .{ .detail = .copyright } },
+        .{ .label = roll_details.label(.notes), .flag = &state.include.notes, .value = .{ .detail = .notes } },
         .{ .label = "Settings", .flag = &state.include.settings, .value = .{ .fixed = .{ .text = "Look, base, scanner", .quiet = true } } },
         .{ .label = "Rating", .flag = &state.include.rating, .value = .{ .fixed = .{ .text = "Stars, rejected", .quiet = true } } },
     };
@@ -1002,10 +1000,10 @@ fn drawOwnFields(state: *State, ctx: context.Context, r: *roll.Roll, list: *c.Im
         }
         c.ImGui_BeginDisabled(!field.fits);
         _ = gui.textField("name", &field.name, "Name", (name_width - gui.px(metadata_spacing)) / gui.scale);
-        edited = trackEdit(state, .{ .field_name = i }) or edited;
+        edited = trackEdit(state, .{ .field_name = i }, .ofLastItem()) or edited;
         c.ImGui_SetCursorScreenPos(gui.vec2(value_left, y));
         _ = gui.textField("value", &field.value, "Value", (value_width - remove_size - gui.px(metadata_spacing)) / gui.scale);
-        edited = trackEdit(state, .{ .field_value = i }) or edited;
+        edited = trackEdit(state, .{ .field_value = i }, .ofLastItem()) or edited;
         c.ImGui_EndDisabled();
         c.ImGui_PopStyleVar();
         c.ImGui_SetCursorScreenPos(gui.vec2(x + width - remove_size, y));
@@ -1047,36 +1045,23 @@ fn metadataCheck(list: *c.ImDrawList, x: f32, y: f32, label: [:0]const u8, flag:
     c.ImDrawList_AddText(list, gui.vec2(x + gui.px(metadata_check_width + metadata_spacing), y + (row - c.ImGui_GetFontSize()) / 2), theme.imU32(if (hovered) theme.colors.text else theme.colors.text_secondary), label);
 }
 
-/// Draws the field for one of the roll's details. It shows the roll's value except while you're
-/// typing in it, and saves the roll when you leave it.
+/// Draws the box for one of the roll's details at `at`, `width` pixels wide.
 fn detailField(state: *State, ctx: context.Context, r: *roll.Roll, which: roll.Detail, at: gui.Vec2, width: f32) void {
-    const buffer = state.details.getPtr(which);
-    const value = r.detail(which) orelse "";
-    // A value too long for the box can't be edited here, so a shortened copy never gets saved
-    // over it.
-    const fits = value.len <= buffer.len;
-    if (!state.isEditing(.{ .detail = which })) showCut(buffer, value);
     c.ImGui_SetCursorScreenPos(at);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(field_padding), (gui.px(detail_row) - c.ImGui_GetFontSize()) / 2));
-    c.ImGui_BeginDisabled(!fits);
-    _ = gui.textField(@tagName(which), buffer, "Not set", width / gui.scale);
-    c.ImGui_EndDisabled();
-    c.ImGui_PopStyleVar();
-    if (which == .shot) gui.tooltip("YYYY, YYYY-MM or YYYY-MM-DD");
-    if (trackEdit(state, .{ .detail = which }) and fits) {
-        r.setDetail(ctx.io, which, std.mem.sliceTo(buffer, 0)) catch |err| std.log.err("can't save {s}'s {t}: {t}", .{ r.info.name, which, err });
-    }
+    defer c.ImGui_PopStyleVar();
+    state.details.draw(which, r, ctx.library, ctx.io, "Not set", width / gui.scale);
 }
 
-/// Notes which field is being typed in, from the item just drawn. Returns true when you've just
-/// left it after changing it, which is when it's saved.
-fn trackEdit(state: *State, which: Editing) bool {
-    if (c.ImGui_IsItemActive()) {
+/// Notes whether field `which` is being typed in, from `edit`. Returns true when it's done with
+/// after a change (you left it, or picked a suggestion), which is when it's saved.
+fn trackEdit(state: *State, which: Editing, edit: gui.TextEdit) bool {
+    if (edit.active) {
         state.editing = which;
     } else if (state.isEditing(which)) {
         state.editing = null;
     }
-    return c.ImGui_IsItemDeactivatedAfterEdit();
+    return edit.done;
 }
 
 /// Fills the fields' boxes from the roll, unless one of them is being typed in.
@@ -1085,19 +1070,9 @@ fn syncFields(state: *State, gpa: std.mem.Allocator, r: *const roll.Roll) void {
     state.custom.resize(gpa, r.info.fields.len) catch return;
     for (state.custom.items, r.info.fields) |*boxes, field| {
         boxes.fits = field.name.len <= boxes.name.len and field.value.len <= boxes.value.len;
-        showCut(&boxes.name, field.name);
-        showCut(&boxes.value, field.value);
+        roll_details.showCut(&boxes.name, field.name);
+        roll_details.showCut(&boxes.value, field.value);
     }
-}
-
-/// Puts `value` into a text box, cut short at a whole character if it doesn't fit. Only for
-/// showing: a box holding a cut value mustn't be saved.
-fn showCut(buffer: [:0]u8, value: []const u8) void {
-    var end = @min(value.len, buffer.len);
-    // Back off to the start of a character, so the cut doesn't split one.
-    while (end < value.len and end > 0 and value[end] & 0xc0 == 0x80) end -= 1;
-    @memcpy(buffer[0..end], value[0..end]);
-    buffer[end] = 0;
 }
 
 /// Saves the fields as they're typed, leaving out `remove` and adding an empty one for `add`.
@@ -1142,17 +1117,6 @@ fn start(state: *State, ctx: context.Context, r: *const roll.Roll) void {
     var running: Running = .{ .batch = batch, .future = future };
     running.what.set("{s}, {s}", .{ state.file.label(), spaceLabel(state.space) });
     state.running = running;
-}
-
-test "a value cut short for showing keeps whole characters" {
-    var box: [6:0]u8 = @splat(0);
-    showCut(&box, "Gent");
-    try std.testing.expectEqualStrings("Gent", std.mem.sliceTo(&box, 0));
-    // "è" is two bytes, the sixth and seventh, so a cut after six would split it.
-    showCut(&box, "Gentsè, Belgium");
-    try std.testing.expectEqualStrings("Gents", std.mem.sliceTo(&box, 0));
-    showCut(&box, "Ghent, Belgium");
-    try std.testing.expectEqualStrings("Ghent,", std.mem.sliceTo(&box, 0));
 }
 
 test "a custom long edge is a number within range, or nothing" {

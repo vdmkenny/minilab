@@ -5,6 +5,8 @@ const std = @import("std");
 const c = @import("c");
 const theme = @import("theme.zig");
 const icons = @import("icons.zig");
+const date = @import("minilab").date;
+const Date = date.Date;
 const fonts = @import("fonts.zig");
 
 pub const Vec2 = c.ImVec2;
@@ -17,6 +19,11 @@ var frame_arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
 /// Frees the strings made during the last frame.
 pub fn newFrame() void {
     _ = frame_arena.reset(.retain_capacity);
+}
+
+/// Memory that lasts for this frame, for things worked out to draw it.
+pub fn frameAllocator() std.mem.Allocator {
+    return frame_arena.allocator();
 }
 
 pub fn px(value: f32) f32 {
@@ -590,6 +597,14 @@ pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, w
     return picked;
 }
 
+test "Tab completes to the first suggestion that starts with what's typed" {
+    const suggestions = [_][]const u8{ "Pentax MX", "Pentax 67", "Nikon F3" };
+    try std.testing.expectEqualStrings("Pentax MX", completionOf(&suggestions, "pen").?);
+    try std.testing.expectEqualStrings("Pentax 67", completionOf(&suggestions, "Pentax 6").?);
+    try std.testing.expectEqual(@as(?[]const u8, null), completionOf(&suggestions, "Nikon F3"));
+    try std.testing.expectEqual(@as(?[]const u8, null), completionOf(&suggestions, "Leica"));
+}
+
 /// Whether every space-separated word of `query` appears in `item`, ignoring case.
 fn matchesWords(item: []const u8, query: []const u8) bool {
     var words = std.mem.tokenizeScalar(u8, query, ' ');
@@ -705,6 +720,220 @@ pub fn setText(buffer: [:0]u8, value: []const u8) error{TooLong}!void {
 pub fn textField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f32) bool {
     c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
     return c.ImGui_InputTextWithHint(print("##{s}", .{id}).ptr, hint.ptr, buffer, buffer.len + 1, 0);
+}
+
+/// How a text field was used this frame.
+pub const TextEdit = struct {
+    /// Being typed in.
+    active: bool,
+    /// Just left after a change, or a suggestion was picked: the time to keep what's in it.
+    done: bool,
+
+    /// How the text field just drawn was used.
+    pub fn ofLastItem() TextEdit {
+        return .{ .active = c.ImGui_IsItemActive(), .done = c.ImGui_IsItemDeactivatedAfterEdit() };
+    }
+};
+
+/// A text field that suggests `suggestions` (most likely first), like an editable drop-down. You
+/// can type anything. Tab completes what's typed to the first suggestion that starts with it, and
+/// the rest of that suggestion shows faintly while you type. A chevron lists them all to pick
+/// from; it's left out when there are none. `width` is in the design's pixels, and 0 fills the
+/// row.
+pub fn suggestField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f32, suggestions: []const []const u8) TextEdit {
+    c.ImGui_PushID(id.ptr);
+    defer c.ImGui_PopID();
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    // The chevron goes over the field's right end.
+    if (suggestions.len > 0) c.ImGui_SetNextItemAllowOverlap();
+    var list = suggestions;
+    _ = c.ImGui_InputTextWithHintEx("##value", hint.ptr, buffer, buffer.len + 1, c.ImGuiInputTextFlags_CallbackCompletion, complete, @ptrCast(&list));
+    var edit: TextEdit = .ofLastItem();
+    const min = c.ImGui_GetItemRectMin();
+    const max = c.ImGui_GetItemRectMax();
+    if (suggestions.len == 0) return edit;
+    const draw = c.ImGui_GetWindowDrawList();
+    const padding = c.ImGui_GetStyle().*.FramePadding;
+    const chevron_room = max.y - min.y;
+    const typed = std.mem.sliceTo(buffer, 0);
+    if (edit.active and typed.len > 0) if (completionOf(suggestions, typed)) |whole| {
+        // The rest of the completion, after the typed text, while it fits before the chevron.
+        const rest = print("{s}", .{whole[typed.len..]});
+        const at = min.x + padding.x + c.ImGui_CalcTextSize(print("{s}", .{typed})).x;
+        if (at + c.ImGui_CalcTextSize(rest).x < max.x - chevron_room) c.ImDrawList_AddText(draw, vec2(at, min.y + padding.y), theme.imU32(theme.colors.text_tertiary), rest);
+    };
+    if (endButton("##suggestions", min, max)) _ = c.ImGui_OpenPopup("suggestions", 0);
+    chevron(draw, min, max);
+    c.ImGui_SetNextWindowPos(vec2(min.x, max.y + px(field_popup_gap)), c.ImGuiCond_Always);
+    c.ImGui_SetNextWindowSizeConstraints(vec2(max.x - min.x, 0), vec2(max.x - min.x, px(tall_list_height)), null, null);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, vec2(px(list_padding_x), px(list_padding_y)));
+    defer c.ImGui_PopStyleVar();
+    if (!c.ImGui_BeginPopup("suggestions", c.ImGuiWindowFlags_NoMove)) return edit;
+    defer c.ImGui_EndPopup();
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, vec2(px(list_row_gap), px(list_row_gap)));
+    defer c.ImGui_PopStyleVar();
+    for (suggestions, 0..) |suggestion, i| {
+        c.ImGui_PushIDInt(@intCast(i));
+        defer c.ImGui_PopID();
+        const fits = suggestion.len <= buffer.len;
+        c.ImGui_BeginDisabled(!fits);
+        defer c.ImGui_EndDisabled();
+        if (c.ImGui_SelectableEx(print("{s}", .{suggestion}).ptr, std.ascii.eqlIgnoreCase(typed, suggestion), 0, vec2(0, 0)) and fits) {
+            setText(buffer, suggestion) catch unreachable;
+            edit.done = true;
+        }
+    }
+    return edit;
+}
+
+/// The gap between a field and the list or calendar it opens, in the design's pixels.
+const field_popup_gap = 2;
+
+/// A square button over the right end of the field drawn from `min` to `max`, which has to be
+/// drawn after `c.ImGui_SetNextItemAllowOverlap`. Returns true when it's clicked. The cursor stays
+/// where the field left it.
+fn endButton(id: [:0]const u8, min: Vec2, max: Vec2) bool {
+    const side = max.y - min.y;
+    const after = c.ImGui_GetCursorScreenPos();
+    defer c.ImGui_SetCursorScreenPos(after);
+    c.ImGui_SetCursorScreenPos(vec2(max.x - side, min.y));
+    return c.ImGui_InvisibleButton(id, vec2(side, side), 0);
+}
+
+/// A date field: type a year, a month or a day (YYYY, YYYY-MM or YYYY-MM-DD), or pick a day on
+/// the calendar the button at its end opens. The calendar marks `today`, and opens on it when
+/// the field has no date. `width` is in the design's pixels, and 0 fills the row.
+pub fn dateField(id: [:0]const u8, buffer: anytype, hint: [:0]const u8, width: f32, today: Date) TextEdit {
+    c.ImGui_PushID(id.ptr);
+    defer c.ImGui_PopID();
+    c.ImGui_SetNextItemWidth(if (width == 0) -std.math.floatMin(f32) else px(width));
+    c.ImGui_SetNextItemAllowOverlap();
+    _ = c.ImGui_InputTextWithHint("##value", hint.ptr, buffer, buffer.len + 1, 0);
+    var edit: TextEdit = .ofLastItem();
+    const min = c.ImGui_GetItemRectMin();
+    const max = c.ImGui_GetItemRectMax();
+    const side = max.y - min.y;
+    const shown = Date.parse(std.mem.sliceTo(buffer, 0));
+    if (endButton("##calendar", min, max)) {
+        _ = c.ImGui_OpenPopup("calendar", 0);
+        const start = if (shown) |d| d else today;
+        calendar_month = .{ start.year, start.month orelse today.month.? };
+    }
+    drawIcon(.calendar, vec2(max.x - side / 2, (min.y + max.y) / 2), if (c.ImGui_IsItemHovered(0)) theme.colors.text else theme.colors.text_secondary);
+    c.ImGui_SetNextWindowPosEx(vec2(max.x, max.y + px(field_popup_gap)), c.ImGuiCond_Always, vec2(1, 0));
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, vec2(px(calendar.padding), px(calendar.padding)));
+    defer c.ImGui_PopStyleVar();
+    if (!c.ImGui_BeginPopup("calendar", c.ImGuiWindowFlags_NoMove)) return edit;
+    defer c.ImGui_EndPopup();
+    if (drawCalendar(shown, today)) |picked| {
+        var written: [date.max_text]u8 = undefined;
+        setText(buffer, picked.format(&written)) catch {};
+        edit.done = true;
+        c.ImGui_CloseCurrentPopup();
+    }
+    return edit;
+}
+
+/// The month the open calendar shows. Only one can be open at a time.
+var calendar_month: struct { u16, u8 } = .{ std.time.epoch.epoch_year, 1 };
+
+/// A calendar's layout, in the design's pixels: its padding, a day's cell, the header's height,
+/// and the gap under the header and above the Today button.
+const calendar = struct {
+    const padding = 10;
+    const cell = 32;
+    const header = 30;
+    const gap = 6;
+    /// The most weeks a month spans.
+    const weeks = 6;
+};
+
+/// The weekdays' initials, Monday first, as ISO 8601 counts the week.
+const weekdays = [date.days_in_week][]const u8{ "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
+
+/// Draws the month in `calendar_month`, with arrows to the months either side, `selected` filled
+/// and `today` outlined. Returns the day picked, or today when Today is clicked.
+fn drawCalendar(selected: ?Date, today: Date) ?Date {
+    const list = c.ImGui_GetWindowDrawList();
+    const origin = c.ImGui_GetCursorScreenPos();
+    const cell = px(calendar.cell);
+    const width = cell * date.days_in_week;
+    const year, const month = calendar_month;
+
+    // The month's name, and the arrows to move a month.
+    fonts.push(.semibold);
+    const heading_text = print("{s} {d}", .{ date.monthName(month), year });
+    c.ImDrawList_AddText(list, vec2(origin.x + px(calendar.gap), @round(origin.y + (px(calendar.header) - c.ImGui_GetTextLineHeight()) / 2)), theme.imU32(theme.colors.text), heading_text);
+    fonts.pop();
+    const arrow = c.ImGui_GetFrameHeight();
+    c.ImGui_SetCursorScreenPos(vec2(origin.x + width - 2 * arrow, origin.y + (px(calendar.header) - arrow) / 2));
+    if (iconButton("previous month", .quiet, .chevron_left)) calendar_month = date.stepMonth(year, month, -1);
+    c.ImGui_SameLineEx(0, 0);
+    if (iconButton("next month", .quiet, .chevron_right)) calendar_month = date.stepMonth(year, month, 1);
+
+    var y = origin.y + px(calendar.header + calendar.gap);
+    fonts.pushSized(.regular, fonts.small_size);
+    for (weekdays, 0..) |name, i| {
+        const size = c.ImGui_CalcTextSize(print("{s}", .{name}));
+        c.ImDrawList_AddText(list, vec2(@round(origin.x + cell * @as(f32, @floatFromInt(i)) + (cell - size.x) / 2), y), theme.imU32(theme.colors.text_tertiary), print("{s}", .{name}));
+    }
+    y += c.ImGui_GetTextLineHeight() + px(calendar.gap);
+    fonts.pop();
+
+    var picked: ?Date = null;
+    const first = date.firstWeekday(year, month);
+    for (0..date.daysIn(year, month)) |i| {
+        const day: u8 = @intCast(i + 1);
+        const slot = first + i;
+        const min = vec2(origin.x + cell * @as(f32, @floatFromInt(slot % date.days_in_week)), y + cell * @as(f32, @floatFromInt(slot / date.days_in_week)));
+        const max = vec2(min.x + cell, min.y + cell);
+        c.ImGui_SetCursorScreenPos(min);
+        c.ImGui_PushIDInt(day);
+        if (c.ImGui_InvisibleButton("##day", vec2(cell, cell), 0)) picked = .{ .year = year, .month = month, .day = day };
+        c.ImGui_PopID();
+        const this: Date = .{ .year = year, .month = month, .day = day };
+        const is_selected = if (selected) |s| std.meta.eql(s, this) else false;
+        const inset = px(choice_inset);
+        const box_min = vec2(min.x + inset, min.y + inset);
+        const box_max = vec2(max.x - inset, max.y - inset);
+        if (is_selected) {
+            c.ImDrawList_AddRectFilledEx(list, box_min, box_max, theme.imU32(theme.colors.accent), px(control_rounding), 0);
+        } else if (c.ImGui_IsItemHovered(0)) {
+            c.ImDrawList_AddRectFilledEx(list, box_min, box_max, theme.imU32(theme.colors.control_hover), px(control_rounding), 0);
+        }
+        if (std.meta.eql(this, today) and !is_selected) c.ImDrawList_AddRectEx(list, box_min, box_max, theme.imU32(theme.colors.accent), px(control_rounding), 1, 0);
+        const label = print("{d}", .{day});
+        const size = c.ImGui_CalcTextSize(label);
+        c.ImDrawList_AddText(list, vec2(@round(min.x + (cell - size.x) / 2), @round(min.y + (cell - size.y) / 2)), theme.imU32(if (is_selected) theme.colors.on_accent else theme.colors.text), label);
+    }
+    y += cell * calendar.weeks + px(calendar.gap);
+    c.ImGui_SetCursorScreenPos(vec2(origin.x, y));
+    if (buttonOf(.normal, "Today", vec2(0, 0))) picked = today;
+    c.ImGui_SetCursorScreenPos(vec2(origin.x, c.ImGui_GetCursorScreenPos().y));
+    c.ImGui_Dummy(vec2(width, 0));
+    return picked;
+}
+
+/// How far a day's fill sits inside its cell, in the design's pixels.
+const choice_inset = 2;
+
+/// The first of `suggestions` that starts with `typed`, ignoring case, and is longer than it.
+fn completionOf(suggestions: []const []const u8, typed: []const u8) ?[]const u8 {
+    for (suggestions) |suggestion| {
+        if (suggestion.len > typed.len and std.ascii.startsWithIgnoreCase(suggestion, typed)) return suggestion;
+    }
+    return null;
+}
+
+/// ImGui's Tab callback for `suggestField`: swaps what's typed for its completion, in the
+/// completion's own case. Its user data is the suggestions.
+fn complete(data: [*c]c.ImGuiInputTextCallbackData) callconv(.c) c_int {
+    const suggestions: *const []const []const u8 = @ptrCast(@alignCast(data.*.UserData));
+    const typed = data.*.Buf[0..@intCast(data.*.BufTextLen)];
+    const whole = completionOf(suggestions.*, typed) orelse return 0;
+    c.ImGuiInputTextCallbackData_DeleteChars(data, 0, data.*.BufTextLen);
+    c.ImGuiInputTextCallbackData_InsertChars(data, 0, whole.ptr, whole.ptr + whole.len);
+    return 0;
 }
 
 /// A slider's thumb radius and how much it grows while it's held or hovered, the track's

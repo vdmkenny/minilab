@@ -13,6 +13,7 @@ const std = @import("std");
 const image = @import("image.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
+const Date = @import("date.zig").Date;
 const icc = @import("../io/codecs/icc.zig");
 
 pub const Metadata = struct {
@@ -105,7 +106,7 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
         try attribute(w, "aux:Lens", v);
     }
     if (m.shot) |v| {
-        if (isoDate(v) != null) {
+        if (Date.parse(v) != null) {
             try attribute(w, "exif:DateTimeOriginal", v);
             try attribute(w, "photoshop:DateCreated", v);
         } else try attribute(w, "minilab:Shot", v);
@@ -199,27 +200,6 @@ fn escaped(w: *std.Io.Writer, text: []const u8) std.Io.Writer.Error!void {
         0...8, 11, 12, 14...31, 127 => try w.writeByte(' '),
         else => try w.writeByte(ch),
     };
-}
-
-/// A date in one of ISO 8601's three precisions (a year, a month or a day), as `isoDate` finds it.
-const Date = struct { year: u16, month: ?u8 = null, day: ?u8 = null };
-
-fn isoDate(text: []const u8) ?Date {
-    if (text.len != 4 and text.len != 7 and text.len != 10) return null;
-    var date: Date = .{ .year = std.fmt.parseInt(u16, text[0..4], 10) catch return null };
-    if (text.len >= 7) {
-        if (text[4] != '-') return null;
-        const month = std.fmt.parseInt(u8, text[5..7], 10) catch return null;
-        if (month < 1 or month > 12) return null;
-        date.month = month;
-    }
-    if (text.len == 10) {
-        if (text[7] != '-') return null;
-        const day = std.fmt.parseInt(u8, text[8..10], 10) catch return null;
-        if (day < 1 or day > 31) return null;
-        date.day = day;
-    }
-    return date;
 }
 
 /// Returns `value` as a fraction: whole numbers over 1, and anything else to a hundredth.
@@ -355,7 +335,7 @@ const Entries = struct {
 /// The EXIF sub-directory's entries.
 fn exifEntries(e: *Entries, m: Metadata) !void {
     try e.add(.exif_version, .undefined, exif_version.len, exif_version);
-    if (m.shot) |text| if (isoDate(text)) |date| if (date.day) |day| {
+    if (m.shot) |text| if (Date.parse(text)) |date| if (date.day) |day| {
         // EXIF wants the time too, and lets unknown parts be spaces.
         try e.ascii(.date_time_original, try std.fmt.allocPrint(e.arena, "{d:0>4}:{d:0>2}:{d:0>2}   :  :  ", .{ date.year, date.month.?, day }));
     };
@@ -638,12 +618,6 @@ test "XMP escapes what the roll says and gives dates as dates" {
     const flagged = try xmp(gpa, rejected);
     defer gpa.free(flagged);
     try std.testing.expect(std.mem.indexOf(u8, flagged, "xmp:Rating=\"-1\"") != null);
-}
-
-test "only ISO dates count as dates" {
-    try std.testing.expectEqual(Date{ .year = 2026, .month = 10 }, isoDate("2026-10").?);
-    try std.testing.expectEqual(@as(?Date, null), isoDate("2026-13"));
-    try std.testing.expectEqual(@as(?Date, null), isoDate("Oct 2026"));
 }
 
 test "a TIFF gains EXIF and XMP and keeps its own tags" {

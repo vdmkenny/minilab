@@ -133,8 +133,19 @@ The GUI has five workspaces. They're mocked up in the "minilab GUI" design canva
 
 The steps for a roll on a scanner:
 
-1. **New roll.** Film type, stock (optional), format, camera, lens, date and notes. These are
-   saved in the roll's folder (section 11).
+1. **New roll.** Film type, stock (optional), format, camera, lens, the date it was shot,
+   copyright and notes. These are saved in the roll's folder (section 11).
+   - Camera, lens and copyright suggest the values the library's other rolls have, newest roll
+     first: pick one from the field's list, or type the start of one and press Tab. There's no
+     list of their own to keep: they come from the rolls, so they follow the library wherever it
+     goes. Export's details suggest them the same way.
+   - The date shot starts as today, in the computer's time zone. Type a year, a month or a day
+     (YYYY, YYYY-MM or YYYY-MM-DD), since you don't always know the day, or pick a day on the
+     calendar at the end of the field. Export's date shot has the same calendar.
+   - The copyright starts as the newest roll's. Before any roll has one, it starts as the full
+     name of your account on the computer.
+   - To change them later, the pencil on a roll's card (shown while the mouse is over it) opens
+     the roll's details in the same panel. Each one is saved when you leave its box.
 2. **Preview.** Scan the scanner's whole film area at low resolution.
    - On the V200 that's the 33.02 × 244.348 mm transparency window (the backend's `-x` and `-y`
      range). For comparison, Epson's own software previews a strip at 384 × 2885 px, 300 dpi.
