@@ -221,14 +221,13 @@ const App = struct {
         if (keys.contains(.hide_all)) app.panels = if (app.panels == .viewer) .all else .viewer;
         if (keys.contains(.new_roll)) {
             app.workspace = .rolls;
-            app.rolls.show_form = true;
-            app.rolls.form = .{};
+            app.rolls.openNewRoll(ctx.gpa);
         }
         if (keys.contains(.find)) {
             app.workspace = .rolls;
             app.rolls.focus_search = true;
         }
-        if (keys.contains(.cancel) and app.workspace == .rolls) app.rolls.show_form = false;
+        if (keys.contains(.cancel) and app.workspace == .rolls) app.rolls.closePanel(ctx.gpa);
         if (app.workspace == .develop) {
             if (app.develop.handle(ctx.gpa, ctx.io, ctx.library, keys)) |message| app.notice.set("{s}", .{message});
         }

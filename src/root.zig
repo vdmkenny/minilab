@@ -16,6 +16,8 @@ pub const calibration = @import("core/calibration.zig");
 pub const scanner_settings = @import("core/scanner_settings.zig");
 /// The app's preferences, the same in every library.
 pub const preferences = @import("core/preferences.zig");
+/// Calendar dates, as rolls keep them.
+pub const date = @import("core/date.zig");
 /// Small JSON settings files, read and written whole.
 pub const json_file = @import("core/json_file.zig");
 /// Medians, percentiles and histogram ranks.

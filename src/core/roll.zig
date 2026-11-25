@@ -25,6 +25,8 @@ const image = @import("image.zig");
 const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
+const date = @import("date.zig");
+const Date = date.Date;
 const pnm = @import("../io/pnm.zig");
 const tiff = @import("../io/codecs/tiff.zig");
 const icc = @import("../io/codecs/icc.zig");
@@ -119,6 +121,22 @@ pub const Info = struct {
 /// The roll's details you can edit after making it, by their names in `Info`.
 pub const Detail = enum { camera, lens, shot, copyright, notes };
 
+/// The different values `which` has across `rolls`, to suggest when filling it in on another
+/// roll: in the rolls' order, which `listRolls` gives newest first, and each once whatever its
+/// case. They point into the rolls.
+pub fn detailValues(gpa: std.mem.Allocator, rolls: []const Roll, which: Detail) ![]const []const u8 {
+    var values: std.ArrayList([]const u8) = .empty;
+    errdefer values.deinit(gpa);
+    for (rolls) |*r| {
+        const value = std.mem.trim(u8, r.detail(which) orelse continue, " \t\r\n");
+        if (value.len == 0) continue;
+        for (values.items) |seen| {
+            if (std.ascii.eqlIgnoreCase(seen, value)) break;
+        } else try values.append(gpa, value);
+    }
+    return values.toOwnedSlice(gpa);
+}
+
 /// One frame: which scan it comes from, its crop, and how it's developed.
 pub const FrameSettings = struct {
     /// The scan's file in the roll's scans folder, or null for a frame whose own file can't be
@@ -193,7 +211,10 @@ pub const Roll = struct {
         } else |_| {}
         roll.info = info;
         roll.info.name = try arena.dupe(u8, info.name);
-        if (roll.info.created == null) roll.info.created = try today(arena, io);
+        if (roll.info.created == null) {
+            var buffer: [date.max_text]u8 = undefined;
+            roll.info.created = try arena.dupe(u8, Date.today(io).format(&buffer));
+        }
         const cwd = Io.Dir.cwd();
         for ([_][]const u8{ scans_dir, frames_dir, thumbs_dir, exports_dir }) |sub| {
             try cwd.createDirPath(io, try std.fs.path.join(arena, &.{ roll.path, sub }));
@@ -628,15 +649,6 @@ test "a frame whose gap fell on something else takes the roll's base" {
     try std.testing.expectEqual(median, roll.baseFor(4).?);
 }
 
-/// Today's date in UTC, YYYY-MM-DD.
-fn today(arena: std.mem.Allocator, io: Io) ![]const u8 {
-    const seconds = Io.Clock.real.now(io).toSeconds();
-    const day = (std.time.epoch.EpochSeconds{ .secs = @intCast(@max(seconds, 0)) }).getEpochDay();
-    const year_day = day.calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    return std.fmt.allocPrint(arena, "{d:0>4}-{d:0>2}-{d:0>2}", .{ year_day.year, month_day.month.numeric(), month_day.day_index + 1 });
-}
-
 /// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
 /// The file name of the thumbnail of the scan called `scan`, in `buffer`: the scan's own name with
 /// .ppm, which a finished picture's JPEG scan gets too.
@@ -743,6 +755,27 @@ fn newerFirst(_: void, a: Roll, b: Roll) bool {
     const b_date = b.info.created orelse "";
     if (!std.mem.eql(u8, a_date, b_date)) return std.mem.lessThan(u8, b_date, a_date);
     return std.mem.lessThan(u8, b.info.name, a.info.name);
+}
+
+test "a detail's values come from the rolls in order, each once" {
+    const gpa = std.testing.allocator;
+    // Newest first, as listRolls gives them.
+    const rolls = [_]Roll{
+        .{ .arena = undefined, .path = "", .info = .{ .name = "New", .camera = " Pentax MX ", .lens = "   " } },
+        .{ .arena = undefined, .path = "", .info = .{ .name = "Mid", .camera = "nikon f3" } },
+        .{ .arena = undefined, .path = "", .info = .{ .name = "Old", .camera = "Nikon F3", .lens = "50mm" } },
+        .{ .arena = undefined, .path = "", .info = .{ .name = "Oldest", .camera = "Olympus XA" } },
+    };
+    const cameras = try detailValues(gpa, &rolls, .camera);
+    defer gpa.free(cameras);
+    try std.testing.expectEqual(@as(usize, 3), cameras.len);
+    try std.testing.expectEqualStrings("Pentax MX", cameras[0]);
+    // The newer roll's spelling wins.
+    try std.testing.expectEqualStrings("nikon f3", cameras[1]);
+    try std.testing.expectEqualStrings("Olympus XA", cameras[2]);
+    const lenses = try detailValues(gpa, &rolls, .lens);
+    defer gpa.free(lenses);
+    try std.testing.expectEqual(@as(usize, 1), lenses.len);
 }
 
 test "a roll round-trips through its folder" {

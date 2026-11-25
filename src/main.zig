@@ -784,6 +784,7 @@ test {
     _ = @import("app/frame.zig");
     _ = @import("app/holes.zig");
     _ = @import("platform/trash.zig");
+    _ = @import("platform/account.zig");
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
     _ = @import("app/update_view.zig");

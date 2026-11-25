@@ -9,11 +9,18 @@ const trash = @import("../platform/trash.zig");
 
 const image = minilab.image;
 const roll = minilab.roll;
+const gui = @import("../ui/gui.zig");
 const labels = @import("labels.zig");
 
 pub const Key = struct { roll: usize, frame: usize };
 
 pub const Library = struct {
+    /// The values `which` has across the rolls, newest first, to suggest when filling it in.
+    /// They last for this frame.
+    pub fn suggestions(library: *const Library, which: roll.Detail) []const []const u8 {
+        return roll.detailValues(gui.frameAllocator(), library.rolls.items, which) catch &.{};
+    }
+
     path: []const u8,
     /// The user's home folder, if known: Linux's Trash is in it.
     home: ?[]const u8,

@@ -12,6 +12,10 @@ const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
 const holes = @import("holes.zig");
 const Dialog = @import("../platform/file_dialog.zig").Dialog;
+const account = @import("../platform/account.zig");
+const clock = @import("../platform/clock.zig");
+const roll_details = @import("roll_details.zig");
+const icons = @import("../ui/icons.zig");
 
 const roll = minilab.roll;
 const develop = minilab.develop;
@@ -52,9 +56,9 @@ const card_row_gap = 3;
 const card_bar_gap = 6;
 const card_bar = 3;
 const card_rounding = 6;
-/// The Delete button's distance from the card's corner, and its bin's half height.
-const delete_inset = 6;
-const bin_half = 7;
+/// The Edit and Delete buttons' distance from the card's corner, and the gap between them.
+const card_button_inset = 6;
+const card_button_gap = 2;
 /// The filmstrip: its gap from the card, the frame numbers under it, the corners of the film and
 /// the pictures, and the "+N more" box.
 const strip_gap = 12;
@@ -86,8 +90,11 @@ pub const State = struct {
     search: [gui.text_capacity:0]u8 = @splat(0),
     /// The film size shown, or null for all of them.
     size_filter: ?formats.FilmSize = null,
-    show_form: bool = false,
+    /// What the panel on the right shows, if anything.
+    panel: Panel = .closed,
     form: Form = .{},
+    /// The boxes for the details of the roll in the details panel.
+    details: roll_details.Boxes = .{},
     /// Move the keyboard focus to the search field on the next frame.
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
@@ -99,6 +106,41 @@ pub const State = struct {
     pub fn deinit(state: *State, gpa: std.mem.Allocator) void {
         state.flat_dialog.deinit(gpa);
         state.stopDeleting(gpa);
+        state.closePanel(gpa);
+    }
+
+    /// Opens the New roll panel with a fresh form, or closes it when it's already open.
+    pub fn toggleNewRoll(state: *State, gpa: std.mem.Allocator) void {
+        const was_open = state.panel == .new_roll;
+        state.closePanel(gpa);
+        if (!was_open) state.openNewRoll(gpa);
+    }
+
+    /// Opens the New roll panel with a fresh form.
+    pub fn openNewRoll(state: *State, gpa: std.mem.Allocator) void {
+        state.closePanel(gpa);
+        state.form = .{};
+        state.panel = .new_roll;
+    }
+
+    /// Opens the details panel for the roll in folder `path`.
+    fn showDetails(state: *State, gpa: std.mem.Allocator, path: []const u8) void {
+        const copy = gpa.dupe(u8, path) catch return;
+        state.closePanel(gpa);
+        state.details = .{};
+        state.panel = .{ .details = copy };
+    }
+
+    fn isShowingDetails(state: *const State, path: []const u8) bool {
+        return switch (state.panel) {
+            .details => |showing| std.mem.eql(u8, showing, path),
+            else => false,
+        };
+    }
+
+    pub fn closePanel(state: *State, gpa: std.mem.Allocator) void {
+        if (state.panel == .details) gpa.free(state.panel.details);
+        state.panel = .closed;
     }
 
     fn startDeleting(state: *State, gpa: std.mem.Allocator, path: []const u8) void {
@@ -118,6 +160,14 @@ pub const State = struct {
     }
 };
 
+/// What the panel on the right of the Rolls page shows.
+const Panel = union(enum) {
+    closed,
+    new_roll,
+    /// The details of the roll in this folder, to edit. It's kept by path, as Delete's roll is.
+    details: []u8,
+};
+
 /// The fields for the new roll.
 const Form = struct {
     name: [gui.text_capacity:0]u8 = @splat(0),
@@ -128,13 +178,16 @@ const Form = struct {
     format: usize = 0,
     camera: [gui.text_capacity:0]u8 = @splat(0),
     lens: [gui.text_capacity:0]u8 = @splat(0),
+    /// The day the roll was shot, as Export takes it: YYYY, YYYY-MM or YYYY-MM-DD.
+    shot: [gui.text_capacity:0]u8 = @splat(0),
     copyright: [gui.text_capacity:0]u8 = @splat(0),
     notes: [gui.text_capacity * 4:0]u8 = @splat(0),
     input: roll.Input = .scanner,
     /// The flat field for a camera roll: a file with a shot of the light source and no film.
     flat: [path_field:0]u8 = @splat(0),
-    /// Whether the default name has been filled in since the form was last opened.
-    named: bool = false,
+    /// Whether the defaults (the next roll's name, today's date and the copyright) have been
+    /// filled in since the form was last opened.
+    filled: bool = false,
     /// Why the last click on Create didn't make the roll.
     problem: ?[]const u8 = null,
 };
@@ -178,13 +231,13 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     var action: Action = .none;
     const available = c.ImGui_GetContentRegionAvail();
     const top = c.ImGui_GetCursorScreenPos();
-    const form = if (state.show_form) gui.px(form_width) else 0;
+    const form = if (state.panel == .closed) 0 else gui.px(form_width);
 
     c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ChildBg, theme.colors.page);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(page_padding_x), gui.px(page_padding_y)));
     _ = c.ImGui_BeginChild("sheet", gui.vec2(available.x - form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
     c.ImGui_PopStyleVar();
-    drawTitleRow(state, library);
+    drawTitleRow(state, library, gpa);
     c.ImGui_Dummy(gui.vec2(0, gui.px(title_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
     var shown: usize = 0;
@@ -205,14 +258,20 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
-    if (state.show_form) {
+    if (state.panel != .closed) {
         c.ImGui_SetCursorScreenPos(gui.vec2(top.x + available.x - form, top.y));
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(form_padding), gui.px(form_padding)));
-        _ = c.ImGui_BeginChild("new roll", gui.vec2(form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
+        _ = c.ImGui_BeginChild("panel", gui.vec2(form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
         c.ImGui_PopStyleVar();
         const window = c.ImGui_GetWindowPos();
         c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.colors.divider));
-        if (drawForm(state, library, gpa, io)) |created| action = .{ .created = created };
+        switch (state.panel) {
+            .closed => {},
+            .new_roll => if (drawForm(state, library, gpa, io)) |created| {
+                action = .{ .created = created };
+            },
+            .details => |path| drawDetails(state, library, gpa, io, path),
+        }
         c.ImGui_EndChild();
     }
     return action;
@@ -230,7 +289,7 @@ fn matches(state: *const State, info: roll.Info) bool {
 
 /// Draws the title row: "Rolls" and where the library is, then search, the film-size filter and
 /// New roll on the right.
-fn drawTitleRow(state: *State, library: *Library) void {
+fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     const row_top = c.ImGui_GetCursorPosY();
     const height = c.ImGui_GetFrameHeight();
     const right = c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX();
@@ -269,8 +328,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
     c.ImGui_SameLineEx(0, gui.px(title_row_gap));
     const corner = c.ImGui_GetCursorScreenPos();
     if (gui.buttonOf(.primary, "##new roll", gui.vec2(new_width / gui.scale, height / gui.scale))) {
-        state.show_form = !state.show_form;
-        state.form = .{};
+        state.toggleNewRoll(gpa);
     }
     shortcuts.tooltip("New roll", .new_roll);
     // The plus sign, then the label: the button's padding in, the icon, then a gap.
@@ -310,8 +368,8 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
     return confirmed;
 }
 
-/// The Delete button on a roll's card: a small bin, shown while the card is hovered.
-const delete_size = 22;
+/// The Edit and Delete buttons on a roll's card, shown while the card is hovered.
+const card_button_size = 22;
 
 /// Draws one roll: its card, then its filmstrip.
 fn drawRow(state: *State, library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, drop: ?gui.Vec2) ?Action {
@@ -367,22 +425,32 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
     const share = if (total == 0) 0 else @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
     gui.progressBar(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(card_bar)), share);
 
-    // Delete, in the card's top right corner while the mouse is over the card.
+    // Edit and Delete, in the card's top right corner while the mouse is over the card.
     const mouse = c.ImGui_GetMousePos();
     const over_card = mouse.x >= origin.x and mouse.x < origin.x + gui.px(card_width) and mouse.y >= origin.y and mouse.y < origin.y + card_height;
-    if (over_card or state.isDeleting(r.path)) {
-        const size = gui.px(delete_size);
-        const corner = gui.vec2(origin.x + gui.px(card_width - delete_inset) - size, origin.y + gui.px(delete_inset));
-        c.ImGui_SetCursorScreenPos(corner);
-        if (c.ImGui_InvisibleButton("delete", gui.vec2(size, size), 0)) state.startDeleting(gpa, r.path);
-        const on_button = c.ImGui_IsItemHovered(0);
-        if (on_button) {
-            gui.showTooltip("Delete roll");
-            c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.colors.control_hover), gui.px(gui.choice_rounding), 0);
-        }
-        drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(bin_half), if (on_button) theme.red else theme.colors.text_tertiary);
+    if (over_card or state.isDeleting(r.path) or state.isShowingDetails(r.path)) {
+        const size = gui.px(card_button_size);
+        const delete_corner = gui.vec2(origin.x + gui.px(card_width - card_button_inset) - size, origin.y + gui.px(card_button_inset));
+        if (cardButton(list, "delete", "Delete roll", .trash, delete_corner, theme.red)) state.startDeleting(gpa, r.path);
+        const edit_corner = gui.vec2(delete_corner.x - size - gui.px(card_button_gap), delete_corner.y);
+        if (cardButton(list, "edit", "Edit details", .pencil, edit_corner, theme.colors.text)) state.showDetails(gpa, r.path);
     }
     return action;
+}
+
+/// One of the small buttons on a card, at `corner`: `icon`, in `hover` while it's hovered.
+/// Returns true when it's clicked.
+fn cardButton(list: *c.ImDrawList, id: [:0]const u8, name: []const u8, icon: icons.Icon, corner: gui.Vec2, hover: theme.Color) bool {
+    const size = gui.px(card_button_size);
+    c.ImGui_SetCursorScreenPos(corner);
+    const clicked = c.ImGui_InvisibleButton(id, gui.vec2(size, size), 0);
+    const on_button = c.ImGui_IsItemHovered(0);
+    if (on_button) {
+        gui.showTooltip(name);
+        c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.colors.control_hover), gui.px(gui.choice_rounding), 0);
+    }
+    gui.drawIcon(icon, gui.vec2(corner.x + size / 2, corner.y + size / 2), if (on_button) hover else theme.colors.text_tertiary);
+    return clicked;
 }
 
 /// Draws roll `index`'s filmstrip beside its card, up to `right`, with "+N more" when the frames
@@ -466,48 +534,18 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
     return action;
 }
 
-/// Draws a waste bin about `half` × 2 high, centred on `centre`: a lid with a handle, and a body
-/// with two lines down it.
-fn drawBin(list: *c.ImDrawList, centre: gui.Vec2, half: f32, colour: theme.Color) void {
-    const ink = theme.imU32(colour);
-    const thickness = gui.px(bin.thickness);
-    const top = centre.y - half;
-    const lid = top + half * bin.lid;
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x - half, lid), gui.vec2(centre.x + half, lid), ink, thickness);
-    c.ImDrawList_AddRectEx(list, gui.vec2(centre.x - half * bin.handle, top), gui.vec2(centre.x + half * bin.handle, lid), ink, gui.px(bin.handle_rounding), thickness, 0);
-    const body_left = centre.x - half * bin.body;
-    const body_right = centre.x + half * bin.body;
-    const bottom = centre.y + half;
-    c.ImDrawList_AddRectEx(list, gui.vec2(body_left, lid), gui.vec2(body_right, bottom), ink, gui.px(bin.body_rounding), thickness, 0);
-    for ([_]f32{ -bin.lines, bin.lines }) |at| {
-        const x = centre.x + half * at;
-        c.ImDrawList_AddLineEx(list, gui.vec2(x, lid + half * bin.lid), gui.vec2(x, bottom - half * bin.line_end), ink, thickness);
-    }
-}
-
-/// The bin's drawing, as shares of its half height: the lid's height, the handle's and the
-/// body's half widths, where the lines down the body are, and how far above the bottom they end.
-/// Then its stroke and corners, in the design's pixels.
-const bin = struct {
-    const lid = 0.35;
-    const handle = 0.3;
-    const body = 0.75;
-    const lines = 0.28;
-    const line_end = 0.3;
-    const thickness = 1.4;
-    const handle_rounding = 1;
-    const body_rounding = 1.5;
-};
-
 /// Draws the new-roll panel. Returns the new roll's index once it's made.
 fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?Created {
     const form = &state.form;
-    if (!form.named) {
+    if (!form.filled) {
         _ = std.fmt.bufPrintSentinel(&form.name, "Roll {d:0>3}", .{library.rolls.items.len + 1}, 0) catch {};
-        form.named = true;
+        var today: [minilab.date.max_text]u8 = undefined;
+        gui.setText(&form.shot, clock.today(io).format(&today)) catch {};
+        fillCopyright(form, library);
+        form.filled = true;
     }
 
-    drawFormTitle(state);
+    drawPanelTitle(state, gpa, "New roll");
 
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(form_spacing), gui.px(form_spacing)));
     defer c.ImGui_PopStyleVar();
@@ -538,12 +576,15 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     for (choices, 0..) |id, i| names[i] = labels.format(id);
     gui.rowLabel("Format");
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
-    gui.rowLabel("Camera");
-    _ = gui.textField("camera", &form.camera, "[Camera]", 0);
-    gui.rowLabel("Lens");
-    _ = gui.textField("lens", &form.lens, "[Lens]", 0);
-    gui.rowLabel("Copyright");
-    _ = gui.textField("copyright", &form.copyright, "[Your name]", 0);
+    for ([_]struct { roll.Detail, [:0]u8, [:0]const u8 }{
+        .{ .camera, &form.camera, "[Camera]" },
+        .{ .lens, &form.lens, "[Lens]" },
+        .{ .shot, &form.shot, "YYYY-MM-DD" },
+        .{ .copyright, &form.copyright, "[Your name]" },
+    }) |row| {
+        gui.rowLabel(roll_details.label(row[0]));
+        _ = roll_details.field(row[0], row[1], row[2], 0, library, io);
+    }
     const notes_x = c.ImGui_GetCursorPosX();
     gui.textColored(theme.colors.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
@@ -566,13 +607,14 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
 }
 
 /// Draws the panel's title and its close button.
-fn drawFormTitle(state: *State) void {
+/// Draws the panel's title, `title`, with its close button.
+fn drawPanelTitle(state: *State, gpa: std.mem.Allocator, title: []const u8) void {
     const close_size = c.ImGui_GetFrameHeight();
     c.ImGui_AlignTextToFramePadding();
-    gui.title("New roll", fonts.title_size);
+    gui.title(title, fonts.title_size);
     c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - close_size - c.ImGui_GetStyle().*.ItemSpacing.x, 0);
     const corner = c.ImGui_GetCursorScreenPos();
-    if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
+    if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.closePanel(gpa);
     const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
     gui.cross(c.ImGui_GetWindowDrawList(), centre, gui.px(close_arm), gui.px(close_thickness), theme.colors.text_secondary);
 }
@@ -611,6 +653,7 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
         .input = form.input,
         .camera = optional(&form.camera),
         .lens = optional(&form.lens),
+        .shot = optional(&form.shot),
         .copyright = optional(&form.copyright),
         .notes = optional(&form.notes),
     }) catch |err| {
@@ -633,7 +676,7 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
     made.close();
     // The roll is made either way, so the form is done: leaving it open would only say the name
     // is taken next time.
-    state.show_form = false;
+    state.closePanel(gpa);
     state.form = .{};
     // If the library can't be read now, the roll shows up when it's next read.
     library.reload(gpa, io) catch |err| {
@@ -641,6 +684,29 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
         return null;
     };
     return .{ .roll = library.find(path) orelse return null, .flat_failed = flat_failed };
+}
+
+/// Starts the copyright as the newest roll's, or before any roll has one, as the account's full
+/// name. It's usually the same on every roll.
+fn fillCopyright(form: *Form, library: *const Library) void {
+    var name_buffer: [gui.text_capacity]u8 = undefined;
+    const used = library.suggestions(.copyright);
+    const copyright = if (used.len > 0) used[0] else account.fullName(&name_buffer) orelse return;
+    gui.setText(&form.copyright, copyright) catch {};
+}
+
+/// Draws the details panel for the roll in folder `path`: its details, each saved when you leave
+/// its box. It closes if the roll has gone.
+fn drawDetails(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, path: []const u8) void {
+    const index = library.find(path) orelse return state.closePanel(gpa);
+    const r = &library.rolls.items[index];
+    drawPanelTitle(state, gpa, r.info.name);
+    c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(form_spacing), gui.px(form_spacing)));
+    defer c.ImGui_PopStyleVar();
+    for (std.enums.values(roll.Detail)) |which| {
+        gui.rowLabel(roll_details.label(which));
+        state.details.draw(which, r, library, io, "Not set", 0);
+    }
 }
 
 /// Sets the shot in the file at `path` as the flat field of roll `r`.
