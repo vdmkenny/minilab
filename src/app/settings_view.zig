@@ -320,7 +320,7 @@ fn drawAbout() void {
     if (gui.iconButton("website", .normal, .globe)) gui.openUrl(website);
     gui.tooltip(i18n.t.settings.website);
     c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
-    if (gui.iconButton("source code", .normal, .github)) gui.openUrl(source);
+    if (gui.iconButton("source code", .normal, .code)) gui.openUrl(source);
     gui.tooltip(i18n.t.settings.source_code);
     c.ImGui_Dummy(gui.vec2(0, gui.px(about_gap) - c.ImGui_GetStyle().*.ItemSpacing.y));
     gui.heading(i18n.t.settings.built_with);

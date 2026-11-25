@@ -68,6 +68,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(exe);
 
     addSteps(b, exe, &.{ core, app, looks.tool });
+    addTranslationTemplate(b);
     addApp(b, exe, target);
 }
 
@@ -96,6 +97,17 @@ fn cModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builti
     translator.linkLibrary(sdl);
     for (interfaceIncludes(b)) |include| translator.addIncludePath(include);
     return translator.mod;
+}
+
+/// Adds `zig build translation-template`, which prints every message in English as a language
+/// file to start a translation from (docs/translating.md).
+fn addTranslationTemplate(b: *std.Build) void {
+    const template = b.addExecutable(.{
+        .name = "translation-template",
+        .root_module = b.createModule(.{ .root_source_file = b.path("src/i18n/template.zig"), .target = b.graph.host }),
+    });
+    const run = b.addRunArtifact(template);
+    b.step("translation-template", "Print every message in English, as a language file to translate").dependOn(&run.step);
 }
 
 /// Adds `zig build run`, which runs `exe`, and `zig build test` and `zig build check` for the

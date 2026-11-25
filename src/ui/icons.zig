@@ -1,7 +1,7 @@
 //! The interface's icons, from Lucide (lucide.dev): one consistent set of outline icons, drawn
 //! from its icon font. Only clear-cut icons stand in for words: crop, turn, mirror, pick a
 //! colour, copy, delete, edit, zoom, settings, close, the appearances, the pages of Settings, the
-//! links to minilab's website and its code on GitHub, and the calendar.
+//! links to minilab's website and its source code, and the calendar.
 
 const std = @import("std");
 const c = @import("c");
@@ -27,7 +27,7 @@ pub const Icon = enum(u21) {
     sun_moon = 0xe2b2,
     info = 0xe0fe,
     globe = 0xe0eb,
-    github = 0xe0e9,
+    code = 0xe097,
     calendar = 0xe067,
     chevron_left = 0xe072,
     chevron_right = 0xe073,
