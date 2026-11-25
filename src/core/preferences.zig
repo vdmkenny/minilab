@@ -1,6 +1,6 @@
-//! The app's preferences: how it looks. Unlike a library's settings, they belong to the user's
-//! account and hold for every library, so they're kept in preferences.json in the account's
-//! configuration folder.
+//! The app's preferences: how it looks and which language it speaks. Unlike a library's
+//! settings, they belong to the user's account and hold for every library, so they're kept in
+//! preferences.json in the account's configuration folder.
 
 const std = @import("std");
 const Io = std.Io;
@@ -25,6 +25,44 @@ pub const Appearance = enum {
     }
 };
 
+/// The languages the interface comes in. English is the one the others fall back to, for any
+/// message they don't have.
+pub const Language = enum {
+    en,
+    nl,
+    fr,
+    de,
+    it,
+    es,
+    ja,
+
+    /// The language's name in itself, as a list of languages shows it.
+    pub fn autonym(language: Language) [:0]const u8 {
+        return switch (language) {
+            .en => "English",
+            .nl => "Nederlands",
+            .fr => "Français",
+            .de => "Deutsch",
+            .it => "Italiano",
+            .es => "Español",
+            .ja => "日本語",
+        };
+    }
+
+    /// The language with ISO 639-1 code `code`, like "nl" in the locale nl_BE, if there's one.
+    pub fn ofCode(code: []const u8) ?Language {
+        inline for (comptime std.enums.values(Language)) |language| {
+            if (std.ascii.eqlIgnoreCase(code, @tagName(language))) return language;
+        }
+        return null;
+    }
+
+    /// Whether its script needs a font beyond the interface's own, which covers Latin.
+    pub fn needsCjkFont(language: Language) bool {
+        return language == .ja;
+    }
+};
+
 /// The preferences, as preferences.json keeps them. The defaults are for a first start.
 pub const Preferences = struct {
     /// Dark by default: a light interface around a photo makes it look darker and flatter than
@@ -32,6 +70,8 @@ pub const Preferences = struct {
     appearance: Appearance = .dark,
     /// Keep the viewer's background dark even when the interface is light.
     always_dark_viewer: bool = true,
+    /// The interface's language, or null for the system's.
+    language: ?Language = null,
 };
 
 /// What the configuration folder depends on, from the environment.
@@ -126,6 +166,12 @@ test "without a file to keep them in, preferences still change for the session" 
     var saved: Saved = try .load(std.testing.allocator, std.testing.io, null);
     try saved.set(std.testing.allocator, std.testing.io, .{ .appearance = .system });
     try std.testing.expectEqual(Appearance.system, saved.values.appearance);
+}
+
+test "a locale's language code picks the language" {
+    try std.testing.expectEqual(Language.nl, Language.ofCode("nl").?);
+    try std.testing.expectEqual(Language.ja, Language.ofCode("JA").?);
+    try std.testing.expectEqual(@as(?Language, null), Language.ofCode("pt"));
 }
 
 test "the configuration folder follows the system" {

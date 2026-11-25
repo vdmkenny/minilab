@@ -10,27 +10,32 @@ const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
+const i18n = @import("../i18n/i18n.zig");
 const version = @import("../version.zig");
 const Icon = @import("../ui/icons.zig").Icon;
 
 const preferences = minilab.preferences;
 const Appearance = preferences.Appearance;
+const Language = preferences.Language;
 
 /// The pages, in the order the column lists them.
 const Page = enum {
     appearance,
+    language,
     about,
 
     fn label(page: Page) [:0]const u8 {
         return switch (page) {
-            .appearance => "Appearance",
-            .about => "About",
+            .appearance => i18n.t.settings.appearance,
+            .language => i18n.t.settings.language,
+            .about => i18n.t.settings.about,
         };
     }
 
     fn icon(page: Page) Icon {
         return switch (page) {
             .appearance => .sun_moon,
+            .language => .languages,
             .about => .info,
         };
     }
@@ -39,7 +44,8 @@ const Page = enum {
     /// has its own title.
     fn heading(page: Page) ?[]const u8 {
         return switch (page) {
-            .appearance => "APPEARANCE",
+            .appearance => i18n.t.settings.appearance_heading,
+            .language => i18n.t.settings.language_heading,
             .about => null,
         };
     }
@@ -47,7 +53,7 @@ const Page = enum {
     /// Whether the column keeps the page at its foot, under a line, apart from the settings.
     fn atFoot(page: Page) bool {
         return switch (page) {
-            .appearance => false,
+            .appearance, .language => false,
             .about => true,
         };
     }
@@ -94,7 +100,7 @@ pub fn look(values: preferences.Preferences, system_light: bool) theme.Look {
 
 /// Draws the Settings window while it's open. Changes are kept straight away, so it has no OK
 /// button: the close button or Esc puts it away.
-pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context) void {
+pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context, system_language: ?Language) void {
     if (!state.open) return;
     if (!begin()) {
         state.open = false;
@@ -130,6 +136,7 @@ pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context) void
     }
     switch (state.page) {
         .appearance => drawAppearance(&values),
+        .language => drawLanguage(&values, system_language),
         .about => drawAbout(),
     }
     c.ImGui_EndChild();
@@ -141,7 +148,7 @@ pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context) void
     }
     saved.set(ctx.gpa, ctx.io, values) catch |err| {
         std.log.warn("can't save the preferences: {t}", .{err});
-        ctx.notice.set("Settings not saved", .{});
+        ctx.notice.set("{s}", .{i18n.t.settings.not_saved});
     };
 }
 
@@ -170,7 +177,7 @@ fn drawTitleBar(origin: gui.Vec2, width: f32) bool {
     const list = c.ImGui_GetWindowDrawList();
     const middle = origin.y + gui.px(layout.title_height) / 2;
     fonts.pushSized(.semibold, fonts.title_size);
-    const title = "Settings";
+    const title = i18n.t.settings.title;
     const title_size = c.ImGui_CalcTextSize(title);
     const title_x = origin.x + gui.px(layout.title_padding);
     c.ImDrawList_AddText(list, gui.vec2(title_x, @round(middle - title_size.y / 2)), theme.imU32(theme.colors.text), title);
@@ -188,7 +195,7 @@ fn drawTitleBar(origin: gui.Vec2, width: f32) bool {
     const side = c.ImGui_GetFrameHeight();
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + width - gui.px(layout.close_inset) - side, @round(middle - side / 2)));
     const closed = gui.iconButton("close", .quiet, .x);
-    shortcuts.tooltip("Close", .cancel);
+    shortcuts.tooltip(i18n.t.common.close, .cancel);
     return closed;
 }
 
@@ -223,7 +230,7 @@ fn drawItem(state: *State, page: Page, min: gui.Vec2, width: f32) void {
     const list = c.ImGui_GetWindowDrawList();
     const max = gui.vec2(min.x + width, min.y + gui.px(layout.item_height));
     c.ImGui_SetCursorScreenPos(min);
-    if (c.ImGui_InvisibleButton(page.label(), gui.vec2(width, max.y - min.y), 0)) state.page = page;
+    if (c.ImGui_InvisibleButton(gui.print("##{t}", .{page}), gui.vec2(width, max.y - min.y), 0)) state.page = page;
     const current = page == state.page;
     const hovered = c.ImGui_IsItemHovered(0);
     if (current or hovered) c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(if (current) theme.colors.control else theme.colors.control_hover), gui.px(gui.control_rounding), 0);
@@ -243,21 +250,50 @@ const appearances = [_]struct { Appearance, Icon }{
     .{ .light, .sun },
 };
 
+/// The languages in the order the page lists them.
+const languages = std.enums.values(Language);
+/// The language menu's width, in the design's pixels.
+const language_width = 220;
+
+/// The language the interface uses with `values`, when the system's is `system`: the one picked,
+/// or the system's, or English. A language that needs a font the computer doesn't have, like
+/// Japanese, falls back to English too.
+pub fn language(values: preferences.Preferences, system: ?Language) Language {
+    const wanted = values.language orelse system orelse .en;
+    if (wanted.needsCjkFont() and !fonts.hasJapanese()) return .en;
+    return wanted;
+}
+
+/// The Language page: System, which follows the computer, then each language by its own name.
+fn drawLanguage(values: *preferences.Preferences, system: ?Language) void {
+    gui.rowLabel(i18n.t.settings.language);
+    var names: [languages.len + 1][]const u8 = undefined;
+    const system_or_english: Language = system orelse .en;
+    names[0] = gui.say(i18n.t.settings.system_language, .{system_or_english.autonym()});
+    for (names[1..], languages) |*name, each| name.* = each.autonym();
+    const chosen = if (values.language) |each| gui.indexIn(Language, languages, each) + 1 else 0;
+    if (gui.combo("language", &names, chosen, language_width)) |picked| {
+        values.language = if (picked == 0) null else languages[picked - 1];
+    }
+    const wanted = values.language orelse system orelse .en;
+    if (language(values.*, system) != wanted) drawWarning(i18n.t.settings.no_japanese_font);
+}
+
 /// The gap after the warning's icon, in the design's pixels.
 const warning_gap = 6;
 
 fn drawAppearance(values: *preferences.Preferences) void {
-    gui.rowLabel("Interface");
+    gui.rowLabel(i18n.t.settings.interface);
     var choices: [appearances.len]gui.IconChoice = undefined;
-    for (&choices, appearances) |*choice, a| choice.* = .{ .icon = a[1], .name = a[0].label() };
+    for (&choices, appearances) |*choice, a| choice.* = .{ .icon = a[1], .name = i18n.label(i18n.t.labels.appearance, a[0]) };
     const chosen = for (appearances, 0..) |a, i| {
         if (a[0] == values.appearance) break i;
     } else unreachable;
     if (gui.iconSegmented("appearance", &choices, chosen)) |picked| values.appearance = appearances[picked][0];
-    if (values.appearance != .dark) drawWarning("Light can skew color perception");
+    if (values.appearance != .dark) drawWarning(i18n.t.settings.light_warning);
 
-    gui.rowLabel("Viewer");
-    _ = gui.checkboxWith("Always dark", &values.always_dark_viewer, .{ .label_color = theme.colors.text });
+    gui.rowLabel(i18n.t.settings.viewer);
+    _ = gui.checkboxWith(i18n.t.settings.always_dark, &values.always_dark_viewer, .{ .label_color = theme.colors.text });
 }
 
 /// Where minilab lives online.
@@ -266,18 +302,10 @@ const source = "https://github.com/" ++ minilab.update.repository;
 
 /// The libraries, fonts, icons and looks built into minilab, for the credits. Their licences are
 /// installed next to the program.
-const credits = [_][]const u8{
-    "Dear ImGui, SDL3, LibRaw, libtiff, libjpeg-turbo, Little CMS",
-    "IBM Plex Sans, JetBrains Mono, Lucide icons",
-    "GlassMeter, t3mujinpack and Street Monochrome looks",
-};
-
-/// How AI was used: to help write minilab (AGENTS.md is how its maintainer works with coding
-/// agents), not inside it.
-const ai_disclosure = [_][]const u8{
-    "Written with the help of AI coding agents",
-    "No AI runs in the app, and nothing is sent to one",
-};
+/// The libraries are names, so they're the same in every language.
+const libraries = "Dear ImGui, SDL3, LibRaw, libtiff, libjpeg-turbo, Little CMS";
+/// The licence's name, the same in every language.
+const license = "Mozilla Public License 2.0";
 
 /// The gaps on the About page, in the design's pixels.
 const about_gap = 16;
@@ -287,20 +315,21 @@ fn drawAbout() void {
     fonts.pushSized(.mono, fonts.small_size);
     gui.textColored(theme.colors.text_tertiary, version.string);
     fonts.pop();
-    gui.textColored(theme.colors.text_secondary, "Scan, develop and export film, a roll at a time");
+    gui.textColored(theme.colors.text_secondary, i18n.t.settings.tagline);
     c.ImGui_Dummy(gui.vec2(0, gui.px(about_gap) - c.ImGui_GetStyle().*.ItemSpacing.y));
     if (gui.iconButton("website", .normal, .globe)) gui.openUrl(website);
-    gui.tooltip("Website");
+    gui.tooltip(i18n.t.settings.website);
     c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
     if (gui.iconButton("source code", .normal, .github)) gui.openUrl(source);
-    gui.tooltip("Source code on GitHub");
+    gui.tooltip(i18n.t.settings.source_code);
     c.ImGui_Dummy(gui.vec2(0, gui.px(about_gap) - c.ImGui_GetStyle().*.ItemSpacing.y));
-    gui.heading("BUILT WITH");
-    for (credits) |line| gui.textColored(theme.colors.text_tertiary, line);
-    gui.textColored(theme.colors.text_tertiary, "Mozilla Public License 2.0");
+    gui.heading(i18n.t.settings.built_with);
+    for ([_][]const u8{ libraries, i18n.t.settings.built_with_icons, i18n.t.settings.built_with_looks, license }) |line| {
+        gui.textColored(theme.colors.text_tertiary, line);
+    }
     c.ImGui_Dummy(gui.vec2(0, gui.px(about_gap) - c.ImGui_GetStyle().*.ItemSpacing.y));
-    gui.heading("AI DISCLOSURE");
-    for (ai_disclosure) |line| gui.textColored(theme.colors.text_tertiary, line);
+    gui.heading(i18n.t.settings.ai_disclosure);
+    for ([_][]const u8{ i18n.t.settings.ai_written, i18n.t.settings.ai_not_inside }) |line| gui.textColored(theme.colors.text_tertiary, line);
 }
 
 /// A warning under a row's control, lined up with it.
@@ -311,6 +340,12 @@ fn drawWarning(message: [:0]const u8) void {
     gui.drawIcon(.triangle_alert, gui.vec2(at.x + icon / 2, at.y + c.ImGui_GetTextLineHeight() / 2), theme.colors.accent);
     c.ImGui_SetCursorScreenPos(gui.vec2(at.x + icon + gui.px(warning_gap), at.y));
     gui.textColored(theme.colors.accent, message);
+}
+
+test "the language is the one picked, or the system's, or English" {
+    try std.testing.expectEqual(Language.nl, language(.{ .language = .nl }, .fr));
+    try std.testing.expectEqual(Language.fr, language(.{}, .fr));
+    try std.testing.expectEqual(Language.en, language(.{}, null));
 }
 
 test "the system appearance only counts when the preference follows it" {

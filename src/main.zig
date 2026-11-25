@@ -799,6 +799,7 @@ test {
     _ = @import("ui/gui.zig");
     _ = @import("ui/theme.zig");
     _ = @import("ui/icons.zig");
+    _ = @import("i18n/i18n.zig");
     _ = @import("platform/window.zig");
 }
 

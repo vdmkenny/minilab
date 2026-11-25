@@ -5,6 +5,7 @@ const std = @import("std");
 const c = @import("c");
 const theme = @import("theme.zig");
 const icons = @import("icons.zig");
+const i18n = @import("../i18n/i18n.zig");
 const date = @import("minilab").date;
 const Date = date.Date;
 const fonts = @import("fonts.zig");
@@ -67,6 +68,12 @@ pub fn Line(comptime capacity: usize) type {
             return l.buffer[0..l.len];
         }
     };
+}
+
+/// A translated message, `template`, with its `{0}`-style placeholders filled from `values`, for
+/// this frame (see i18n.zig).
+pub fn say(template: [:0]const u8, values: anytype) [:0]const u8 {
+    return i18n.format(frame_arena.allocator(), template, values) catch template;
 }
 
 /// Formats a string that lasts for this frame, ending in a NUL for ImGui.

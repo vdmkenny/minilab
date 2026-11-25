@@ -32,6 +32,7 @@ pub const Icon = enum(u21) {
     chevron_left = 0xe072,
     chevron_right = 0xe073,
     pencil = 0xe1f9,
+    languages = 0xe103,
 };
 
 /// Draws `icon` `size` screen pixels square, centred on `centre`.

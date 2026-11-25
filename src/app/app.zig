@@ -20,6 +20,7 @@ const export_view = @import("export_view.zig");
 const looks_view = @import("looks_view.zig");
 const update_view = @import("update_view.zig");
 const settings_view = @import("settings_view.zig");
+const i18n = @import("../i18n/i18n.zig");
 const update_worker = @import("update_worker.zig");
 const version = @import("../version.zig");
 
@@ -122,6 +123,8 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         // Between frames, so no frame mixes two looks.
         const look = settings_view.look(app.preferences.values, window.system_light);
         if (!std.meta.eql(look, theme.current)) theme.use(look);
+        const language = settings_view.language(app.preferences.values, window.system_language);
+        if (language != i18n.current) i18n.use(language);
         gui.newFrame();
         const keys = shortcuts.poll();
         const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &app.library, .develop = &app.develop, .keys = keys, .notice = &app.notice };
@@ -130,7 +133,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
         // Scan.
         if (options.screenshot == null or app.workspace == .scan) scan_view.update(&app.scan, ctx);
-        try app.draw(ctx, &window.dropped);
+        try app.draw(ctx, &window.dropped, window.system_language);
         if (app.show_help) app.show_help = shortcuts.drawHelp();
 
         // If any thumbnail was asked for while drawing and isn't made yet, this frame was missing
@@ -234,7 +237,7 @@ const App = struct {
     }
 
     /// Draws the window: the header, then the workspace, which gets what was dropped on it.
-    fn draw(app: *App, ctx: context.Context, dropped_files: *const Dropped) !void {
+    fn draw(app: *App, ctx: context.Context, dropped_files: *const Dropped, system_language: ?minilab.preferences.Language) !void {
         const dropped = dropped_files.files();
         const drop: ?gui.Vec2 = if (dropped.len > 0) gui.vec2(dropped_files.position[0], dropped_files.position[1]) else null;
         if (dropped.len > 0 and app.workspace == .looks) {
@@ -257,7 +260,7 @@ const App = struct {
             .update => app.update_window.open = true,
             .settings => app.settings.open = true,
         };
-        settings_view.draw(&app.settings, &app.preferences, ctx);
+        settings_view.draw(&app.settings, &app.preferences, ctx, system_language);
         // A scan or an export running would be cut short by restarting into an update.
         if (app.updates) |worker| {
             if (update_view.draw(&app.update_window, worker, ctx, app.scan.scanning or app.exporting.running != null)) app.restart = true;
