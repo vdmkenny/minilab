@@ -300,6 +300,12 @@ fn addFonts(b: *std.Build, module: *std.Build.Module) void {
         .{ "JetBrainsMono-Regular.ttf", mono.path("fonts/ttf/JetBrainsMono-Regular.ttf") },
         .{ "lucide.ttf", lucide.path("font/lucide.ttf") },
     }) |font| module.addAnonymousImport(font[0], .{ .root_source_file = font[1] });
+    // The icons' codepoints, from the font's own list, so they follow Lucide's numbering.
+    const icons = b.createModule(.{ .root_source_file = b.path("src/bake_icons.zig"), .target = b.graph.host });
+    const bake = b.addRunArtifact(b.addExecutable(.{ .name = "bake_icons", .root_module = icons }));
+    const codepoints = bake.addOutputFileArg("lucide_codepoints.zig");
+    bake.addFileArg(lucide.path("font/info.json"));
+    module.addAnonymousImport("lucide_codepoints", .{ .root_source_file = codepoints });
     for ([_]struct { std.Build.LazyPath, []const u8 }{
         .{ plex.path("LICENSE.txt"), "LICENSE-ibm-plex.txt" },
         .{ mono.path("OFL.txt"), "LICENSE-jetbrains-mono.txt" },

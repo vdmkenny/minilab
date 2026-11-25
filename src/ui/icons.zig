@@ -7,32 +7,33 @@ const std = @import("std");
 const c = @import("c");
 const theme = @import("theme.zig");
 const fonts = @import("fonts.zig");
+const lucide = @import("lucide_codepoints");
 
-/// The icons we use, by their Lucide names.
+/// The icons we use, by their Lucide names, with the codepoints the font gives them.
 pub const Icon = enum(u21) {
-    crop = 0xe0af,
-    rotate_ccw = 0xe14c,
-    rotate_cw = 0xe14d,
-    flip_horizontal = 0xe362,
-    pipette = 0xe13f,
-    copy = 0xe0a2,
-    trash = 0xe18e,
-    search = 0xe155,
-    settings = 0xe158,
-    monitor = 0xe121,
-    moon = 0xe122,
-    sun = 0xe17c,
-    triangle_alert = 0xe193,
-    x = 0xe1b2,
-    sun_moon = 0xe2b2,
-    info = 0xe0fe,
-    globe = 0xe0eb,
-    code = 0xe097,
-    calendar = 0xe067,
-    chevron_left = 0xe072,
-    chevron_right = 0xe073,
-    pencil = 0xe1f9,
-    languages = 0xe103,
+    crop = lucide.@"crop",
+    rotate_ccw = lucide.@"rotate-ccw",
+    rotate_cw = lucide.@"rotate-cw",
+    flip_horizontal = lucide.@"flip-horizontal-2",
+    pipette = lucide.@"pipette",
+    copy = lucide.@"copy",
+    trash = lucide.@"trash-2",
+    search = lucide.@"search",
+    settings = lucide.@"settings",
+    monitor = lucide.@"monitor",
+    moon = lucide.@"moon",
+    sun = lucide.@"sun",
+    triangle_alert = lucide.@"triangle-alert",
+    x = lucide.@"x",
+    sun_moon = lucide.@"sun-moon",
+    info = lucide.@"info",
+    globe = lucide.@"globe",
+    code = lucide.@"code",
+    calendar = lucide.@"calendar",
+    chevron_left = lucide.@"chevron-left",
+    chevron_right = lucide.@"chevron-right",
+    pencil = lucide.@"pencil",
+    languages = lucide.@"languages",
 };
 
 /// Draws `icon` `size` screen pixels square, centred on `centre`.

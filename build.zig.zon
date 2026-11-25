@@ -7,24 +7,24 @@
         // JPEG, TIFF, camera RAW and ICC profiles: C libraries built from source (deps/README.md).
         .codecs = .{ .path = "deps/codecs" },
         .sdl = .{
-            .url = "git+https://github.com/castholm/SDL.git?ref=v0.5.4+3.4.16#b72b3671502a70e109350ecac90afdc480dcfcc6",
-            .hash = "sdl-0.5.4+3.4.16-SDL--sQ4qAH3kwC19Zs1kxdHplaSDnWl2MUptZD4AItI",
+            .url = "git+https://github.com/castholm/SDL.git?ref=v0.6.1+3.4.20#ce475292f172d506468218f939ef607d9be5e083",
+            .hash = "sdl-0.6.1+3.4.20-SDL--rskqQH3W9l4AJX-kdZ93M9XuhsqLrUsd2fnUE_X",
         },
         .translate_c = .{
-            .url = "git+https://codeberg.org/ziglang/translate-c?ref=2.0.0#0da7a16c3235b935b82421646076e0657cda21f6",
-            .hash = "translate_c-2.0.0-Q_BUWltOBwA0229IE8wwSxxGzOxyRso3hvcb1nN8oJX_",
+            .url = "git+https://codeberg.org/ziglang/translate-c?ref=2.0.2#c11030012dc325d446474d17b78c242fd1d622ec",
+            .hash = "translate_c-2.0.2-Q_BUWvBNBwBgPKQJPblip6M7AHNK_IPNPmyv4rSIQMQc",
         },
         .dear_bindings = .{
-            .url = "https://github.com/dearimgui/dear_bindings/releases/download/DearBindings_v0.24_ImGui_v1.92.9b-docking/DearBindings_v0.24_ImGui_v1.92.9b-docking.zip",
-            .hash = "N-V-__8AACU1ZQR8hBZ0rIHIpCXU-lyD74drmNZtaXlch9Tn",
+            .url = "https://github.com/dearimgui/dear_bindings/releases/download/DearBindings_v0.29_ImGui_v1.93.0-docking/DearBindings_v0.29_ImGui_v1.93.0-docking.zip",
+            .hash = "N-V-__8AAGLZgAR042VqIB5Nv_Ivy8oB9ZzA4cQIwC4kpV1P",
         },
         .imgui = .{
-            .url = "git+https://github.com/ocornut/imgui.git?ref=v1.92.9b-docking#b48d1afbe8ee8b238e2961dc363a949dd7304e23",
-            .hash = "N-V-__8AAMiwhADTFf225fEZAyMZ0m0uy3MKKpZbqgX5260R",
+            .url = "git+https://github.com/ocornut/imgui.git?ref=v1.93.0-docking#b916186e66aa3c02b72c6ca17455516512ed8049",
+            .hash = "N-V-__8AAIcIiQBQX2RxQFLvaMZafdWRY_FqA7kql4vDWKb0",
         },
         .plex_sans = .{
-            .url = "https://github.com/IBM/plex/releases/download/%40ibm%2Fplex-sans%401.1.0/ibm-plex-sans.zip",
-            .hash = "N-V-__8AAHx9wwCXDYaI-Bqj3h8Q9ISr9xIuGRGIhT34zt2L",
+            .url = "https://github.com/IBM/plex/releases/download/%40ibm%2Fplex-sans%401.3.6/ibm-plex-sans.zip",
+            .hash = "N-V-__8AANSQyABDnaMFQ5kkfn8ZxF3RgnWEqsC7T6hzz9kx",
         },
         .jetbrains_mono = .{
             .url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
@@ -41,12 +41,12 @@
             .hash = "N-V-__8AAJ69qgPbF1g5uadmfKIIlVjR2LG9zQqjuFN8edL1",
         },
         .street_monochrome = .{
-            .url = "git+https://github.com/sfi0zy/street-monochrome.git#3f915315da4f43dd86af304273615b3a54939a94",
-            .hash = "N-V-__8AAIKS1QERXHqASkptdd1bGfa2YEP2t029YlpWY1GQ",
+            .url = "git+https://github.com/sfi0zy/street-monochrome.git#c607c0c0c63854a65b03ce96c990805130ab2331",
+            .hash = "N-V-__8AAKOV1QEH9D8rOEpyhWeu8zP3JB_lFjMBYy7mxCTh",
         },
         .lucide = .{
-            .url = "https://registry.npmjs.org/lucide-static/-/lucide-static-0.460.0.tgz",
-            .hash = "N-V-__8AAGJO1gFMHbQCxfFbXJ-jzS6TkFdmYOwkh3kuA8OX",
+            .url = "https://registry.npmjs.org/lucide-static/-/lucide-static-0.577.0.tgz",
+            .hash = "N-V-__8AAIAtyQIz31_9lvkZIkmUmDdFJ6-xhEysZz5LBbyM",
         },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "deps" },
