@@ -1,5 +1,5 @@
-//! The fonts built into the app: IBM Plex Sans in two weights for the interface, and JetBrains
-//! Mono for values.
+//! The fonts built into the app: IBM Plex Sans in two weights for the interface, JetBrains Mono
+//! for values, and Lucide's icon font (see icons.zig).
 
 const std = @import("std");
 const c = @import("c");
@@ -22,6 +22,7 @@ pub const title_size: f32 = 15;
 pub const page_title_size: f32 = 18;
 
 var faces: std.EnumArray(Face, ?*c.ImFont) = .initFill(null);
+var icon_face: ?*c.ImFont = null;
 var scale: f32 = 1;
 
 const data: std.EnumArray(Face, []const u8) = .init(.{
@@ -35,17 +36,28 @@ pub fn load(display_scale: f32) void {
     scale = display_scale;
     const atlas = c.ImGui_GetIO().*.Fonts;
     for (std.enums.values(Face)) |face| {
-        var config: c.ImFontConfig = .{
-            // ImGui only reads the data; it stays embedded in the program.
-            .FontDataOwnedByAtlas = false,
-            .GlyphMaxAdvanceX = std.math.floatMax(f32),
-            .RasterizerMultiply = 1,
-            .RasterizerDensity = 1,
-            .ExtraSizeScale = 1,
-        };
-        const bytes = data.get(face);
-        faces.set(face, c.ImFontAtlas_AddFontFromMemoryTTF(atlas, @constCast(bytes.ptr), @intCast(bytes.len), ui_size * scale, &config, null));
+        faces.set(face, add(atlas, data.get(face)));
     }
+    icon_face = add(atlas, icon_data);
+}
+
+fn add(atlas: *c.ImFontAtlas, bytes: []const u8) ?*c.ImFont {
+    var config: c.ImFontConfig = .{
+        // ImGui only reads the data; it stays embedded in the program.
+        .FontDataOwnedByAtlas = false,
+        .GlyphMaxAdvanceX = std.math.floatMax(f32),
+        .RasterizerMultiply = 1,
+        .RasterizerDensity = 1,
+        .ExtraSizeScale = 1,
+    };
+    return c.ImFontAtlas_AddFontFromMemoryTTF(atlas, @constCast(bytes.ptr), @intCast(bytes.len), ui_size * scale, &config, null);
+}
+
+const icon_data = @embedFile("lucide.ttf");
+
+/// The icon font, for icons.zig.
+pub fn icons() ?*c.ImFont {
+    return icon_face;
 }
 
 /// Draws text in `face`, at the current size, until `pop`.

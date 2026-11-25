@@ -40,12 +40,12 @@ pub const Workspace = enum {
 };
 
 /// A Copy button for `command`, to paste into a terminal. The header says Copied once it's copied.
-pub fn copyButton(notice: *Notice, command: [:0]const u8, size: gui.Vec2) void {
-    if (gui.buttonOf(.normal, "Copy", size)) {
+pub fn copyButton(notice: *Notice, command: [:0]const u8) void {
+    if (gui.iconButton("copy", .normal, .copy)) {
         _ = c.SDL_SetClipboardText(command);
         notice.set("Copied", .{});
     }
-    gui.tooltip("For Terminal");
+    gui.tooltip("Copy, for Terminal");
 }
 
 /// How long a notice stays in the header.

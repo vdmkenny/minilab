@@ -60,6 +60,7 @@ pub const Command = enum {
     hide_panels,
     hide_all,
     full_screen,
+    settings,
     help,
     quit,
     cancel,
@@ -113,6 +114,7 @@ pub const Command = enum {
             .hide_panels => "Hide side panels",
             .hide_all => "Hide all panels",
             .full_screen => "Full screen",
+            .settings => "Settings",
             .help => "Keyboard shortcuts",
             .quit => "Quit",
             .cancel => "Cancel a pick, close a panel",
@@ -213,6 +215,7 @@ pub const bindings = [_]Binding{
     bind(.hide_panels, c.ImGuiKey_Tab),
     bind(.hide_all, shift | c.ImGuiKey_Tab),
     bind(.full_screen, c.ImGuiKey_F),
+    bind(.settings, command_key | c.ImGuiKey_Comma),
     bind(.help, command_key | c.ImGuiKey_Slash),
     bind(.quit, command_key | c.ImGuiKey_Q),
     bind(.cancel, c.ImGuiKey_Escape),
@@ -282,6 +285,7 @@ fn keyName(key: c.ImGuiKey) []const u8 {
         c.ImGuiKey_RightArrow => "→",
         c.ImGuiKey_Backslash => "\\",
         c.ImGuiKey_Slash => "/",
+        c.ImGuiKey_Comma => ",",
         c.ImGuiKey_LeftBracket => "[",
         c.ImGuiKey_RightBracket => "]",
         c.ImGuiKey_Enter => if (builtin.os.tag == .macos) "↩" else "Enter",
@@ -302,7 +306,7 @@ pub fn tooltip(text: []const u8, command: Command) void {
     gui.text(text);
     c.ImGui_SameLineEx(0, gui.px(tooltip_keys_gap));
     fonts.pushSized(.mono, fonts.small_size);
-    gui.textColored(theme.text_tertiary, label(command));
+    gui.textColored(theme.colors.text_tertiary, label(command));
     fonts.pop();
 }
 
@@ -335,7 +339,7 @@ const groups = [_]struct { []const u8, []const Command }{
     .{ "SETTINGS", &.{ .undo, .redo, .copy_settings, .paste_settings, .paste_previous, .sync, .reset, .automatic } },
     .{ "RATING", &.{ .no_stars, .one_star, .two_stars, .three_stars, .four_stars, .five_stars, .reject, .unreject } },
     .{ "LIBRARY", &.{ .new_roll, .find, .import } },
-    .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .help, .quit, .cancel } },
+    .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .settings, .help, .quit, .cancel } },
 };
 
 // Every command has keys and a place in the help panel, and no two commands share keys.
@@ -363,14 +367,14 @@ pub fn drawHelp() bool {
     const size = gui.vec2(gui.px(help.width), @min(viewport.*.WorkSize.y - gui.px(help.margin_y), gui.px(help.max_height)));
     c.ImGui_SetNextWindowPos(gui.vec2(viewport.*.WorkPos.x + (viewport.*.WorkSize.x - size.x) / 2, viewport.*.WorkPos.y + gui.px(help.top)), 0);
     c.ImGui_SetNextWindowSize(size, 0);
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_WindowBg, theme.panel);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_WindowBg, theme.colors.panel);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(help.padding_x), gui.px(help.padding_y)));
     c.ImGui_PushStyleVar(c.ImGuiStyleVar_WindowBorderSize, 1);
     defer c.ImGui_PopStyleVarEx(2);
     defer c.ImGui_PopStyleColor();
     if (c.ImGui_Begin("Keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
         gui.title("Keyboard shortcuts", fonts.title_size);
-        gui.textColored(theme.text_tertiary, "As in Lightroom and Bridge");
+        gui.textColored(theme.colors.text_tertiary, "As in Lightroom and Bridge");
         c.ImGui_Dummy(gui.vec2(0, gui.px(help.group_gap)));
         const column = (c.ImGui_GetContentRegionAvail().x - gui.px(help.column_gap)) / 2;
         const second_x = gui.px(help.padding_x + help.column_gap) + column;
@@ -385,7 +389,7 @@ pub fn drawHelp() bool {
             for (group[1]) |command| {
                 if (in_second) c.ImGui_SetCursorPosX(second_x);
                 const row_x = c.ImGui_GetCursorPosX();
-                gui.textColored(theme.text_secondary, command.describe());
+                gui.textColored(theme.colors.text_secondary, command.describe());
                 c.ImGui_SameLineEx(row_x + column - gui.px(help.keys_width), 0);
                 fonts.pushSized(.mono, fonts.small_size);
                 gui.text(label(command));

@@ -19,11 +19,12 @@
 
 const std = @import("std");
 const Io = std.Io;
+const json_file = @import("json_file.zig");
 const stats = @import("stats.zig");
 
 pub const file_name = "calibration.json";
 /// Added to the name of a calibration.json that can't be read, when it's moved aside.
-pub const unreadable_suffix = ".bad";
+pub const unreadable_suffix = json_file.unreadable_suffix;
 /// The fewest frames a roll needs for a calibration. With fewer, the median still follows the
 /// scenes.
 pub const min_frames = 4;
@@ -61,23 +62,12 @@ pub const Calibrations = struct {
         errdefer calibrations.arena.deinit();
         const a = calibrations.arena.allocator();
         calibrations.path = try std.fs.path.join(a, &.{ library, file_name });
-        const bytes = Io.Dir.cwd().readFileAlloc(io, calibrations.path.?, a, .limited(max_bytes)) catch |err| switch (err) {
-            error.FileNotFound => return calibrations,
-            else => return err,
-        };
-        const file = std.json.parseFromSliceLeaky(File, a, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| {
-            // Move it aside rather than write over it with the next roll's measurement, so the
-            // measurements in it aren't lost.
-            const aside = try std.fmt.allocPrint(a, "{s}{s}", .{ calibrations.path.?, unreadable_suffix });
-            Io.Dir.cwd().rename(calibrations.path.?, Io.Dir.cwd(), aside, io) catch |rename_err| {
-                std.log.warn("{s} can't be read ({t}) or moved aside ({t}); calibrations won't be saved", .{ calibrations.path.?, err, rename_err });
-                calibrations.path = null;
-                return calibrations;
-            };
-            std.log.warn("{s} can't be read ({t}); moved it to {s} and starting without calibrations", .{ calibrations.path.?, err, aside });
-            return calibrations;
-        };
-        calibrations.scanners = file.scanners;
+        switch (try json_file.read(File, a, io, calibrations.path.?)) {
+            .read => |file| calibrations.scanners = file.scanners,
+            .missing, .moved_aside => {},
+            // Rather than write over a file we couldn't read or move aside, don't save calibrations.
+            .stuck => calibrations.path = null,
+        }
         return calibrations;
     }
 
@@ -138,9 +128,7 @@ pub const Calibrations = struct {
 
     fn save(calibrations: *Calibrations, io: Io) !void {
         const path = calibrations.path orelse return;
-        const a = calibrations.arena.allocator();
-        const bytes = try std.json.Stringify.valueAlloc(a, File{ .scanners = calibrations.scanners }, .{ .whitespace = .indent_2 });
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+        try json_file.write(calibrations.arena.child_allocator, io, path, File{ .scanners = calibrations.scanners });
     }
 };
 
@@ -173,7 +161,7 @@ fn datasheetSlopes(gamma: [3]f32) [3]f32 {
 /// More frames than any roll has, and more rolls than anyone calibrates from.
 const max_frames = 512;
 const max_rolls = 256;
-const max_bytes = 1 << 20;
+const max_bytes = json_file.max_bytes;
 
 test "one roll calibrates the scanner, and the factors carry to another stock" {
     // Superia X-TRA 400's gammas, and slopes like the ones our V200 gets from it.

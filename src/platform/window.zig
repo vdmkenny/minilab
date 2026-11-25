@@ -36,6 +36,8 @@ pub const Window = struct {
     busy_frames: u8 = settle_frames,
     /// The files dropped on the window since the last frame.
     dropped: Dropped = .{},
+    /// Whether the system's appearance is light. It follows the system as it changes.
+    system_light: bool = false,
 
     /// Opens a window of `width` by `height` points at the display's scale, with ImGui set up to
     /// draw in it. A hidden window only draws into images (`capture`).
@@ -78,7 +80,7 @@ pub const Window = struct {
         };
         if (!c.cImGui_ImplSDLGPU3_Init(&info)) return fail("ImGui_ImplSDLGPU3_Init");
         if (!hidden) _ = c.SDL_ShowWindow(handle);
-        return .{ .handle = handle, .gpu = gpu, .scale = scale };
+        return .{ .handle = handle, .gpu = gpu, .scale = scale, .system_light = systemLight() };
     }
 
     pub fn close(window: *Window) void {
@@ -123,6 +125,7 @@ pub const Window = struct {
             c.SDL_EVENT_WINDOW_CLOSE_REQUESTED => if (event.window.windowID == c.SDL_GetWindowID(window.handle)) {
                 window.close_asked = true;
             },
+            c.SDL_EVENT_SYSTEM_THEME_CHANGED => window.system_light = systemLight(),
             c.SDL_EVENT_DROP_FILE => if (event.drop.data) |data| {
                 window.dropped.add(std.mem.span(data), .{ event.drop.x, event.drop.y });
             },
@@ -280,4 +283,9 @@ test "dropped files are copied, and cleared for the next drop" {
     try std.testing.expectEqual([2]f32{ 30, 40 }, dropped.position);
     dropped.clear();
     try std.testing.expectEqual(@as(usize, 0), dropped.files().len);
+}
+
+/// Whether the system's appearance is light. When it doesn't say, it counts as dark.
+fn systemLight() bool {
+    return c.SDL_GetSystemTheme() == c.SDL_SYSTEM_THEME_LIGHT;
 }
