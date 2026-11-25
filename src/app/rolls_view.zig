@@ -16,6 +16,7 @@ const account = @import("../platform/account.zig");
 const clock = @import("../platform/clock.zig");
 const roll_details = @import("roll_details.zig");
 const icons = @import("../ui/icons.zig");
+const i18n = @import("../i18n/i18n.zig");
 
 const roll = minilab.roll;
 const develop = minilab.develop;
@@ -250,9 +251,9 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
     if (library.rolls.items.len == 0) {
-        gui.paragraph(theme.colors.text_tertiary, "No rolls yet");
+        gui.paragraph(theme.colors.text_tertiary, i18n.t.rolls.no_rolls);
     } else if (shown == 0) {
-        gui.paragraph(theme.colors.text_tertiary, "No matching rolls");
+        gui.paragraph(theme.colors.text_tertiary, i18n.t.rolls.no_matching_rolls);
     }
     if (drawDeleteConfirmation(state, library, gpa)) |index| action = .{ .trash = index };
     c.ImGui_EndChild();
@@ -293,7 +294,7 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     const row_top = c.ImGui_GetCursorPosY();
     const height = c.ImGui_GetFrameHeight();
     const right = c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX();
-    const new_label = "New roll";
+    const new_label = i18n.t.rolls.new_roll;
     fonts.push(.semibold);
     const new_width = c.ImGui_CalcTextSize(new_label).x + gui.px(2 * gui.button_padding + new_icon + new_icon_gap);
     fonts.pop();
@@ -302,24 +303,25 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     fonts.pushSized(.semibold, fonts.page_title_size);
     const title_height = c.ImGui_GetFontSize();
     c.ImGui_SetCursorPosY(row_top + (height - title_height) / 2);
-    gui.text("Rolls");
+    gui.text(i18n.t.rolls.title);
     fonts.pop();
     c.ImGui_SameLineEx(0, gui.px(title_row_gap));
     c.ImGui_SetCursorPosY(row_top);
     c.ImGui_AlignTextToFramePadding();
-    const count = gui.print(" · {d} {s}", .{ library.rolls.items.len, if (library.rolls.items.len == 1) "roll" else "rolls" });
+    const rolls = library.rolls.items.len;
+    const count = gui.print(" · {s}", .{gui.say(if (rolls == 1) i18n.t.rolls.roll_count_one else i18n.t.rolls.roll_count_many, .{rolls})});
     const room = right - c.ImGui_GetCursorPosX() - controls - gui.px(count_gap) - c.ImGui_CalcTextSize(count).x;
     gui.textColored(theme.colors.text_tertiary, gui.print("{s}{s}", .{ gui.elideStart(library.label, room), count }));
 
     c.ImGui_SameLineEx(right - controls, 0);
     if (state.focus_search) c.ImGui_SetKeyboardFocusHere();
     state.focus_search = false;
-    _ = gui.textField("search", &state.search, "Search name, stock, camera", search_width);
-    shortcuts.tooltip("Search rolls", .find);
+    _ = gui.textField("search", &state.search, i18n.t.rolls.search_hint, search_width);
+    shortcuts.tooltip(i18n.t.rolls.search_tooltip, .find);
     c.ImGui_SameLineEx(0, gui.px(title_row_gap));
     // All film sizes, then each size.
     var filter_names: [film_sizes.len + 1][]const u8 = undefined;
-    filter_names[0] = "All film sizes";
+    filter_names[0] = i18n.t.rolls.all_film_sizes;
     for (filter_names[1..], film_sizes) |*name, size| name.* = size.label();
     const filter_index = if (state.size_filter) |size| gui.indexIn(formats.FilmSize, film_sizes, size) + 1 else 0;
     if (gui.combo("film size", &filter_names, filter_index, filter_width)) |picked| {
@@ -330,7 +332,7 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     if (gui.buttonOf(.primary, "##new roll", gui.vec2(new_width / gui.scale, height / gui.scale))) {
         state.toggleNewRoll(gpa);
     }
-    shortcuts.tooltip("New roll", .new_roll);
+    shortcuts.tooltip(new_label, .new_roll);
     // The plus sign, then the label: the button's padding in, the icon, then a gap.
     const list = c.ImGui_GetWindowDrawList();
     gui.plus(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon / 2), corner.y + height / 2), gui.px(new_plus_arm), gui.px(new_plus_thickness), theme.colors.on_accent);
@@ -353,14 +355,14 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
         return null;
     }
     defer c.ImGui_EndPopup();
-    gui.title(gui.print("Delete {s}?", .{r.info.name}), fonts.title_size);
+    gui.title(gui.say(i18n.t.rolls.delete_title, .{r.info.name}), fonts.title_size);
     const frames = r.frames.items.len;
-    gui.textColored(theme.colors.text_tertiary, gui.print("{d} {s}", .{ frames, if (frames == 1) "frame" else "frames" }));
+    gui.textColored(theme.colors.text_tertiary, gui.say(if (frames == 1) i18n.t.rolls.frame_count_one else i18n.t.rolls.frame_count_many, .{frames}));
     c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
     var confirmed: ?usize = null;
-    if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, gui.button_height))) confirmed = index;
+    if (gui.buttonOf(.primary, i18n.t.rolls.move_to_trash, gui.vec2(0, gui.button_height))) confirmed = index;
     c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
-    const cancelled = gui.buttonOf(.normal, "Cancel", gui.vec2(0, gui.button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
+    const cancelled = gui.buttonOf(.normal, i18n.t.common.cancel, gui.vec2(0, gui.button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape);
     if (confirmed != null or cancelled) {
         state.stopDeleting(gpa);
         c.ImGui_CloseCurrentPopup();
@@ -420,7 +422,7 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
     const total = r.frames.items.len;
     const developed = r.developedCount();
     const bar_y = origin.y + card_height - gui.px(card_padding_y + card_bar);
-    c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(card_row_gap) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
+    c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(card_row_gap) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_secondary), gui.say(i18n.t.rolls.developed, .{ developed, total }));
     const bar_width = gui.px(card_width - 2 * card_padding_x);
     const share = if (total == 0) 0 else @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
     gui.progressBar(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(card_bar)), share);
@@ -431,9 +433,9 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
     if (over_card or state.isDeleting(r.path) or state.isShowingDetails(r.path)) {
         const size = gui.px(card_button_size);
         const delete_corner = gui.vec2(origin.x + gui.px(card_width - card_button_inset) - size, origin.y + gui.px(card_button_inset));
-        if (cardButton(list, "delete", "Delete roll", .trash, delete_corner, theme.red)) state.startDeleting(gpa, r.path);
+        if (cardButton(list, "delete", i18n.t.rolls.delete_roll, .trash, delete_corner, theme.red)) state.startDeleting(gpa, r.path);
         const edit_corner = gui.vec2(delete_corner.x - size - gui.px(card_button_gap), delete_corner.y);
-        if (cardButton(list, "edit", "Edit details", .pencil, edit_corner, theme.colors.text)) state.showDetails(gpa, r.path);
+        if (cardButton(list, "edit", i18n.t.rolls.edit_details, .pencil, edit_corner, theme.colors.text)) state.showDetails(gpa, r.path);
     }
     return action;
 }
@@ -472,7 +474,7 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
     const strip_top = @round(origin.y);
     const thumbs_top = strip_top + @round((band - height) / 2);
     const width = @round(height * format.ratio());
-    const more_width = gui.px(2 * more_padding) + c.ImGui_CalcTextSize("+00 more").x;
+    const more_width = gui.px(2 * more_padding) + c.ImGui_CalcTextSize(gui.say(i18n.t.rolls.more_frames, .{"00"})).x;
     // Each frame takes its width and the gap after it; sheets each have their own border.
     const step = width + if (sheets) 2 * leader + gap else gap;
     const room = right - strip_x + gap - if (sheets) 0 else 2 * leader;
@@ -524,12 +526,12 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
         c.ImGui_SetCursorScreenPos(corner);
         if (c.ImGui_InvisibleButton("more", gui.vec2(more_width, height), 0)) action = .{ .open = .{ .roll = index, .frame = shown } };
         gui.dashedRect(list, corner, gui.vec2(corner.x + more_width, corner.y + height), theme.imU32(theme.colors.border), 1, gui.px(more_dash), gui.px(more_dash_gap));
-        const more = gui.print("+{d} more", .{total - shown});
+        const more = gui.say(i18n.t.rolls.more_frames, .{total - shown});
         const size = c.ImGui_CalcTextSize(more);
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.colors.text_secondary), more);
     }
     if (total == 0) {
-        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_tertiary), "No frames yet");
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_tertiary), i18n.t.rolls.no_frames);
     }
     return action;
 }
@@ -538,34 +540,34 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
 fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io) ?Created {
     const form = &state.form;
     if (!form.filled) {
-        _ = std.fmt.bufPrintSentinel(&form.name, "Roll {d:0>3}", .{library.rolls.items.len + 1}, 0) catch {};
+        gui.setText(&form.name, gui.say(i18n.t.rolls.default_name, .{gui.print("{d:0>3}", .{library.rolls.items.len + 1})})) catch {};
         var today: [minilab.date.max_text]u8 = undefined;
         gui.setText(&form.shot, clock.today(io).format(&today)) catch {};
         fillCopyright(form, library);
         form.filled = true;
     }
 
-    drawPanelTitle(state, gpa, "New roll");
+    drawPanelTitle(state, gpa, i18n.t.rolls.new_roll);
 
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(form_spacing), gui.px(form_spacing)));
     defer c.ImGui_PopStyleVar();
-    gui.rowLabel("Name");
+    gui.rowLabel(i18n.t.rolls.name);
     if (gui.textField("name", &form.name, "", 0)) form.problem = null;
     if (form.problem) |problem| {
         gui.rowLabel("");
         gui.paragraph(theme.colors.text_tertiary, problem);
     }
-    gui.rowLabel("Film type");
+    gui.rowLabel(i18n.t.rolls.film_type);
     if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, form.kind, labels.filmKind, 0)) |picked| {
         form.kind = picked;
         form.stock = 0;
     }
-    gui.rowLabel("Stock");
+    gui.rowLabel(i18n.t.rolls.stock);
     var stock_buffer: [labels.stock_choices.len + 1][]const u8 = undefined;
     const stock_names = labels.stockNames(form.kind, "Other", &stock_buffer);
     if (form.stock >= stock_names.len) form.stock = 0;
-    if (gui.searchCombo("stock", stock_names, form.stock, 0, "Search stocks")) |picked| form.stock = picked;
-    gui.rowLabel("Film size");
+    if (gui.searchCombo("stock", stock_names, form.stock, 0, i18n.t.rolls.search_stocks)) |picked| form.stock = picked;
+    gui.rowLabel(i18n.t.rolls.film_size);
     if (gui.comboOf(formats.FilmSize, "film size", film_sizes, form.size, labels.filmSizeChoice, 0)) |picked| {
         form.size = picked;
         form.format = 0;
@@ -574,22 +576,22 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     const choices = formatsOf(form.size, &buffer);
     var names: [buffer.len][]const u8 = undefined;
     for (choices, 0..) |id, i| names[i] = labels.format(id);
-    gui.rowLabel("Format");
+    gui.rowLabel(i18n.t.rolls.format);
     if (gui.combo("format", names[0..choices.len], form.format, 0)) |picked| form.format = picked;
     for ([_]struct { roll.Detail, [:0]u8, [:0]const u8 }{
-        .{ .camera, &form.camera, "[Camera]" },
-        .{ .lens, &form.lens, "[Lens]" },
-        .{ .shot, &form.shot, "YYYY-MM-DD" },
-        .{ .copyright, &form.copyright, "[Your name]" },
+        .{ .camera, &form.camera, i18n.t.rolls.camera_hint },
+        .{ .lens, &form.lens, i18n.t.rolls.lens_hint },
+        .{ .shot, &form.shot, i18n.t.rolls.date_hint },
+        .{ .copyright, &form.copyright, i18n.t.rolls.copyright_hint },
     }) |row| {
         gui.rowLabel(roll_details.label(row[0]));
         _ = roll_details.field(row[0], row[1], row[2], 0, library, io);
     }
     const notes_x = c.ImGui_GetCursorPosX();
-    gui.textColored(theme.colors.text_secondary, "Notes");
+    gui.textColored(theme.colors.text_secondary, roll_details.label(.notes));
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * notes_lines + gui.px(notes_padding)), 0, null, null);
-    gui.rowLabel("Input");
+    gui.rowLabel(i18n.t.rolls.input);
     if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, roll.Input.label, 0)) |picked| form.input = picked;
     if (form.input == .camera_raw) drawFlatField(state, gpa, io);
 
@@ -600,13 +602,12 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     c.ImGui_BeginDisabled(name.len == 0 or choices.len == 0);
     defer c.ImGui_EndDisabled();
     if (!gui.buttonOf(.primary, switch (form.input) {
-        .scanner => "Create roll and scan",
-        .camera_raw, .tiff_files, .finished => "Create roll",
+        .scanner => i18n.t.rolls.create_and_scan,
+        .camera_raw, .tiff_files, .finished => i18n.t.rolls.create,
     }, gui.vec2(c.ImGui_GetContentRegionAvail().x / gui.scale, create_height))) return null;
     return createRoll(state, library, gpa, io, stock_names, choices);
 }
 
-/// Draws the panel's title and its close button.
 /// Draws the panel's title, `title`, with its close button.
 fn drawPanelTitle(state: *State, gpa: std.mem.Allocator, title: []const u8) void {
     const close_size = c.ImGui_GetFrameHeight();
@@ -628,15 +629,15 @@ fn drawFlatField(state: *State, gpa: std.mem.Allocator, io: std.Io) void {
         const path = chosen[chosen.len - 1];
         gui.setText(&form.flat, path) catch std.log.err("the flat field's path is too long: {s}", .{path});
     }
-    gui.rowLabel("Flat field");
+    gui.rowLabel(i18n.t.rolls.flat_field);
     const flat = std.mem.sliceTo(&form.flat, 0);
     const width = c.ImGui_GetContentRegionAvail().x;
-    const label = if (flat.len == 0) "Choose a shot…" else gui.elideStart(std.fs.path.basename(flat), width - c.ImGui_GetStyle().*.FramePadding.x * 2);
+    const label = if (flat.len == 0) i18n.t.rolls.choose_shot else gui.elideStart(std.fs.path.basename(flat), width - c.ImGui_GetStyle().*.FramePadding.x * 2);
     c.ImGui_PushID("flat field");
     if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
     c.ImGui_PopID();
     c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-    gui.paragraph(theme.colors.text_tertiary, "Optional");
+    gui.paragraph(theme.colors.text_tertiary, i18n.t.rolls.optional);
 }
 
 /// Makes the roll the form describes, with `stock_names` and `choices` as the form listed them.
@@ -659,9 +660,9 @@ fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.
     }) catch |err| {
         std.log.err("can't make the roll: {t}", .{err});
         form.problem = switch (err) {
-            error.RollExists => "Name already used",
-            error.BadRollName => "Invalid name",
-            else => "Roll not created",
+            error.RollExists => i18n.t.rolls.name_used,
+            error.BadRollName => i18n.t.rolls.invalid_name,
+            else => i18n.t.rolls.not_created,
         };
         return null;
     };
@@ -705,7 +706,7 @@ fn drawDetails(state: *State, library: *Library, gpa: std.mem.Allocator, io: std
     defer c.ImGui_PopStyleVar();
     for (std.enums.values(roll.Detail)) |which| {
         gui.rowLabel(roll_details.label(which));
-        state.details.draw(which, r, library, io, "Not set", 0);
+        state.details.draw(which, r, library, io, i18n.t.common.not_set, 0);
     }
 }
 
