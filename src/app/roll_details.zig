@@ -6,6 +6,7 @@ const std = @import("std");
 const c = @import("c");
 const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
+const i18n = @import("../i18n/i18n.zig");
 const Library = @import("library.zig").Library;
 const clock = @import("../platform/clock.zig");
 
@@ -17,13 +18,7 @@ const Detail = roll.Detail;
 pub const capacity = 1024;
 
 pub fn label(which: Detail) [:0]const u8 {
-    return switch (which) {
-        .camera => "Camera",
-        .lens => "Lens",
-        .shot => "Date shot",
-        .copyright => "Copyright",
-        .notes => "Notes",
-    };
+    return i18n.label(i18n.t.labels.detail, which);
 }
 
 /// The field for `which`: the camera, lens and copyright suggest what the library's other rolls

@@ -292,14 +292,14 @@ const App = struct {
         const io = ctx.io;
         const library = &app.library;
         switch (action) {
-            .none => if (dropped.len > 0) app.notice.set("Drop on a roll's row", .{}),
+            .none => if (dropped.len > 0) app.notice.say(i18n.t.app.drop_on_roll, .{}),
             .open => |at| {
                 try app.develop.openRoll(gpa, io, library, library.rolls.items[at.roll].path);
                 if (at.frame < library.rolls.items[at.roll].frames.items.len) app.develop.select(gpa, io, library, at.frame);
                 app.workspace = .develop;
             },
             .created => |created| {
-                if (created.flat_failed) app.notice.set("Flat field not set", .{});
+                if (created.flat_failed) app.notice.say(i18n.t.app.flat_field_not_set, .{});
                 try app.develop.openRoll(gpa, io, library, library.rolls.items[created.roll].path);
                 app.workspace = if (library.rolls.items[created.roll].info.input == .scanner) .scan else .develop;
             },
@@ -312,8 +312,8 @@ const App = struct {
                 const name = std.fmt.bufPrint(&name_buffer, "{s}", .{library.rolls.items[index].info.name}) catch library.rolls.items[index].info.name;
                 app.develop.forgetRoll(gpa, library.rolls.items[index].path);
                 if (library.trashRoll(gpa, io, index)) |_| {
-                    app.notice.set("Moved {s} to Trash", .{name});
-                } else |err| app.notice.set("Can't move {s} to Trash · {t}", .{ name, err });
+                    app.notice.say(i18n.t.app.moved_to_trash, .{name});
+                } else |err| app.notice.say(i18n.t.app.cant_move_to_trash, .{ name, @errorName(err) });
             },
         }
     }
@@ -335,7 +335,7 @@ const App = struct {
 fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *develop_view.State, dropped: []const []const u8, notice: *Notice) void {
     // A folder stands for the scans in it.
     const paths = minilab.input.expand(gpa, io, dropped) catch |err| {
-        notice.set("Can't read what was dropped · {t}", .{err});
+        notice.say(i18n.t.app.cant_read_dropped, .{@errorName(err)});
         return;
     };
     defer minilab.input.freeExpanded(gpa, paths);
@@ -344,9 +344,9 @@ fn dropScans(gpa: std.mem.Allocator, io: std.Io, library: *Library, develop: *de
         const added = library.rolls.items[r].frames.items.len - imported.first;
         const name = library.rolls.items[r].info.name;
         if (added == imported.files) {
-            notice.set("Added {d} of {d} scans to {s}", .{ added, paths.len, name });
+            notice.say(i18n.t.app.added_scans, .{ added, paths.len, name });
         } else {
-            notice.set("Added {d} frames from {d} of {d} scans to {s}", .{ added, imported.files, paths.len, name });
+            notice.say(i18n.t.app.added_frames, .{ added, imported.files, paths.len, name });
         }
         if (added > 0) develop.select(gpa, io, library, imported.first);
         return;
@@ -409,7 +409,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     var right = origin.x + width - gui.px(header.padding) - gui.px(header.settings_size);
     c.ImGui_SetCursorScreenPos(gui.vec2(right, middle - gui.px(header.settings_size) / 2));
     if (gui.buttonOf(.quiet, "##settings", gui.vec2(header.settings_size, header.settings_size))) clicked = .settings;
-    shortcuts.tooltip("Settings", .settings);
+    shortcuts.tooltip(i18n.t.settings.title, .settings);
     gui.drawIcon(.settings, gui.vec2(right + gui.px(header.settings_size) / 2, middle), if (c.ImGui_IsItemHovered(0)) theme.colors.text else theme.colors.text_secondary);
     right -= gui.px(header.padding);
     const scanner_text = gui.print("{s}", .{scanner.text});
