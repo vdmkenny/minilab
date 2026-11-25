@@ -750,6 +750,9 @@ Rolls/
     exports/
 ```
 
+The app's own preferences, such as its appearance, aren't in the library: they belong to your
+account and go in `preferences.json` in its settings folder ([settings.md](settings.md)).
+
 **Why TIFF for raw scans.** Your raw scans are your archive, so they shouldn't be locked into
 minilab. A 16-bit TIFF with ZIP compression (Deflate with the horizontal predictor) loses
 nothing, and Lightroom, Photoshop, Capture One and Apple Photos all open it. It's also what
@@ -781,6 +784,7 @@ write both in Zig: we only need a handful of tags, and exiv2, the usual library 
 | translate-c package | turns C headers into a Zig module | MIT |
 | SDL3 (castholm/SDL's Zig build) | window, input, GPU (Metal, Vulkan, D3D12) | zlib |
 | IBM Plex Sans, JetBrains Mono | the interface's fonts | SIL OFL 1.1 |
+| Lucide 0.460.0 (its icon font) | the interface's icons | ISC, with parts from Feather under MIT |
 | sane-backends 1.4.0: libsane and its backends (carried by the macOS release, the system's elsewhere; loaded when minilab runs) | scanners on macOS and Linux | GPL-2.0+ with SANE's exception, 15 backends GPL-2.0 alone (section 13); `sane.h` public domain |
 | libusb 1.0.30, libjpeg-turbo 3.2.0 (carried by the macOS release, for SANE) | USB, and JPEG for the backends that need it | LGPL-2.1+; IJG and BSD |
 | our epkowa build and `libesint7A` | the V200, unchanged, loaded by libsane | GPL-2.0+ |

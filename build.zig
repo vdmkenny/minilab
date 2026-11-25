@@ -276,18 +276,21 @@ fn bakeLooks(b: *std.Build) struct { baked: std.Build.LazyPath, tool: *std.Build
     return .{ .baked = baked, .tool = tool };
 }
 
-/// Adds the fonts built into the app: IBM Plex Sans for the interface and JetBrains Mono for
-/// values.
+/// Adds the fonts built into the app: IBM Plex Sans for the interface, JetBrains Mono for values,
+/// and Lucide's icons.
 fn addFonts(b: *std.Build, module: *std.Build.Module) void {
     const plex = b.dependency("plex_sans", .{});
     const mono = b.dependency("jetbrains_mono", .{});
+    const lucide = b.dependency("lucide", .{});
     for ([_]struct { []const u8, std.Build.LazyPath }{
         .{ "IBMPlexSans-Regular.ttf", plex.path("fonts/complete/ttf/IBMPlexSans-Regular.ttf") },
         .{ "IBMPlexSans-SemiBold.ttf", plex.path("fonts/complete/ttf/IBMPlexSans-SemiBold.ttf") },
         .{ "JetBrainsMono-Regular.ttf", mono.path("fonts/ttf/JetBrainsMono-Regular.ttf") },
+        .{ "lucide.ttf", lucide.path("font/lucide.ttf") },
     }) |font| module.addAnonymousImport(font[0], .{ .root_source_file = font[1] });
     for ([_]struct { std.Build.LazyPath, []const u8 }{
         .{ plex.path("LICENSE.txt"), "LICENSE-ibm-plex.txt" },
         .{ mono.path("OFL.txt"), "LICENSE-jetbrains-mono.txt" },
+        .{ lucide.path("LICENSE"), "LICENSE-lucide.txt" },
     }) |notice| b.getInstallStep().dependOn(&b.addInstallFile(notice[0], notice[1]).step);
 }

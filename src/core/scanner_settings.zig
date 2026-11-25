@@ -8,12 +8,13 @@
 
 const std = @import("std");
 const Io = std.Io;
+const json_file = @import("json_file.zig");
 const scan = @import("../scan/root.zig");
 
 pub const file_name = "scanners.json";
 /// Added to the name of a scanners.json that can't be read, when it's moved aside.
-pub const unreadable_suffix = ".bad";
-const max_bytes = 1 << 20;
+pub const unreadable_suffix = json_file.unreadable_suffix;
+const max_bytes = json_file.max_bytes;
 
 pub const Scanner = struct {
     /// The scanner's vendor and model, as rolls record it.
@@ -43,23 +44,12 @@ pub const Settings = struct {
         errdefer settings.arena.deinit();
         const a = settings.arena.allocator();
         settings.path = try std.fs.path.join(a, &.{ library, file_name });
-        const bytes = Io.Dir.cwd().readFileAlloc(io, settings.path.?, a, .limited(max_bytes)) catch |err| switch (err) {
-            error.FileNotFound => return settings,
-            else => return err,
-        };
-        const file = std.json.parseFromSliceLeaky(File, a, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch |err| {
-            // Move it aside rather than write over it with the next change, so nothing in it is
-            // lost.
-            const aside = try std.fmt.allocPrint(a, "{s}{s}", .{ settings.path.?, unreadable_suffix });
-            Io.Dir.cwd().rename(settings.path.?, Io.Dir.cwd(), aside, io) catch |rename_err| {
-                std.log.warn("{s} can't be read ({t}) or moved aside ({t}); scanner settings won't be saved", .{ settings.path.?, err, rename_err });
-                settings.path = null;
-                return settings;
-            };
-            std.log.warn("{s} can't be read ({t}); moved it to {s} and starting without scanner settings", .{ settings.path.?, err, aside });
-            return settings;
-        };
-        settings.scanners = file.scanners;
+        switch (try json_file.read(File, a, io, settings.path.?)) {
+            .read => |file| settings.scanners = file.scanners,
+            .missing, .moved_aside => {},
+            // Rather than write over a file we couldn't read or move aside, don't save scanner settings.
+            .stuck => settings.path = null,
+        }
         return settings;
     }
 
@@ -116,9 +106,7 @@ pub const Settings = struct {
 
     fn save(settings: *Settings, io: Io) !void {
         const path = settings.path orelse return;
-        const a = settings.arena.allocator();
-        const bytes = try std.json.Stringify.valueAlloc(a, File{ .scanners = settings.scanners }, .{ .whitespace = .indent_2 });
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes });
+        try json_file.write(settings.arena.child_allocator, io, path, File{ .scanners = settings.scanners });
     }
 };
 

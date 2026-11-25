@@ -180,7 +180,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     const top = c.ImGui_GetCursorScreenPos();
     const form = if (state.show_form) gui.px(form_width) else 0;
 
-    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ChildBg, theme.page);
+    c.ImGui_PushStyleColorImVec4(c.ImGuiCol_ChildBg, theme.colors.page);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_WindowPadding, gui.vec2(gui.px(page_padding_x), gui.px(page_padding_y)));
     _ = c.ImGui_BeginChild("sheet", gui.vec2(available.x - form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
     c.ImGui_PopStyleVar();
@@ -197,9 +197,9 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
     if (library.rolls.items.len == 0) {
-        gui.paragraph(theme.text_tertiary, "No rolls yet");
+        gui.paragraph(theme.colors.text_tertiary, "No rolls yet");
     } else if (shown == 0) {
-        gui.paragraph(theme.text_tertiary, "No matching rolls");
+        gui.paragraph(theme.colors.text_tertiary, "No matching rolls");
     }
     if (drawDeleteConfirmation(state, library, gpa)) |index| action = .{ .trash = index };
     c.ImGui_EndChild();
@@ -211,7 +211,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         _ = c.ImGui_BeginChild("new roll", gui.vec2(form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
         c.ImGui_PopStyleVar();
         const window = c.ImGui_GetWindowPos();
-        c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.divider));
+        c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.colors.divider));
         if (drawForm(state, library, gpa, io)) |created| action = .{ .created = created };
         c.ImGui_EndChild();
     }
@@ -250,7 +250,7 @@ fn drawTitleRow(state: *State, library: *Library) void {
     c.ImGui_AlignTextToFramePadding();
     const count = gui.print(" · {d} {s}", .{ library.rolls.items.len, if (library.rolls.items.len == 1) "roll" else "rolls" });
     const room = right - c.ImGui_GetCursorPosX() - controls - gui.px(count_gap) - c.ImGui_CalcTextSize(count).x;
-    gui.textColored(theme.text_tertiary, gui.print("{s}{s}", .{ gui.elideStart(library.label, room), count }));
+    gui.textColored(theme.colors.text_tertiary, gui.print("{s}{s}", .{ gui.elideStart(library.label, room), count }));
 
     c.ImGui_SameLineEx(right - controls, 0);
     if (state.focus_search) c.ImGui_SetKeyboardFocusHere();
@@ -275,9 +275,9 @@ fn drawTitleRow(state: *State, library: *Library) void {
     shortcuts.tooltip("New roll", .new_roll);
     // The plus sign, then the label: the button's padding in, the icon, then a gap.
     const list = c.ImGui_GetWindowDrawList();
-    gui.plus(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon / 2), corner.y + height / 2), gui.px(new_plus_arm), gui.px(new_plus_thickness), theme.on_accent);
+    gui.plus(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon / 2), corner.y + height / 2), gui.px(new_plus_arm), gui.px(new_plus_thickness), theme.colors.on_accent);
     fonts.push(.semibold);
-    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon + new_icon_gap), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.on_accent), new_label);
+    c.ImDrawList_AddText(list, gui.vec2(corner.x + gui.px(gui.button_padding + new_icon + new_icon_gap), corner.y + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.on_accent), new_label);
     fonts.pop();
 }
 
@@ -297,7 +297,7 @@ fn drawDeleteConfirmation(state: *State, library: *const Library, gpa: std.mem.A
     defer c.ImGui_EndPopup();
     gui.title(gui.print("Delete {s}?", .{r.info.name}), fonts.title_size);
     const frames = r.frames.items.len;
-    gui.textColored(theme.text_tertiary, gui.print("{d} {s}", .{ frames, if (frames == 1) "frame" else "frames" }));
+    gui.textColored(theme.colors.text_tertiary, gui.print("{d} {s}", .{ frames, if (frames == 1) "frame" else "frames" }));
     c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
     var confirmed: ?usize = null;
     if (gui.buttonOf(.primary, "Move to Trash", gui.vec2(0, gui.button_height))) confirmed = index;
@@ -344,25 +344,25 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
     c.ImGui_SetNextItemAllowOverlap();
     if (c.ImGui_InvisibleButton("card", gui.vec2(gui.px(card_width), card_height), 0)) action = .{ .open = .{ .roll = index } };
     const hovered = c.ImGui_IsItemHovered(0);
-    c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + gui.px(card_width), origin.y + card_height), theme.imU32(if (hovered) theme.control else theme.panel), gui.px(card_rounding), 0);
+    c.ImDrawList_AddRectFilledEx(list, origin, gui.vec2(origin.x + gui.px(card_width), origin.y + card_height), theme.imU32(if (hovered) theme.colors.control else theme.colors.panel), gui.px(card_rounding), 0);
     var at = gui.vec2(origin.x + gui.px(card_padding_x), origin.y + gui.px(card_padding_y));
     const inner = gui.px(card_width - 2 * card_padding_x);
     fonts.pushSized(.semibold, fonts.title_size);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text), gui.elideEnd(r.info.name, inner));
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.colors.text), gui.elideEnd(r.info.name, inner));
     fonts.pop();
     at.y += gui.px(card_title_line + card_row_gap);
     fonts.pushSized(.mono, fonts.small_size);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.accent), gui.print("{s}", .{r.info.shot orelse r.info.created orelse ""}));
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.colors.accent), gui.print("{s}", .{r.info.shot orelse r.info.created orelse ""}));
     fonts.pop();
     at.y += gui.px(card_date_line + card_row_gap);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_secondary), gui.elideEnd(r.info.stock orelse labels.filmKind(r.info.kind), inner));
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.colors.text_secondary), gui.elideEnd(r.info.stock orelse labels.filmKind(r.info.kind), inner));
     at.y += line + gui.px(card_row_gap);
-    c.ImDrawList_AddText(list, at, theme.imU32(theme.text_tertiary), gui.elideEnd(labels.filmAndFormat(r.info.format), inner));
+    c.ImDrawList_AddText(list, at, theme.imU32(theme.colors.text_tertiary), gui.elideEnd(labels.filmAndFormat(r.info.format), inner));
 
     const total = r.frames.items.len;
     const developed = r.developedCount();
     const bar_y = origin.y + card_height - gui.px(card_padding_y + card_bar);
-    c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(card_row_gap) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
+    c.ImDrawList_AddText(list, gui.vec2(at.x, bar_y - gui.px(card_row_gap) - line + (line - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_secondary), gui.print("{d} of {d} developed", .{ developed, total }));
     const bar_width = gui.px(card_width - 2 * card_padding_x);
     const share = if (total == 0) 0 else @as(f32, @floatFromInt(developed)) / @as(f32, @floatFromInt(total));
     gui.progressBar(list, gui.vec2(at.x, bar_y), gui.vec2(at.x + bar_width, bar_y + gui.px(card_bar)), share);
@@ -378,9 +378,9 @@ fn drawCard(state: *State, gpa: std.mem.Allocator, r: *roll.Roll, index: usize, 
         const on_button = c.ImGui_IsItemHovered(0);
         if (on_button) {
             gui.showTooltip("Delete roll");
-            c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.control_hover), gui.px(gui.choice_rounding), 0);
+            c.ImDrawList_AddRectFilledEx(list, corner, gui.vec2(corner.x + size, corner.y + size), theme.imU32(theme.colors.control_hover), gui.px(gui.choice_rounding), 0);
         }
-        drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(bin_half), if (on_button) theme.red else theme.text_tertiary);
+        drawBin(list, gui.vec2(corner.x + size / 2, corner.y + size / 2), gui.px(bin_half), if (on_button) theme.red else theme.colors.text_tertiary);
     }
     return action;
 }
@@ -419,8 +419,8 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
         // Punched in the page's colour, so they look cut out.
         switch (format.size.holes()) {
             .none => {},
-            .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.page),
-            .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.page),
+            .rows => |p| holes.rows(list, strip, p, strip_x + (p.pitch_mm - p.length_mm) * per_mm / 2, theme.colors.page),
+            .per_frame => |count| for (0..shown) |i| holes.atFrame(list, strip, count, strip_x + leader + @as(f32, @floatFromInt(i)) * step, theme.colors.page),
         }
     }
 
@@ -442,12 +442,12 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
         if (library.thumbnail(gpa, .{ .roll = index, .frame = frame })) |t| {
             gui.imageCover(list, t.ref(), t.width, t.height, corner, far, gui.px(thumb_rounding));
         } else {
-            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.control), gui.px(thumb_rounding), 0);
+            c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.colors.control), gui.px(thumb_rounding), 0);
         }
         fonts.pushSized(.mono, fonts.caption_size);
         const number = labels.frameNumber(frame);
         const number_width = c.ImGui_CalcTextSize(number).x;
-        c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.text_tertiary), number);
+        c.ImDrawList_AddText(list, gui.vec2(picture_x + (width - number_width) / 2, numbers_y), theme.imU32(theme.colors.text_tertiary), number);
         fonts.pop();
         x += step;
     }
@@ -455,13 +455,13 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
         const corner = gui.vec2(strip_end + gui.px(thumb_gap), thumbs_top);
         c.ImGui_SetCursorScreenPos(corner);
         if (c.ImGui_InvisibleButton("more", gui.vec2(more_width, height), 0)) action = .{ .open = .{ .roll = index, .frame = shown } };
-        gui.dashedRect(list, corner, gui.vec2(corner.x + more_width, corner.y + height), theme.imU32(theme.border), 1, gui.px(more_dash), gui.px(more_dash_gap));
+        gui.dashedRect(list, corner, gui.vec2(corner.x + more_width, corner.y + height), theme.imU32(theme.colors.border), 1, gui.px(more_dash), gui.px(more_dash_gap));
         const more = gui.print("+{d} more", .{total - shown});
         const size = c.ImGui_CalcTextSize(more);
-        c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.text_secondary), more);
+        c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.colors.text_secondary), more);
     }
     if (total == 0) {
-        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.text_tertiary), "No frames yet");
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_tertiary), "No frames yet");
     }
     return action;
 }
@@ -515,7 +515,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     if (gui.textField("name", &form.name, "", 0)) form.problem = null;
     if (form.problem) |problem| {
         gui.rowLabel("");
-        gui.paragraph(theme.text_tertiary, problem);
+        gui.paragraph(theme.colors.text_tertiary, problem);
     }
     gui.rowLabel("Film type");
     if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, form.kind, labels.filmKind, 0)) |picked| {
@@ -545,7 +545,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     gui.rowLabel("Copyright");
     _ = gui.textField("copyright", &form.copyright, "[Your name]", 0);
     const notes_x = c.ImGui_GetCursorPosX();
-    gui.textColored(theme.text_secondary, "Notes");
+    gui.textColored(theme.colors.text_secondary, "Notes");
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * notes_lines + gui.px(notes_padding)), 0, null, null);
     gui.rowLabel("Input");
@@ -574,7 +574,7 @@ fn drawFormTitle(state: *State) void {
     const corner = c.ImGui_GetCursorScreenPos();
     if (gui.buttonOf(.quiet, "##close", gui.vec2(close_size / gui.scale, close_size / gui.scale))) state.show_form = false;
     const centre = gui.vec2(corner.x + close_size / 2, corner.y + close_size / 2);
-    gui.cross(c.ImGui_GetWindowDrawList(), centre, gui.px(close_arm), gui.px(close_thickness), theme.text_secondary);
+    gui.cross(c.ImGui_GetWindowDrawList(), centre, gui.px(close_arm), gui.px(close_thickness), theme.colors.text_secondary);
 }
 
 /// Draws the flat field row, for a camera roll: a button that picks the shot, which is optional.
@@ -594,7 +594,7 @@ fn drawFlatField(state: *State, gpa: std.mem.Allocator, io: std.Io) void {
     if (gui.buttonOf(.normal, label, gui.vec2(width / gui.scale, 0))) state.flat_dialog.show(gpa, io);
     c.ImGui_PopID();
     c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-    gui.paragraph(theme.text_tertiary, "Optional");
+    gui.paragraph(theme.colors.text_tertiary, "Optional");
 }
 
 /// Makes the roll the form describes, with `stock_names` and `choices` as the form listed them.

@@ -2,6 +2,7 @@
 //! command on the command line.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const minilab = @import("minilab");
 const app = @import("app/app.zig");
 pub const version = @import("version.zig");
@@ -321,8 +322,17 @@ pub fn main(init: std.process.Init) !void {
     if (args.len == 2 and std.mem.eql(u8, args[1], "looks")) return listLooks(init.io);
     const library = try defaultLibrary(arena, init.environ_map);
     const home = homeFolder(init.environ_map);
-    if (args.len < 2) return runApp(gpa, init.io, .{ .library = library, .home = home }, all_args);
-    if (std.mem.eql(u8, args[1], "open")) return runApp(gpa, init.io, parseOpen(arena, library, home, args[2..]) catch exitWithUsage(), all_args);
+    const preferences = try minilab.preferences.path(arena, builtin.os.tag, .{
+        .home = home,
+        .config_home = init.environ_map.get("XDG_CONFIG_HOME"),
+        .app_data = init.environ_map.get("APPDATA"),
+    });
+    if (args.len < 2) return runApp(gpa, init.io, .{ .library = library, .home = home, .preferences = preferences }, all_args);
+    if (std.mem.eql(u8, args[1], "open")) {
+        var options = parseOpen(arena, library, home, args[2..]) catch exitWithUsage();
+        options.preferences = preferences;
+        return runApp(gpa, init.io, options, all_args);
+    }
     if (std.mem.eql(u8, args[1], "develop-roll")) {
         return developRoll(gpa, init.io, args[2..]) catch |err| switch (err) {
             error.Usage => exitWithUsage(),
@@ -777,6 +787,7 @@ test {
     _ = @import("app/scan_view.zig");
     _ = @import("app/scan_worker.zig");
     _ = @import("app/update_view.zig");
+    _ = @import("app/settings_view.zig");
     _ = @import("app/update_worker.zig");
     _ = @import("app/looks_view.zig");
     _ = @import("app/export_view.zig");
@@ -786,6 +797,7 @@ test {
     _ = @import("app/shortcuts.zig");
     _ = @import("ui/gui.zig");
     _ = @import("ui/theme.zig");
+    _ = @import("ui/icons.zig");
     _ = @import("platform/window.zig");
 }
 

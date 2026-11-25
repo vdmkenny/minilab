@@ -14,6 +14,10 @@ pub const look = @import("core/look.zig");
 pub const calibration = @import("core/calibration.zig");
 /// Changes to how a scanner is set up for raw scans, per scanner.
 pub const scanner_settings = @import("core/scanner_settings.zig");
+/// The app's preferences, the same in every library.
+pub const preferences = @import("core/preferences.zig");
+/// Small JSON settings files, read and written whole.
+pub const json_file = @import("core/json_file.zig");
 /// Medians, percentiles and histogram ranks.
 pub const stats = @import("core/stats.zig");
 /// Splitting work over the cores.

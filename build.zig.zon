@@ -44,6 +44,10 @@
             .url = "git+https://github.com/sfi0zy/street-monochrome.git#3f915315da4f43dd86af304273615b3a54939a94",
             .hash = "N-V-__8AAIKS1QERXHqASkptdd1bGfa2YEP2t029YlpWY1GQ",
         },
+        .lucide = .{
+            .url = "https://registry.npmjs.org/lucide-static/-/lucide-static-0.460.0.tgz",
+            .hash = "N-V-__8AAGJO1gFMHbQCxfFbXJ-jzS6TkFdmYOwkh3kuA8OX",
+        },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "deps" },
 }

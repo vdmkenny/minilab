@@ -50,20 +50,20 @@ pub fn draw(state: *State, worker: *Worker, ctx: context.Context, busy: bool) bo
     defer c.ImGui_PopTextWrapPos();
 
     gui.title(gui.print("minilab {s}", .{release.version}), fonts.title_size);
-    gui.textColored(theme.text_tertiary, gui.print("Installed {s}", .{version.string}));
+    gui.textColored(theme.colors.text_tertiary, gui.print("Installed {s}", .{version.string}));
     gap();
     drawNotes(release.notes);
     gap();
 
     const working = phase == .downloading or phase == .installing;
     switch (phase) {
-        .downloading => gui.textColored(theme.text_secondary, gui.print("Downloading {d} of {d} MB", .{ labels.megabytes(worker.downloaded.load(.acquire)), labels.megabytes(release.archive.size) })),
-        .installing => gui.textColored(theme.text_secondary, "Installing"),
-        .failed => gui.paragraph(theme.accent, gui.print("Update failed · {s}", .{failureLabel(worker.failure)})),
+        .downloading => gui.textColored(theme.colors.text_secondary, gui.print("Downloading {d} of {d} MB", .{ labels.megabytes(worker.downloaded.load(.acquire)), labels.megabytes(release.archive.size) })),
+        .installing => gui.textColored(theme.colors.text_secondary, "Installing"),
+        .failed => gui.paragraph(theme.colors.accent, gui.print("Update failed · {s}", .{failureLabel(worker.failure)})),
         else => if (!worker.writable) {
-            gui.textColored(theme.text_tertiary, "Folder not writable");
+            gui.textColored(theme.colors.text_tertiary, "Folder not writable");
         } else if (busy) {
-            gui.textColored(theme.text_tertiary, "Scan or export running");
+            gui.textColored(theme.colors.text_tertiary, "Scan or export running");
         },
     }
     if (builtin.os.tag == .macos and !worker.signed) drawUnquarantine(ctx, worker.folder);
@@ -96,19 +96,19 @@ fn drawNotes(notes: []const update.Note) void {
     _ = c.ImGui_BeginChild("notes", gui.vec2(width, 0), c.ImGuiChildFlags_AutoResizeY, 0);
     defer c.ImGui_EndChild();
     for (notes) |note| switch (note.kind) {
-        .heading => gui.textColored(theme.text_secondary, note.text),
-        .change => gui.paragraph(theme.text, gui.print("· {s}", .{note.text})),
+        .heading => gui.textColored(theme.colors.text_secondary, note.text),
+        .change => gui.paragraph(theme.colors.text, gui.print("· {s}", .{note.text})),
     };
 }
 
 /// The command that lets an unsigned build through macOS's quarantine, with a button to copy it.
 fn drawUnquarantine(ctx: context.Context, folder: []const u8) void {
     const command = gui.print("xattr -dr com.apple.quarantine \"{s}\"", .{folder});
-    gui.textColored(theme.text_secondary, "You may need to turn off macOS Gatekeeper for minilab after updating");
+    gui.textColored(theme.colors.text_secondary, "You may need to turn off macOS Gatekeeper for minilab after updating");
     fonts.pushSized(.mono, fonts.small_size);
-    gui.paragraph(theme.text_tertiary, command);
+    gui.paragraph(theme.colors.text_tertiary, command);
     fonts.pop();
-    context.copyButton(ctx.notice, command, gui.vec2(0, 0));
+    context.copyButton(ctx.notice, command);
 }
 
 /// Why an update failed, in a few words.
