@@ -439,7 +439,7 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     c.ImGui_PopStyleVar();
     const window = c.ImGui_GetWindowPos();
     drawSettings(state, ctx, roll_index);
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineV(c.ImGui_GetWindowDrawList(), window.x, window.y, window.y + available.y, theme.imU32(theme.colors.divider));
     c.ImGui_EndChild();
     return null;
 }
@@ -528,7 +528,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
     const list = c.ImGui_GetWindowDrawList();
     const origin = c.ImGui_GetCursorScreenPos();
     if (total == 0) {
-        c.ImDrawList_AddText(list, origin, theme.imU32(theme.colors.text_tertiary), i18n.t.rolls.no_frames);
+        c.ImDrawList_AddText(list, origin, theme.imU32(theme.colors.text_tertiary), i18n.t.common.no_frames_yet);
         return;
     }
     const width = c.ImGui_GetContentRegionAvail().x;
@@ -552,7 +552,7 @@ fn drawGrid(state: *State, ctx: context.Context, roll_index: usize) void {
         const hovered = c.ImGui_IsItemHovered(0);
         const frame = r.frames.items[i];
         if (hovered) {
-            gui.showTooltip(gui.say(i18n.t.@"export".frame_tooltip, .{ i + 1, if (!frame.developed) i18n.t.@"export".not_developed else frame.look.label() }));
+            gui.showTooltip(gui.say(i18n.t.@"export".frame_tooltip, .{ i + 1, if (!frame.developed) i18n.t.@"export".not_developed else labels.look(&frame.look) }));
         }
         if (clicked) {
             if (shift and state.anchor != null) {
@@ -629,7 +629,7 @@ fn drawSection(state: *State, min: gui.Vec2, max: gui.Vec2) void {
         const status = if (cancelling)
             gui.say(i18n.t.@"export".canceling, .{job.number})
         else
-            gui.say(i18n.t.@"export".exporting_file, .{ current + 1, batch.jobs.len, gui.print("{s}.{s}", .{ job.stem, batch.options.format.extension() }), batch.stage.load(.acquire).label() });
+            gui.say(i18n.t.@"export".exporting_file, .{ current + 1, batch.jobs.len, gui.print("{s}.{s}", .{ job.stem, batch.options.format.extension() }), labels.exportStage(batch.stage.load(.acquire)) });
         if (!cancelling) {
             if (link(gui.vec2(right, first_top), i18n.t.common.cancel)) batch.cancel.store(true, .release);
             shortcuts.tooltip(i18n.t.common.cancel, .cancel);
@@ -669,7 +669,7 @@ fn link(top_right: gui.Vec2, label: [:0]const u8) bool {
     const y = corner.y + (gui.px(line) - size.y) / 2;
     c.ImDrawList_AddText(list, gui.vec2(corner.x, y), ink, label);
     const underline = y + size.y + gui.px(link_underline);
-    c.ImDrawList_AddLine(list, gui.vec2(corner.x, underline), gui.vec2(corner.x + size.x, underline), ink);
+    c.ImDrawList_AddLineH(list, corner.x, corner.x + size.x, underline, ink);
     return clicked;
 }
 

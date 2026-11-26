@@ -643,8 +643,8 @@ fn chevron(list: *c.ImDrawList, min: Vec2, max: Vec2) void {
     const tip = vec2(max.x - px(chevron_inset), middle + px(chevron_drop));
     const ink = theme.imU32(theme.colors.text_secondary);
     const arm = px(chevron_arm);
-    c.ImDrawList_AddLineEx(list, vec2(tip.x - arm, tip.y - arm), tip, ink, px(chevron_thickness));
-    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + arm, tip.y - arm), ink, px(chevron_thickness));
+    c.ImDrawList_AddLineEx(list, vec2(tip.x - arm, tip.y - arm), tip, ink, px(chevron_thickness), 0);
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + arm, tip.y - arm), ink, px(chevron_thickness), 0);
 }
 
 /// Draws a ticked check box, `size` pixels square, at `min`: amber, with the design's tick.
@@ -1112,15 +1112,15 @@ const star_notch = 0.45;
 /// Draws an x centred on `centre`, its strokes reaching `arm` out along each axis.
 pub fn cross(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
     const ink = theme.imU32(colour);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness, 0);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness, 0);
 }
 
 /// Draws a plus sign centred on `centre`, its strokes reaching `arm` out each way.
 pub fn plus(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
     const ink = theme.imU32(colour);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness, 0);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness, 0);
 }
 
 /// Draws a progress bar filling `min` to `max`: a grey track, with `fraction` (0 to 1) of it in
@@ -1148,7 +1148,7 @@ pub fn divider() void {
     const origin = c.ImGui_GetCursorScreenPos();
     const window = c.ImGui_GetWindowPos();
     const width = c.ImGui_GetWindowWidth();
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(window.x, origin.y), vec2(window.x + width, origin.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(c.ImGui_GetWindowDrawList(), window.x, window.x + width, origin.y, theme.imU32(theme.colors.divider));
 }
 
 /// The space above and below a section of a side panel, in the design's pixels.
@@ -1200,7 +1200,7 @@ pub fn edge(side: enum { left, right }) void {
     const pos = c.ImGui_GetWindowPos();
     const size = c.ImGui_GetWindowSize();
     const x = if (side == .left) pos.x else pos.x + size.x - 1;
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(x, pos.y), vec2(x, pos.y + size.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineV(c.ImGui_GetWindowDrawList(), x, pos.y, pos.y + size.y, theme.imU32(theme.colors.divider));
 }
 
 /// Draws a dashed line from `from` to `to`, with dashes `dash` long and `gap` between them, in
@@ -1213,7 +1213,7 @@ pub fn dashedLine(list: *c.ImDrawList, from: Vec2, to: Vec2, colour: u32, thickn
     var at: f32 = 0;
     while (at < length) : (at += dash + gap) {
         const end = @min(at + dash, length);
-        c.ImDrawList_AddLineEx(list, vec2(from.x + dx * at / length, from.y + dy * at / length), vec2(from.x + dx * end / length, from.y + dy * end / length), colour, thickness);
+        c.ImDrawList_AddLineEx(list, vec2(from.x + dx * at / length, from.y + dy * at / length), vec2(from.x + dx * end / length, from.y + dy * end / length), colour, thickness, 0);
     }
 }
 

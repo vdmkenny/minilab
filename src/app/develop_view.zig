@@ -712,7 +712,7 @@ pub const State = struct {
     /// way to import another .cube.
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
-        if (!gui.beginCombo("look", frame.look.label(), 0, .tall)) return;
+        if (!gui.beginCombo("look", labels.look(&frame.look), 0, .tall)) return;
         defer gui.endCombo();
         if (c.ImGui_IsWindowAppearing()) {
             state.look_choices.deinit(gpa);
@@ -733,7 +733,7 @@ pub const State = struct {
             // The bundled looks are in their collections' menus.
             if (group == .bundled) continue;
             c.ImGui_PushIDInt(@intCast(i));
-            if (c.ImGui_SelectableEx(gui.print("{s}", .{choice.id.label()}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, choice.id);
+            if (c.ImGui_SelectableEx(gui.print("{s}", .{labels.look(&choice.id)}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, choice.id);
             c.ImGui_PopID();
         }
         c.ImGui_Separator();
@@ -753,7 +753,7 @@ pub const State = struct {
                 if (b.pack != pack) continue;
                 if (film != b.film) {
                     film = b.film;
-                    c.ImGui_SeparatorText(gui.print("{s}", .{b.film.label()}).ptr);
+                    c.ImGui_SeparatorText(gui.print("{s}", .{labels.lookFilm(b.film)}).ptr);
                 }
                 const id: look.Id = .ofBundled(i);
                 if (c.ImGui_SelectableEx(gui.print("{s}", .{b.name}).ptr, id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, id);
@@ -1061,7 +1061,7 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
             c.ImGui_PopID();
         }
     } else if (total == 0) {
-        gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.no_frames);
+        gui.paragraph(theme.colors.text_tertiary, i18n.t.common.no_frames);
     } else {
         const r = roll_index.?;
         const list = c.ImGui_GetWindowDrawList();
@@ -1161,7 +1161,7 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
 /// the overlays, the crop and turn tools, and the pipeline.
 fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, list: *c.ImDrawList, origin: gui.Vec2, width: f32, toolbar_height: f32) void {
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + toolbar_height), theme.imU32(theme.colors.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + width, origin.y + toolbar_height - 1), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + width, origin.y + toolbar_height - 1, theme.imU32(theme.colors.divider));
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(toolbar.padding_x), origin.y + gui.px(toolbar.padding_y)));
     if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
@@ -1237,7 +1237,7 @@ fn nextControl(gap: f32, y: f32) void {
 fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize, list: *c.ImDrawList, origin: gui.Vec2, width: f32, info_height: f32) void {
     const info_top = origin.y;
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top + info_height), theme.imU32(theme.colors.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + width, info_top, theme.imU32(theme.colors.divider));
     if (state.frame) |frame| {
         // The rating on the right, and the frame's details from the left up to it.
         const limit = drawRating(state, io, library, list, origin.x + width - gui.px(toolbar.padding_x), info_top + info_height / 2);
@@ -1506,8 +1506,8 @@ fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     c.ImDrawList_AddImageRounded(list, texture.ref(), min, max, gui.vec2(0, 0), gui.vec2(1, 1), 0xFFFFFFFF, radius, 0);
     // A dark ring and a light one, so the edge shows on any picture, and a small mark at the
     // centre, where a click picks.
-    c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(loupe_ring.outer_offset), theme.imU32(theme.colors.header), loupe_ring.segments, gui.px(loupe_ring.outer));
-    c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.colors.text), loupe_ring.segments, gui.px(loupe_ring.inner));
+    c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(loupe_ring.outer_offset), theme.imU32(theme.colors.header), loupe_ring.segments, gui.px(loupe_ring.outer), 0);
+    c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.colors.text), loupe_ring.segments, gui.px(loupe_ring.inner), 0);
     gui.plus(list, centre, gui.px(loupe_ring.mark), 1, theme.withAlpha(theme.colors.text, loupe_ring.mark_alpha));
 }
 
@@ -1553,8 +1553,8 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     for ([_]f32{ 1.0 / 3.0, 2.0 / 3.0 }) |t| {
         const x = box_min.x + (box_max.x - box_min.x) * t;
         const y = box_min.y + (box_max.y - box_min.y) * t;
-        c.ImDrawList_AddLine(list, gui.vec2(x, box_min.y), gui.vec2(x, box_max.y), thirds);
-        c.ImDrawList_AddLine(list, gui.vec2(box_min.x, y), gui.vec2(box_max.x, y), thirds);
+        c.ImDrawList_AddLineV(list, x, box_min.y, box_max.y, thirds);
+        c.ImDrawList_AddLineH(list, box_min.x, box_max.x, y, thirds);
     }
     const amber = theme.imU32(theme.colors.accent);
     c.ImDrawList_AddRectEx(list, box_min, box_max, amber, 0, gui.px(crop_line), 0);
@@ -1563,8 +1563,8 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     for ([_]gui.Vec2{ box_min, gui.vec2(box_max.x, box_min.y), box_max, gui.vec2(box_min.x, box_max.y) }, 0..) |corner, i| {
         const sx: f32 = if (i == 1 or i == 2) -1 else 1;
         const sy: f32 = if (i >= 2) -1 else 1;
-        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x + sx * arm, corner.y), amber, thick);
-        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x, corner.y + sy * arm), amber, thick);
+        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x + sx * arm, corner.y), amber, thick, 0);
+        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x, corner.y + sy * arm), amber, thick, 0);
     }
     if (edit.turns != 0 or edit.mirrored) {
         const note = if (edit.turns == 0)
@@ -1631,7 +1631,7 @@ fn drawSettingsColumn(state: *State, gpa: std.mem.Allocator, io: std.Io, library
     _ = c.ImGui_BeginChild("settings bar", gui.vec2(gui.px(settings_width), bar), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_NoScrollbar);
     c.ImGui_PopStyleVar();
     gui.edge(.left);
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), corner, gui.vec2(corner.x + gui.px(settings_width), corner.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(c.ImGui_GetWindowDrawList(), corner.x, corner.x + gui.px(settings_width), corner.y, theme.imU32(theme.colors.divider));
     c.ImGui_BeginDisabled(state.cropping != null);
     if (state.frame != null) drawBottomBar(state, gpa, io, library, roll_index);
     c.ImGui_EndDisabled();
@@ -1704,7 +1704,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(range_padding_x), gui.px(small_button_padding_y)));
         for (comptime std.enums.values(develop.Range), 0..) |range, i| {
             if (i > 0) c.ImGui_SameLineEx(0, gap);
-            if (gui.buttonOf(if (state.range == range) .selected else .unselected, gui.print("{s}", .{range.label()}), gui.vec2(third / gui.scale, 0))) state.range = range;
+            if (gui.buttonOf(if (state.range == range) .selected else .unselected, gui.print("{s}", .{labels.range(range)}), gui.vec2(third / gui.scale, 0))) state.range = range;
         }
         c.ImGui_PopStyleVar();
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
@@ -1779,7 +1779,7 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         state.drawLook(gpa, io, library);
         gui.rowLabel(i18n.t.develop.tone);
         c.ImGui_BeginDisabled(fitted);
-        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
+        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, labels.tone, 0)) |picked| {
             s.tone = picked;
             state.changed();
         }
@@ -1800,7 +1800,7 @@ fn drawWhiteBalance(state: *State, library: *Library, roll_index: ?usize) void {
     const modes = comptime std.enums.values(develop.WhiteBalance);
     var mode_names: [modes.len][]const u8 = undefined;
     const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
-    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) i18n.t.develop.stock_balance_no_preset else if (frame.stock_slopes == null) i18n.t.develop.stock_balance_calibrate_first else gui.say(i18n.t.develop.stock_balance_of, .{maker.?});
+    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) labels.whiteBalance(m) else if (maker == null) i18n.t.develop.stock_balance_no_preset else if (frame.stock_slopes == null) i18n.t.develop.stock_balance_calibrate_first else gui.say(i18n.t.develop.stock_balance_of, .{maker.?});
     if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
         switch (modes[picked]) {
             .picked => state.picking = .neutral,

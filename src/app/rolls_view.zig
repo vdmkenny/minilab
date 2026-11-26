@@ -265,7 +265,7 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         _ = c.ImGui_BeginChild("panel", gui.vec2(form, available.y), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_None);
         c.ImGui_PopStyleVar();
         const window = c.ImGui_GetWindowPos();
-        c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), window, gui.vec2(window.x, window.y + available.y), theme.imU32(theme.colors.divider));
+        c.ImDrawList_AddLineV(c.ImGui_GetWindowDrawList(), window.x, window.y, window.y + available.y, theme.imU32(theme.colors.divider));
         switch (state.panel) {
             .closed => {},
             .new_roll => if (drawForm(state, library, gpa, io)) |created| {
@@ -322,7 +322,7 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     // All film sizes, then each size.
     var filter_names: [film_sizes.len + 1][]const u8 = undefined;
     filter_names[0] = i18n.t.rolls.all_film_sizes;
-    for (filter_names[1..], film_sizes) |*name, size| name.* = size.label();
+    for (filter_names[1..], film_sizes) |*name, size| name.* = labels.filmSizeName(size);
     const filter_index = if (state.size_filter) |size| gui.indexIn(formats.FilmSize, film_sizes, size) + 1 else 0;
     if (gui.combo("film size", &filter_names, filter_index, filter_width)) |picked| {
         state.size_filter = if (picked == 0) null else film_sizes[picked - 1];
@@ -531,7 +531,7 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (more_width - size.x) / 2, corner.y + (height - size.y) / 2), theme.imU32(theme.colors.text_secondary), more);
     }
     if (total == 0) {
-        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_tertiary), i18n.t.rolls.no_frames);
+        c.ImDrawList_AddText(list, gui.vec2(strip_x, thumbs_top + (height - c.ImGui_GetTextLineHeight()) / 2), theme.imU32(theme.colors.text_tertiary), i18n.t.common.no_frames_yet);
     }
     return action;
 }
@@ -564,7 +564,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     }
     gui.rowLabel(i18n.t.rolls.stock);
     var stock_buffer: [labels.stock_choices.len + 1][]const u8 = undefined;
-    const stock_names = labels.stockNames(form.kind, "Other", &stock_buffer);
+    const stock_names = labels.stockNames(form.kind, i18n.t.common.other, &stock_buffer);
     if (form.stock >= stock_names.len) form.stock = 0;
     if (gui.searchCombo("stock", stock_names, form.stock, 0, i18n.t.rolls.search_stocks)) |picked| form.stock = picked;
     gui.rowLabel(i18n.t.rolls.film_size);
@@ -592,7 +592,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     c.ImGui_SameLineEx(notes_x + gui.px(gui.label_column + gui.label_gap), 0);
     _ = c.ImGui_InputTextMultilineEx("##notes", &form.notes, form.notes.len + 1, gui.vec2(-std.math.floatMin(f32), gui.lineHeight() * notes_lines + gui.px(notes_padding)), 0, null, null);
     gui.rowLabel(i18n.t.rolls.input);
-    if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, roll.Input.label, 0)) |picked| form.input = picked;
+    if (gui.comboOf(roll.Input, "input", &form_inputs, form.input, labels.input, 0)) |picked| form.input = picked;
     if (form.input == .camera_raw) drawFlatField(state, gpa, io);
 
     // The button sits at the bottom of the panel.

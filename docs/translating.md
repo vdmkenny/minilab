@@ -38,10 +38,11 @@ picks one by hand.
 5. Look at every screen in your language for text that doesn't fit:
 
    ```bash
-   zig-out/bin/minilab open --library <a copy of a library> --workspace develop --screenshot develop.png
+   zig-out/bin/minilab open --library <a copy of a library> --workspace develop --language pt --screenshot develop.png
    ```
 
-   with the language set in Settings first, since screenshots use the defaults otherwise.
+   A screenshot is in English unless `--language` says otherwise, whatever the computer's
+   language, so screenshots look the same whoever takes them.
 
 ## Translating well
 

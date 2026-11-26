@@ -594,18 +594,18 @@ pub const State = struct {
         const id = ctx.importCubes(paths) orelse return;
         state.listImported(ctx);
         for (state.imported.items, 0..) |*i, n| if (i.eql(&id)) select(state, .{ .imported = n });
-        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.imported, .{id.label()})});
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.imported, .{labels.look(&id)})});
     }
 
     /// Deletes the selected imported LUT from the library.
     fn removeImported(state: *State, ctx: context.Context, index: usize) void {
         const id = state.imported.items[index];
         ctx.library.looks.remove(ctx.gpa, ctx.io, id) catch |err| {
-            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_remove, .{ id.label(), @errorName(err) })});
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_remove, .{ labels.look(&id), @errorName(err) })});
             return;
         };
         ctx.library.lookChanged(ctx.gpa, id);
-        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.removed, .{id.label()})});
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.removed, .{labels.look(&id)})});
         state.listImported(ctx);
         state.selected = .neutral;
     }
@@ -1119,7 +1119,7 @@ fn drawList(state: *State, ctx: context.Context) void {
             .imported => |s| s == i,
             else => false,
         };
-        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), importedSize(ctx, id.*), selected)) select(state, .{ .imported = i });
+        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, labels.look(id), importedSize(ctx, id.*), selected)) select(state, .{ .imported = i });
         c.ImGui_PopID();
         y += item_height + gui.px(item_gap);
     }
@@ -1357,7 +1357,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         const h = w * aspect;
         for (ids, 0..) |id, i| {
             const min = gui.vec2(at.x + (w + gap) * @as(f32, @floatFromInt(i)), y);
-            _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), id.label(), false, false);
+            _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), labels.look(&id), false, false);
         }
         y += h + caption + gui.px(intro_gap);
         return y;
@@ -1375,7 +1375,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         var to = from + 1;
         while (film != null and to < ids.len and bundled.looks[ids[to].kind().bundled].film == film.?) to += 1;
         fonts.pushSized(.semibold, fonts.small_size);
-        gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else i18n.t.looks.neutral);
+        gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ labels.lookFilm(f), to - from }) else i18n.t.looks.neutral);
         fonts.pop();
         y += gui.lineFor(fonts.small_size) + gui.px(film_heading_gap);
         for (from..to) |i| {
@@ -1472,7 +1472,7 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     var names: [sources.len][]const u8 = undefined;
     var widest: f32 = 0;
     for (&names, sources) |*n, s| {
-        n.* = s.label();
+        n.* = labels.references(s);
         widest = @max(widest, textWidth(n.*));
     }
     const combo_width = widest + gui.px(combo_padding + combo_arrow_room);
@@ -1574,7 +1574,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         x += widths.get(column);
     }
     fonts.pop();
-    c.ImDrawList_AddLine(list, gui.vec2(at.x + border, at.y + border + header_height - 0.5), gui.vec2(far.x - border, at.y + border + header_height - 0.5), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, at.x + border, far.x - border, at.y + border + header_height - 0.5, theme.imU32(theme.colors.divider));
 
     var remove: ?usize = null;
     for (0..n) |i| {
@@ -1650,7 +1650,7 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
     } else if (row_hovered or use_hovered) {
         c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.withAlpha(theme.colors.raised, hover_shade)));
     }
-    if (i + 1 < own.pairs.items.len) c.ImDrawList_AddLine(list, gui.vec2(row_min.x, row_max.y - 0.5), gui.vec2(row_max.x, row_max.y - 0.5), theme.imU32(theme.colors.raised));
+    if (i + 1 < own.pairs.items.len) c.ImDrawList_AddLineH(list, row_min.x, row_max.x, row_max.y - 0.5, theme.imU32(theme.colors.raised));
 
     const text_top = row_min.y + gui.px(cell_padding_y);
     var x = row_min.x;
@@ -1681,7 +1681,7 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
 /// The tooltip over a pair: its files, and how well they line up.
 fn pairTooltip(p: draft.Pair) void {
     const a = p.alignment orelse return gui.showTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
-    const turned = a.orientation.label();
+    const turned = labels.orientation(a.orientation);
     gui.showTooltip(gui.say(if (turned.len > 0) i18n.t.looks.alignment_turned else i18n.t.looks.alignment, .{
         p.theirs,
         gui.print("{d:.2}", .{a.quality}),
@@ -1959,8 +1959,8 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     }.at_;
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.colors.histogram_ground), gui.px(gui.choice_rounding), 0);
     const axis = theme.imU32(theme.colors.border);
-    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.top), p(at, k, chart_design.left, chart_design.bottom), axis, k);
-    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.bottom), axis, k);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.top), p(at, k, chart_design.left, chart_design.bottom), axis, k, 0);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.bottom), axis, k, 0);
 
     const plot = struct {
         fn point(o: gui.Vec2, scale: f32, x: f32, y: f32) gui.Vec2 {

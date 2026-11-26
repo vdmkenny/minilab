@@ -16,4 +16,8 @@ pub const Messages = struct {
     not_set: [:0]const u8 = "Not set",
     select_all: [:0]const u8 = "Select all",
     select_none: [:0]const u8 = "Select none",
+    no_frames: [:0]const u8 = "No frames",
+    no_frames_yet: [:0]const u8 = "No frames yet",
+    // The last choice in a list of film stocks, for one that isn't listed.
+    other: [:0]const u8 = "Other",
 };

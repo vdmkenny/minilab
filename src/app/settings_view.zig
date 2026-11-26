@@ -115,10 +115,10 @@ pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context, syst
     const title_bottom = origin.y + gui.px(layout.title_height);
     const column_right = origin.x + gui.px(layout.column_width);
     // The column, in the page's colour, under the title bar and down to the window's corner.
-    c.ImDrawList_AddRectFilledEx(list, gui.vec2(origin.x, title_bottom), gui.vec2(column_right, origin.y + size.y), theme.imU32(theme.colors.page), gui.px(layout.rounding), c.ImDrawFlags_RoundCornersBottomLeft);
+    c.ImDrawList_AddRectFilledEx(list, gui.vec2(origin.x, title_bottom), gui.vec2(column_right, origin.y + size.y), theme.imU32(theme.colors.page), gui.px(layout.rounding), c.ImDrawFlags_RoundBottomLeft);
     const line = theme.imU32(theme.colors.divider);
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, title_bottom), gui.vec2(origin.x + size.x, title_bottom), line);
-    c.ImDrawList_AddLine(list, gui.vec2(column_right, title_bottom), gui.vec2(column_right, origin.y + size.y), line);
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + size.x, title_bottom, line);
+    c.ImDrawList_AddLineV(list, column_right, title_bottom, origin.y + size.y, line);
 
     if (drawTitleBar(origin, size.x)) {
         state.open = false;
@@ -221,7 +221,7 @@ fn drawColumn(state: *State, top_left: gui.Vec2, bottom: f32) void {
         foot -= step;
     }
     const line_y = foot + step - gui.px(layout.column_padding);
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), gui.vec2(x, line_y), gui.vec2(x + width, line_y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(c.ImGui_GetWindowDrawList(), x, x + width, line_y, theme.imU32(theme.colors.divider));
 }
 
 /// One page in the column, `width` wide from `min`: filled while it's showing, and lighter while

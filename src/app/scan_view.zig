@@ -962,13 +962,13 @@ fn drawFilmChoice(state: *State, panel: ScannerPanel, top: f32) f32 {
     var y = top;
     y += gui.lineAt(panel.list, panel.x, y, theme.colors.text_secondary, i18n.t.scan.film_type) + gui.px(group_gap);
     c.ImGui_PushID("film");
-    if (pillsOf(FilmType, state.film, &labelsOf(FilmType), panel.x, &y, panel.width)) |picked| state.film = picked;
+    if (pillsOf(FilmType, state.film, &labelsOf(FilmType, FilmType.label), panel.x, &y, panel.width)) |picked| state.film = picked;
     c.ImGui_PopID();
     y += gui.px(group_gap);
     // Slides can come as a strip or in mounts, which detection finds differently.
     if (state.film == .positive) {
         c.ImGui_PushID("holder");
-        if (pillsOf(frames.Holder, state.holder_choice, &labelsOf(frames.Holder), panel.x, &y, panel.width)) |picked| {
+        if (pillsOf(frames.Holder, state.holder_choice, &labelsOf(frames.Holder, labels.holder), panel.x, &y, panel.width)) |picked| {
             state.holder_choice = picked;
             state.boxes_dirty = true;
         }
@@ -1322,7 +1322,7 @@ fn filmAreaNote(caps: scan.Capabilities, ctx: context.Context, roll_index: ?usiz
     if (roll_index) |r| {
         const format = ctx.library.rolls.items[r].info.format.format();
         if (format.height_mm > width) {
-            return gui.say(i18n.t.scan.film_area_too_narrow, .{ mm2(width), format.size.label(), mm0(format.height_mm) });
+            return gui.say(i18n.t.scan.film_area_too_narrow, .{ mm2(width), labels.filmSizeName(format.size), mm0(format.height_mm) });
         }
         if (format.size.filmWidthMm()) |film| if (film > width) {
             return gui.say(i18n.t.scan.film_area_edges_hidden, .{ mm2(width), mm0(format.height_mm) });
@@ -1434,7 +1434,7 @@ fn startPreview(state: *State, gpa: std.mem.Allocator) void {
 fn drawNoRoll() bool {
     const origin = c.ImGui_GetWindowPos();
     const go = gui.noRoll(gui.vec2(origin.x + gui.px(main_padding_x), origin.y + gui.px(main_padding_y)));
-    shortcuts.tooltip(i18n.t.scan.rolls, .rolls);
+    shortcuts.tooltip(i18n.t.labels.workspace.rolls, .rolls);
     return go;
 }
 
@@ -1742,7 +1742,7 @@ fn drawFrameSection(state: *State, ctx: context.Context, roll_index: usize, list
         return;
     };
     const index = state.selected orelse {
-        y += titleAt(list, x, y, i18n.t.scan.no_frames, null) + gui.px(section_gap);
+        y += titleAt(list, x, y, i18n.t.common.no_frames, null) + gui.px(section_gap);
         const why = if (state.detect_note) |note| note.text() else i18n.t.scan.detect_or_add;
         y += gui.paragraphAt(list, x, y, @min(width, gui.px(note_max_width)), theme.colors.text_secondary, why) + gui.px(section_gap);
         c.ImGui_SetCursorScreenPos(gui.vec2(x, y));
@@ -1876,7 +1876,7 @@ fn drawFrameView(state: *State, preview: *Preview, index: usize, list: *c.ImDraw
     if (box.check != null) {
         drawDashedQuad(list, corners, ink, gui.px(box_line));
     } else {
-        c.ImDrawList_AddQuadEx(list, corners[0], corners[1], corners[2], corners[3], ink, gui.px(box_line));
+        c.ImDrawList_AddQuadEx(list, corners[0], corners[1], corners[2], corners[3], ink, gui.px(box_line), 0);
     }
 
     // Dragging the crop moves the frame along the strip, and dragging a corner resizes it.
@@ -2409,7 +2409,7 @@ fn drawQueueRow(list: *c.ImDrawList, x: f32, y: f32, width: f32, index: usize, i
         .scanning, .checking, .done, .check_crop, .failed => true,
     };
     if (filled) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + width, y + height), theme.imU32(theme.colors.raised), gui.px(gui.control_rounding), 0);
-    if (running) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + gui.px(running_bar), y + height), theme.imU32(theme.colors.accent), gui.px(gui.control_rounding), c.ImDrawFlags_RoundCornersLeft);
+    if (running) c.ImDrawList_AddRectFilledEx(list, gui.vec2(x, y), gui.vec2(x + gui.px(running_bar), y + height), theme.imU32(theme.colors.accent), gui.px(gui.control_rounding), c.ImDrawFlags_RoundLeft);
 
     const ink = if (filled) theme.colors.text else if (item == .skipped) theme.colors.text_tertiary else theme.colors.text_secondary;
     const text_y = y + pad_y + (line - c.ImGui_GetFontSize()) / 2;
@@ -2646,10 +2646,10 @@ fn pillsOf(comptime T: type, chosen: T, labels_: *const [std.enums.values(T).len
     return choices[picked];
 }
 
-/// The labels of every value of enum `T`, in order, from its `label` function.
-fn labelsOf(comptime T: type) [std.enums.values(T).len][:0]const u8 {
+/// The labels of every value of enum `T`, in order, from `labelOf`.
+fn labelsOf(comptime T: type, comptime labelOf: fn (T) [:0]const u8) [std.enums.values(T).len][:0]const u8 {
     var out: [std.enums.values(T).len][:0]const u8 = undefined;
-    for (&out, std.enums.values(T)) |*label, value| label.* = value.label();
+    for (&out, std.enums.values(T)) |*label, value| label.* = labelOf(value);
     return out;
 }
 
@@ -2719,7 +2719,7 @@ const tick = struct {
 fn drawTick(list: *c.ImDrawList, corner: gui.Vec2, color: theme.Color) void {
     var points: [tick.points.len]gui.Vec2 = undefined;
     for (&points, tick.points) |*p, at| p.* = gui.vec2(corner.x + gui.px(at[0]), corner.y + gui.px(at[1]));
-    for (points[0 .. points.len - 1], points[1..]) |from, to| c.ImDrawList_AddLineEx(list, from, to, theme.imU32(color), gui.px(tick.stroke));
+    for (points[0 .. points.len - 1], points[1..]) |from, to| c.ImDrawList_AddLineEx(list, from, to, theme.imU32(color), gui.px(tick.stroke), 0);
 }
 
 /// The "i" in a circle, in a 16-unit box: the circle, the stem and the dot, and the stroke.
@@ -2739,9 +2739,9 @@ fn drawInfo(list: *c.ImDrawList, corner: gui.Vec2, size: f32, color: theme.Color
     const ink = theme.imU32(color);
     const unit = size / info_icon.box;
     const centre = gui.vec2(corner.x + info_icon.box / 2 * unit, corner.y + info_icon.box / 2 * unit);
-    c.ImDrawList_AddCircleEx(list, centre, info_icon.radius * unit, ink, info_icon.segments, info_icon.stroke * unit);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, corner.y + info_icon.stem_top * unit), gui.vec2(centre.x, corner.y + info_icon.stem_bottom * unit), ink, info_icon.stroke * unit);
-    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, corner.y + info_icon.dot_top * unit), gui.vec2(centre.x, corner.y + info_icon.dot_bottom * unit), ink, info_icon.stroke * unit);
+    c.ImDrawList_AddCircleEx(list, centre, info_icon.radius * unit, ink, info_icon.segments, info_icon.stroke * unit, 0);
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, corner.y + info_icon.stem_top * unit), gui.vec2(centre.x, corner.y + info_icon.stem_bottom * unit), ink, info_icon.stroke * unit, 0);
+    c.ImDrawList_AddLineEx(list, gui.vec2(centre.x, corner.y + info_icon.dot_top * unit), gui.vec2(centre.x, corner.y + info_icon.dot_bottom * unit), ink, info_icon.stroke * unit, 0);
 }
 
 /// The dashes of a box to check, and the gaps between them.

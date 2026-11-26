@@ -23,7 +23,6 @@ pub const Messages = struct {
     // The filmstrip beside the card. {0} is how many frames don't fit; the box is sized for
     // two digits.
     more_frames: [:0]const u8 = "+{0} more",
-    no_frames: [:0]const u8 = "No frames yet",
 
     // Asking before Delete. {0} is the roll's name, then how many frames it has.
     delete_title: [:0]const u8 = "Delete {0}?",

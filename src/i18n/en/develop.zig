@@ -10,7 +10,6 @@ pub const Messages = struct {
     developed_count: [:0]const u8 = "{0} of {1}",
     developed_count_help: [:0]const u8 = "Developed of all frames",
     no_scans: [:0]const u8 = "No scans",
-    no_frames: [:0]const u8 = "No frames",
     // Notes at the bottom of the column, on where the film base comes from. The film base is the
     // color of the bare film, between and around the pictures.
     base_measured_per_frame: [:0]const u8 = "Base measured per frame",

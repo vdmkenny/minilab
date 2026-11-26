@@ -42,6 +42,8 @@ pub const Options = struct {
     shortcuts: bool = false,
     /// Where the preferences are kept, or null to start with the defaults and not keep them.
     preferences: ?[]const u8 = null,
+    /// The interface's language for this run, over the one in the preferences.
+    language: ?minilab.preferences.Language = null,
 };
 
 /// Which panels are showing. Tab hides the side panels, and Shift-Tab hides everything but the
@@ -123,7 +125,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         // Between frames, so no frame mixes two looks.
         const look = settings_view.look(app.preferences.values, window.system_light);
         if (!std.meta.eql(look, theme.current)) theme.use(look);
-        const language = settings_view.language(app.preferences.values, window.system_language);
+        // A screenshot is in the language asked for, or English, whatever this computer uses.
+        var asked = app.preferences.values;
+        if (options.language) |l| asked.language = l;
+        const language = settings_view.language(asked, if (options.screenshot == null) window.system_language else null);
         if (language != i18n.current) i18n.use(language);
         gui.newFrame();
         const keys = shortcuts.poll();
@@ -365,7 +370,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
     const height = gui.px(header.height);
     const list = c.ImGui_GetWindowDrawList();
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + height), theme.imU32(theme.colors.header));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + height - 1), gui.vec2(origin.x + width, origin.y + height - 1), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + width, origin.y + height - 1, theme.imU32(theme.colors.divider));
     const middle = origin.y + height / 2;
 
     // The mark: a frame of film with its perforations, then the name.
@@ -398,7 +403,7 @@ fn drawHeader(workspace: *Workspace, notice: *const Notice, library: *const Libr
         const far = gui.vec2(corner.x + tab_width, corner.y + tab_height);
         if (current) {
             c.ImDrawList_AddRectFilledEx(list, corner, far, theme.imU32(theme.colors.control), gui.px(header.tab_rounding), 0);
-            c.ImDrawList_AddRectFilledEx(list, gui.vec2(corner.x, far.y - gui.px(header.tab_underline)), far, theme.imU32(theme.colors.accent), gui.px(header.tab_rounding), c.ImDrawFlags_RoundCornersBottom);
+            c.ImDrawList_AddRectFilledEx(list, gui.vec2(corner.x, far.y - gui.px(header.tab_underline)), far, theme.imU32(theme.colors.accent), gui.px(header.tab_rounding), c.ImDrawFlags_RoundBottom);
         }
         const size = c.ImGui_CalcTextSize(label);
         c.ImDrawList_AddText(list, gui.vec2(corner.x + (tab_width - size.x) / 2, middle - size.y / 2), theme.imU32(if (current or hovered) theme.colors.text else theme.colors.text_secondary), label);
@@ -461,5 +466,5 @@ fn drawMark(list: *c.ImDrawList, corner: gui.Vec2) void {
     const min = p(corner, .{ o.centre[0] - o.half[0], o.centre[1] - o.half[1] });
     const max = p(corner, .{ o.centre[0] + o.half[0], o.centre[1] + o.half[1] });
     c.ImDrawList_AddRectEx(list, min, max, ink, gui.px(o.radius), thickness, 0);
-    for (icon.segments) |s| c.ImDrawList_AddLineEx(list, p(corner, s[0]), p(corner, s[1]), ink, thickness);
+    for (icon.segments) |s| c.ImDrawList_AddLineEx(list, p(corner, s[0]), p(corner, s[1]), ink, thickness, 0);
 }

@@ -132,12 +132,10 @@ pub const Messages = struct {
     // The preview, in the middle. {0} is its resolution.
     preview_dpi: [:0]const u8 = "Preview · {0} dpi",
     // The tooltip of the button that goes to the Rolls page.
-    rolls: [:0]const u8 = "Rolls",
 
     // The selected frame, next to the preview.
     no_preview_yet: [:0]const u8 = "No preview yet",
     no_preview: [:0]const u8 = "No preview",
-    no_frames: [:0]const u8 = "No frames",
     detect_or_add: [:0]const u8 = "Detect frames, or add them by hand",
     // Why detection found no frames.
     detect_notes: struct {
