@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0](https://github.com/vdmkenny/minilab/compare/v0.7.0...v0.8.0) (2026-11-26)
+
+
+### Features
+
+* Cancel a slider drag, and icons for empty pages and filters ([#88](https://github.com/vdmkenny/minilab/issues/88)) ([29a5e7b](https://github.com/vdmkenny/minilab/commit/29a5e7ba1bf08e2cea906bf478864e499719cd7c))
+* Interface in seven languages ([#82](https://github.com/vdmkenny/minilab/issues/82)) ([61bc076](https://github.com/vdmkenny/minilab/commit/61bc0768daf10c9f4a5f73eefc576858a598a71b))
+* Roll details suggested from your rolls, with a date picker ([#81](https://github.com/vdmkenny/minilab/issues/81)) ([fca098e](https://github.com/vdmkenny/minilab/commit/fca098ee391a2cf420c1655468f7e99c78cd2e67))
+* Scanner page in Settings, remembering the scanner and its resolutions ([#85](https://github.com/vdmkenny/minilab/issues/85)) ([b800e74](https://github.com/vdmkenny/minilab/commit/b800e7453cb85607dcaa851c080166427d8aefbc))
+* Settings window, with light and dark appearance ([#79](https://github.com/vdmkenny/minilab/issues/79)) ([b990f4d](https://github.com/vdmkenny/minilab/commit/b990f4dbe603d3a0cf6bc91109cf96e929b5bc45))
+
+
+### Fixes
+
+* Settings files keep newer keys and are synced before they replace the old one ([#83](https://github.com/vdmkenny/minilab/issues/83)) ([ddda81d](https://github.com/vdmkenny/minilab/commit/ddda81dae232015c0727c666bde77d9950016918)), closes [#77](https://github.com/vdmkenny/minilab/issues/77) [#78](https://github.com/vdmkenny/minilab/issues/78)
+* Sync the settings folder on Linux ([#89](https://github.com/vdmkenny/minilab/issues/89)) ([221c91a](https://github.com/vdmkenny/minilab/commit/221c91aac87eac71e057ab87e432dfef605641ed))
+
 ## [0.7.0](https://github.com/vdmkenny/minilab/compare/v0.6.0...v0.7.0) (2026-10-30)
 
 
