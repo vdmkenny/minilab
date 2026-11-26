@@ -30,7 +30,12 @@ It doesn't suit every film:
   - as a fourth sample after red, green and blue, when it isn't marked as alpha (an alpha sample
     stays alpha). VueScan writes these without the ExtraSamples tag that should describe the
     fourth sample, so a missing or "unspecified" one counts as infrared;
-  - as a later page of the same size, flagged as a mask, as SilverFast's HDRi files have it.
+  - as a later page of the same size, flagged as a mask, as SilverFast's HDRi files have it;
+  - in a 16-bit greyscale TIFF of its own, next to the scan. Software that saves it this way, like
+    VueScan's "16 bit Infrared" output, lets you name the file, so minilab's rule is the scan's
+    name with an infrared marker before the extension: `scan0001_ir.tif` for `scan0001.tif`, and
+    `-ir`, `.ir`, ` ir` or `_infrared` work too, in any case. A file like that is never imported
+    as a frame of its own when its scan is beside it, so a whole folder can be imported as it is.
 - **The cleaning** (`core/infrared.zig`), below.
 - **Develop.** A frame whose scan has a plane gets a choice under Remove dust: Find with Infrared
   or Shape. It starts on Infrared, unless the roll's stock is silver black and white. Infrared has
@@ -44,7 +49,7 @@ It doesn't suit every film:
 - **Export.** With dust removal on and its finder set to infrared, export cleans with the plane,
   cropped, turned and reduced the same way as the scan.
 
-Still to come: separate IR files, and scanners.
+Still to come: scanners.
 
 Which films suit infrared comes from the stock presets: each says what its picture is made of
 (`material`: dye, or silver for black and white unless it says otherwise, as XP2 does), and
