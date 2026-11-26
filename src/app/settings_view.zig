@@ -13,21 +13,24 @@ const shortcuts = @import("shortcuts.zig");
 const i18n = @import("../i18n/i18n.zig");
 const version = @import("../version.zig");
 const Icon = @import("../ui/icons.zig").Icon;
+const scan_view = @import("scan_view.zig");
 
 const preferences = minilab.preferences;
 const Appearance = preferences.Appearance;
 const Language = preferences.Language;
 
 /// The pages, in the order the column lists them.
-const Page = enum {
+pub const Page = enum {
     appearance,
     language,
+    scanner,
     about,
 
     fn label(page: Page) [:0]const u8 {
         return switch (page) {
             .appearance => i18n.t.settings.appearance,
             .language => i18n.t.settings.language,
+            .scanner => i18n.t.settings.scanner,
             .about => i18n.t.settings.about,
         };
     }
@@ -36,6 +39,7 @@ const Page = enum {
         return switch (page) {
             .appearance => .sun_moon,
             .language => .languages,
+            .scanner => .scan_line,
             .about => .info,
         };
     }
@@ -46,6 +50,7 @@ const Page = enum {
         return switch (page) {
             .appearance => i18n.t.settings.appearance_heading,
             .language => i18n.t.settings.language_heading,
+            .scanner => i18n.t.scan.scanner_heading,
             .about => null,
         };
     }
@@ -53,7 +58,7 @@ const Page = enum {
     /// Whether the column keeps the page at its foot, under a line, apart from the settings.
     fn atFoot(page: Page) bool {
         return switch (page) {
-            .appearance, .language => false,
+            .appearance, .language, .scanner => false,
             .about => true,
         };
     }
@@ -62,6 +67,12 @@ const Page = enum {
 pub const State = struct {
     open: bool = false,
     page: Page = .appearance,
+
+    /// Opens the window on `page`.
+    pub fn openAt(state: *State, page: Page) void {
+        state.open = true;
+        state.page = page;
+    }
 };
 
 /// The window's layout, in the design's pixels: its size and corners, the title bar, the column
@@ -100,13 +111,14 @@ pub fn look(values: preferences.Preferences, system_light: bool) theme.Look {
 
 /// Draws the Settings window while it's open. Changes are kept straight away, so it has no OK
 /// button: the close button or Esc puts it away.
-pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context, system_language: ?Language) void {
+pub fn draw(state: *State, scan: *scan_view.State, ctx: context.Context, system_language: ?Language) void {
     if (!state.open) return;
     if (!begin()) {
         state.open = false;
         return;
     }
     defer c.ImGui_EndPopup();
+    const saved = ctx.preferences;
     var values = saved.values;
 
     const origin = c.ImGui_GetWindowPos();
@@ -137,6 +149,7 @@ pub fn draw(state: *State, saved: *preferences.Saved, ctx: context.Context, syst
     switch (state.page) {
         .appearance => drawAppearance(&values),
         .language => drawLanguage(&values, system_language),
+        .scanner => scan_view.drawSettingsPage(scan, ctx, &values),
         .about => drawAbout(),
     }
     c.ImGui_EndChild();

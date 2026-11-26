@@ -36,6 +36,8 @@
         .appearance_heading = "WEERGAVE",
         .language = "Taal",
         .language_heading = "TAAL",
+        .scanner = "Scanner",
+        .scans = "Scans",
         .about = "Over",
         .interface = "Interface",
         .viewer = "Viewer",

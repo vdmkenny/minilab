@@ -8,6 +8,11 @@ pub const Messages = struct {
     appearance_heading: [:0]const u8 = "APPEARANCE",
     language: [:0]const u8 = "Language",
     language_heading: [:0]const u8 = "LANGUAGE",
+    // The page for picking the scanner and setting it up. Its heading is the Scan panel's.
+    scanner: [:0]const u8 = "Scanner",
+    // The resolution scans start at. The row above it, for previews, uses the Scan panel's
+    // "Preview".
+    scans: [:0]const u8 = "Scans",
     about: [:0]const u8 = "About",
     // Appearance.
     interface: [:0]const u8 = "Interface",

@@ -196,8 +196,8 @@ negatives) untouched, so minilab can measure it in the gaps between frames.
 For the Epson Perfection V200 that comes from a profile we measured. For any other scanner,
 minilab works it out from the driver's own settings: gamma 1.0, colour correction off and the
 film type on positive. The box under the scanner's name on the Scan screen says what it managed.
-If it got something wrong for your scanner, open **Scanner settings** and pick another value for
-any of them. Your changes are saved per scanner, and Reset puts the scanner back on Auto.
+If it got something wrong for your scanner, open Settings › **Scanner** (the gear next to the
+scanner's name) and pick another value for any of them. Your changes are saved per scanner, and Reset puts the scanner back on Auto.
 
 ## Licence
 

@@ -4,7 +4,7 @@ The gear at the right end of the header opens Settings, and so does ⌘, (Ctrl+,
 Linux). What you set there belongs to your account, not to a library, so it holds whichever
 library you open. Changes apply and save straight away.
 
-Settings has a column of pages on the left: the settings from the top (Appearance and Language),
+Settings has a column of pages on the left: the settings from the top (Appearance, Language and Scanner),
 and About at the foot, under a line. About has the version, links to the website and the source
 code, what minilab is built with, and an AI disclosure: minilab is written with the help of AI
 coding agents (see `AGENTS.md`), and no AI runs in the app. A new page is a case in `Page` in
@@ -32,6 +32,22 @@ minilab has it (and English otherwise), or English, Dutch, French, German, Itali
 Japanese by name. Japanese needs a Japanese font on the computer; without one, minilab stays in
 English and the page says so. [translating.md](translating.md) has how the translations work and
 how to add a language.
+
+## Scanner
+
+**Scanner** picks the scanner to use when more than one is connected. minilab remembers the one
+you picked, by its make, model and driver, and opens it again next time it's there, even on
+another USB port. Otherwise it opens the first scanner it finds. The gear next to the scanner's
+name on Scan opens this page.
+
+**Preview** and **Scans** set the resolutions previews and scans start at: 300 and 2400 dpi by
+default, or the scanner's nearest. The Scan panel's resolution menu still changes it while you
+scan.
+
+Under them are the options raw setup sets on the scanner, like gamma and colour correction, each on
+Auto (what raw setup picks) or another value, with Reset to put them all back on Auto. Unlike the
+rest of Settings, these belong to the library: they're kept in its `scanners.json`, per scanner
+and driver, so a library moved to another computer keeps them.
 
 ## The standards behind the colours
 
@@ -139,13 +155,14 @@ guides.
 
 Buttons with a clear-cut, widely used icon show the icon instead of a word, with the word as a
 tooltip: crop, turn left and right, mirror, pick the film base, copy, delete a frame, the loupe,
-Settings, and the three appearances. The icons come from [Lucide](https://lucide.dev), an open
+Settings and the scanner's settings, the three appearances, and the pages of Settings. The icons come from [Lucide](https://lucide.dev), an open
 set (ISC licence) that grew out of Feather, drawn from its icon font (`src/ui/icons.zig`).
 Buttons whose icon could mean several things, like Fit, Auto, Sync or Reset, keep their words.
 
 ## Where it's kept
 
-`preferences.json`, in your account's settings folder:
+`preferences.json` holds the appearance, the language, the scanner picked last and the
+resolutions. It's in your account's settings folder:
 
 - macOS: `~/Library/Application Support/minilab`
 - Linux: `$XDG_CONFIG_HOME/minilab`, or `~/.config/minilab` when that isn't set

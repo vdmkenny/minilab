@@ -132,7 +132,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         if (language != i18n.current) i18n.use(language);
         gui.newFrame();
         const keys = shortcuts.poll();
-        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &app.library, .develop = &app.develop, .keys = keys, .notice = &app.notice };
+        const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &app.library, .develop = &app.develop, .keys = keys, .notice = &app.notice, .preferences = &app.preferences };
         app.handleKeys(ctx, &window);
         // Scanned frames go into their roll whichever workspace is showing, and the header picks
         // up the scanner's state. A screenshot run leaves the scanners alone unless it's showing
@@ -200,6 +200,7 @@ const App = struct {
         app.scan.deinit(gpa, gpu);
         app.rolls.deinit(gpa);
         app.library.deinit(gpa, gpu);
+        app.preferences.deinit(gpa);
     }
 
     /// Opens the roll and the scans the command line names.
@@ -265,7 +266,7 @@ const App = struct {
             .update => app.update_window.open = true,
             .settings => app.settings.open = true,
         };
-        settings_view.draw(&app.settings, &app.preferences, ctx, system_language);
+        settings_view.draw(&app.settings, &app.scan, ctx, system_language);
         // A scan or an export running would be cut short by restarting into an update.
         if (app.updates) |worker| {
             if (update_view.draw(&app.update_window, worker, ctx, app.scan.scanning or app.exporting.running != null)) app.restart = true;
@@ -287,6 +288,10 @@ const App = struct {
                     .rolls, .develop => unreachable,
                 };
                 if (next) |w| app.workspace = w;
+                if (app.scan.open_settings) {
+                    app.scan.open_settings = false;
+                    app.settings.openAt(.scanner);
+                }
             },
         }
     }

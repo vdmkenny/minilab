@@ -38,6 +38,7 @@ const scan = scan_worker.scan;
 const Worker = scan_worker.Worker;
 
 const image = minilab.image;
+const Preferences = minilab.preferences.Preferences;
 const frames = minilab.frames;
 const formats = minilab.formats;
 const roll = minilab.roll;
@@ -71,9 +72,6 @@ const queue_row_padding_x = 10;
 const progress_height = 6;
 const cancel_height = 34;
 const number_column = 20;
-/// The scanner settings window: its option names' column and its drop-downs.
-const setting_label_width = 150;
-const setting_value_width = 260;
 /// The most values one scanner setting offers.
 const max_setting_values = 64;
 const frame_view_height = 200;
@@ -149,10 +147,6 @@ const strip_gap_mm = 4;
 const min_box_px = 8;
 
 const mm_per_inch = formats.mm_per_inch;
-/// The resolution previews are scanned at, or the scanner's next one up.
-const preview_dpi = 300;
-/// The resolution picked to start with, or the scanner's closest one.
-const default_dpi = 2400;
 /// The most resolutions the menu lists. A driver that lists more gets its highest ones.
 const max_resolutions = 32;
 /// The frame view shows this share of the frame's length past each end, as in the design.
@@ -485,7 +479,9 @@ pub const State = struct {
     holder_choice: frames.Holder = .strip,
     /// How detected frames fit their pictures.
     fit: frames.Fit = .format,
-    dpi: u32 = default_dpi,
+    /// The resolution to scan at. It starts at the preferences' (`devices` sets it), or the
+    /// scanner's closest one.
+    dpi: u32 = (Preferences{}).scan_dpi,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
     editing_margin: bool = false,
@@ -511,8 +507,8 @@ pub const State = struct {
     /// the scanner.
     queue_turns: u2 = 0,
     scanning: bool = false,
-    /// Whether the scanner settings window is open.
-    settings_open: bool = false,
+    /// Set when the panel asks for Settings to open on its Scanner page. The app opens it.
+    open_settings: bool = false,
 
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         if (state.worker) |w| w.stop();
@@ -634,10 +630,13 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.device = null;
             if (state.capabilities) |*caps| caps.deinit(gpa);
             state.capabilities = null;
-            // Open the first scanner straight away, since there's usually only one.
+            // Open a scanner straight away: the one picked last, or else the first, since
+            // there's usually only one.
             if (list.len > 0) {
-                state.device = 0;
-                worker.submit(.{ .open = 0 }) catch {};
+                const index = remembered(list, ctx.preferences.values.scanner) orelse 0;
+                state.device = index;
+                state.dpi = ctx.preferences.values.scan_dpi;
+                worker.submit(.{ .open = index }) catch {};
             }
             return;
         },
@@ -646,7 +645,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.capabilities = opened.capabilities;
             state.device = opened.device;
             state.problem = null;
-            state.dpi = chooseDpi(opened.capabilities, state.dpi);
+            state.dpi = chooseDpi(opened.capabilities, state.dpi, ctx.preferences.values.scan_dpi);
             sendRaw(state, ctx);
             return;
         },
@@ -658,7 +657,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.capabilities = reopened.capabilities;
             state.device = reopened.device;
             state.problem = null;
-            state.dpi = chooseDpi(reopened.capabilities, state.dpi);
+            state.dpi = chooseDpi(reopened.capabilities, state.dpi, ctx.preferences.values.scan_dpi);
             return;
         },
         .failed => |failed| {
@@ -731,10 +730,10 @@ fn queueItem(state: *State, index: usize) ?*QueueItem {
 }
 
 /// The resolution to use after the scanner changes: the chosen one if the scanner has it, or else
-/// the one closest to the default.
-fn chooseDpi(capabilities: scan.Capabilities, current: u32) u32 {
+/// the one closest to the preferences' `wanted`.
+fn chooseDpi(capabilities: scan.Capabilities, current: u32, wanted: u32) u32 {
     if (std.mem.indexOfScalar(u32, capabilities.resolutions, current) != null) return current;
-    return capabilities.resolutionNearest(default_dpi) orelse current;
+    return capabilities.resolutionNearest(wanted) orelse current;
 }
 
 /// Adds a scanned frame to the queue's roll. Returns its index there.
@@ -805,7 +804,6 @@ pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     c.ImGui_EndChild();
     c.ImGui_PopStyleColor();
 
-    drawScannerSettings(state, ctx);
     if (state.boxes_dirty and !c.ImGui_IsAnyItemActive()) savePreviewSettings(state, ctx);
     return next;
 }
@@ -896,28 +894,45 @@ const ScannerPanel = struct {
 /// The most scanners the device menu lists.
 const max_devices = 8;
 
-/// Draws the scanner menu at `y`. Returns the y below it.
+/// Draws the scanner's name at `y`, with a button that opens its settings, where it's picked.
+/// Returns the y below them.
 fn drawDevice(state: *State, panel: ScannerPanel, y: f32) f32 {
-    c.ImGui_BeginDisabled(panel.busy or state.devices.len == 0);
-    defer c.ImGui_EndDisabled();
-    var names: [max_devices][]const u8 = undefined;
-    const shown = @min(state.devices.len, names.len);
-    for (state.devices[0..shown], 0..) |d, i| names[i] = gui.print("{s} {s} ({s}, {s})", .{ d.vendor, d.model, d.kind.label(), d.driver });
-    const placeholder: []const []const u8 = &.{switch (panel.phase) {
+    const row = gui.px(device_height);
+    const side = c.ImGui_GetFrameHeight();
+    const name = if (state.openDevice()) |device| scannerName(device) else devicePlaceholder(panel.phase);
+    gui.textIn(panel.list, panel.x, y, row, theme.colors.text, gui.elideEnd(name, panel.width - side - gui.px(group_gap)));
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x + panel.width - side, @round(y + (row - side) / 2)));
+    if (gui.iconButton("scanner settings", .quiet, .settings)) state.open_settings = true;
+    gui.tooltip(i18n.t.scan.scanner_settings);
+    return y + row + gui.px(scanner_gap);
+}
+
+/// What the scanner menu says while there's no scanner to list.
+fn devicePlaceholder(phase: scan_worker.Phase) [:0]const u8 {
+    return switch (phase) {
         .loading, .listing => i18n.t.scan.looking_for_scanners_menu,
         .unavailable => i18n.t.scan.no_scanner_drivers,
         else => i18n.t.scan.no_scanner_found,
-    }};
-    const items = if (shown > 0) names[0..shown] else placeholder;
-    if (menu(panel, y, "device", items, state.device orelse 0)) |picked| {
-        if (shown > 0 and picked != state.device) {
-            state.device = picked;
-            if (state.capabilities) |*caps| caps.deinit(panel.ctx.gpa);
-            state.capabilities = null;
-            if (panel.worker) |w| w.submit(.{ .open = picked }) catch {};
-        }
+    };
+}
+
+/// The device in `list` that's the scanner picked last, if it's connected.
+fn remembered(list: []const scan.Device, scanner: ?Preferences.Scanner) ?usize {
+    const wanted = scanner orelse return null;
+    for (list, 0..) |device, i| {
+        const name = scannerName(device);
+        if (wanted.eql(.{ .name = name, .driver = device.driver })) return i;
     }
-    return y + gui.px(device_height + scanner_gap);
+    return null;
+}
+
+/// Opens device `index` in place of the one that's open.
+fn openDeviceAt(state: *State, gpa: std.mem.Allocator, index: usize) void {
+    if (index == state.device) return;
+    state.device = index;
+    if (state.capabilities) |*caps| caps.deinit(gpa);
+    state.capabilities = null;
+    if (state.worker) |w| w.submit(.{ .open = index }) catch {};
 }
 
 /// Draws a drop-down of `items` across the panel at `y`, as tall as the scanner menu. Returns the
@@ -935,11 +950,6 @@ fn drawSetup(state: *State, panel: ScannerPanel, top: f32) f32 {
     var y = top;
     if (state.capabilities) |caps| {
         y += drawProfile(panel.list, panel.x, y, panel.width, caps, rawReport(state, ctx)) + gui.px(scanner_gap);
-        if (caps.options != null) {
-            c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
-            if (gui.buttonOf(.normal, i18n.t.scan.scanner_settings, gui.vec2(0, pill_height))) state.settings_open = true;
-            y += gui.px(pill_height + scanner_gap);
-        }
         return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.colors.text_tertiary, filmAreaNote(caps, ctx, panel.roll_index)) + gui.px(scanner_gap);
     }
     if (panel.busy) return y;
@@ -1041,7 +1051,7 @@ fn drawActions(state: *State, panel: ScannerPanel, y: f32, bottom: f32) void {
     c.ImGui_BeginDisabled(!ready);
     const preview_text = if (panel.phase == .previewing) gui.say(i18n.t.scan.previewing, .{percent(panel.worker)}) else i18n.t.scan.preview;
     const preview_label = gui.print("{s}##preview", .{preview_text});
-    if (gui.buttonOf(.normal, preview_label, gui.vec2(half / gui.scale, action_height))) startPreview(state, ctx.gpa);
+    if (gui.buttonOf(.normal, preview_label, gui.vec2(half / gui.scale, action_height))) startPreview(state, ctx);
     c.ImGui_EndDisabled();
     c.ImGui_SetCursorScreenPos(gui.vec2(panel.x + half + gui.px(action_gap), actions_y));
     c.ImGui_BeginDisabled(state.preview == null or state.scanning);
@@ -1172,52 +1182,73 @@ fn sendRaw(state: *const State, ctx: context.Context) void {
     worker.submit(.{ .raw = owned }) catch owned.deinit();
 }
 
-/// The scanner settings window: each option raw setup sets, at Auto (what raw setup picks) or at
-/// another value. The changes are kept in the library, per scanner and driver.
-fn drawScannerSettings(state: *State, ctx: context.Context) void {
-    if (!state.settings_open) return;
-    const device = state.openDevice();
-    const options = if (state.capabilities) |caps| caps.options else null;
-    if (device == null or options == null) {
-        state.settings_open = false;
-        return;
-    }
-    const name = scannerName(device.?);
-    const driver = device.?.driver;
-    const settings = &ctx.library.scanner_settings;
+/// The width of the Scanner page's labels, in the design's pixels. Wider than other pages
+/// since the options go by their drivers' names, like "gamma-correction".
+const page_label_width = 140;
 
-    if (!gui.beginDialog("scanner settings")) {
-        state.settings_open = false;
-        return;
+/// The Scanner page of Settings: which scanner to use, and each option raw setup sets on it, at
+/// Auto (what raw setup picks) or another value. The scanner picked goes in the preferences, so
+/// it opens again next time. The options are kept in the library, per scanner and driver.
+pub fn drawSettingsPage(state: *State, ctx: context.Context, values: *Preferences) void {
+    const phase: scan_worker.Phase = if (state.worker) |w| w.phase.load(.acquire) else .unavailable;
+    const busy = switch (phase) {
+        .idle, .unavailable => false,
+        else => true,
+    };
+    const value_width = (c.ImGui_GetContentRegionAvail().x - gui.px(page_label_width + gui.label_gap)) / gui.scale;
+
+    pageLabel(i18n.t.settings.scanner);
+    var names: [max_devices][]const u8 = undefined;
+    const shown = @min(state.devices.len, names.len);
+    for (state.devices[0..shown], 0..) |d, i| names[i] = gui.print("{s} ({s}, {s})", .{ scannerName(d), d.kind.label(), d.driver });
+    const placeholder: []const []const u8 = &.{devicePlaceholder(phase)};
+    c.ImGui_BeginDisabled(busy or shown == 0);
+    if (gui.combo("scanner", if (shown > 0) names[0..shown] else placeholder, state.device orelse 0, value_width)) |picked| {
+        if (picked < shown) {
+            openDeviceAt(state, ctx.gpa, picked);
+            const device = state.devices[picked];
+            values.scanner = .{ .name = scannerName(device), .driver = device.driver };
+        }
     }
-    defer c.ImGui_EndPopup();
-    gui.title(i18n.t.scan.scanner_settings, fonts.title_size);
-    gui.textColored(theme.colors.text_tertiary, gui.print("{s} · {s}", .{ name, driver }));
-    const changes = settings.raw(name, driver);
-    gui.textColored(theme.colors.text_secondary, rawText(scan.rawSetup(options.?.items, changes).report));
+    c.ImGui_EndDisabled();
+
+    const resolutions: []const u32 = if (state.capabilities) |caps| caps.resolutions else &.{};
+    pageLabel(i18n.t.scan.preview);
+    if (resolutionMenu("preview", resolutions, .lowest, values.preview_dpi, value_width)) |dpi| values.preview_dpi = dpi;
+    pageLabel(i18n.t.settings.scans);
+    if (resolutionMenu("scans", resolutions, .highest, values.scan_dpi, value_width)) |dpi| {
+        values.scan_dpi = dpi;
+        if (!state.scanning) state.dpi = dpi;
+    }
+
+    const device = state.openDevice() orelse return;
+    const options = (state.capabilities orelse return).options orelse return;
+    c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
+    const name = scannerName(device);
+    const settings = &ctx.library.scanner_settings;
+    const changes = settings.raw(name, device.driver);
+    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(page_label_width + gui.label_gap));
+    gui.textColored(theme.colors.text_tertiary, rawText(scan.rawSetup(options.items, changes).report));
     c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
 
     var changed = false;
-    const controls = scan.rawControls(options.?.items);
+    const controls = scan.rawControls(options.items);
     if (controls.len == 0) gui.textColored(theme.colors.text_tertiary, i18n.t.scan.nothing_to_set);
     for (controls.all(), 0..) |control, i| {
         c.ImGui_PushIDInt(@intCast(i));
         defer c.ImGui_PopID();
-        const x = c.ImGui_GetCursorPosX();
-        c.ImGui_AlignTextToFramePadding();
-        gui.textColored(theme.colors.text_secondary, settingLabel(control));
-        c.ImGui_SameLineEx(x + gui.px(setting_label_width), 0);
+        pageLabel(settingLabel(control));
 
         var values_buffer: [max_setting_values]scan.RawValue = undefined;
-        const values = settingValues(control, &values_buffer);
+        const choices = settingValues(control, &values_buffer);
         // Auto first, then the values, then a change whose value the scanner doesn't offer now.
         var items: [max_setting_values + 2][]const u8 = undefined;
         items[0] = gui.say(i18n.t.scan.auto_value, .{valueLabel(control, control.auto)});
-        for (values, 1..) |value, k| items[k] = valueLabel(control, value);
-        var count = values.len + 1;
+        for (choices, 1..) |value, k| items[k] = valueLabel(control, value);
+        var count = choices.len + 1;
         var chosen: usize = 0;
         if (scan.valueOf(changes, control.option.name)) |current| {
-            chosen = for (values, 1..) |value, k| {
+            chosen = for (choices, 1..) |value, k| {
                 if (value.eql(current)) break k;
             } else extra: {
                 items[count] = valueLabel(control, current);
@@ -1225,26 +1256,57 @@ fn drawScannerSettings(state: *State, ctx: context.Context) void {
                 break :extra count - 1;
             };
         }
-        const picked = gui.combo("value", items[0..count], chosen, setting_value_width) orelse continue;
-        if (picked == chosen or picked > values.len) continue;
-        const value: ?scan.RawValue = if (picked == 0) null else values[picked - 1];
-        settings.set(ctx.io, name, driver, control.option.name, value) catch |err| notSaved(ctx, err);
+        c.ImGui_BeginDisabled(state.scanning);
+        defer c.ImGui_EndDisabled();
+        const picked = gui.combo("value", items[0..count], chosen, value_width) orelse continue;
+        if (picked == chosen or picked > choices.len) continue;
+        const value: ?scan.RawValue = if (picked == 0) null else choices[picked - 1];
+        settings.set(ctx.io, name, device.driver, control.option.name, value) catch |err| notSaved(ctx, err);
         changed = true;
     }
 
     c.ImGui_Dummy(gui.vec2(0, gui.px(gui.dialog.gap)));
-    c.ImGui_BeginDisabled(changes.len == 0);
+    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(page_label_width + gui.label_gap));
+    c.ImGui_BeginDisabled(changes.len == 0 or state.scanning);
     if (gui.buttonOf(.normal, i18n.t.common.reset, gui.vec2(0, gui.button_height))) {
-        settings.reset(ctx.io, name, driver) catch |err| notSaved(ctx, err);
+        settings.reset(ctx.io, name, device.driver) catch |err| notSaved(ctx, err);
         changed = true;
     }
     c.ImGui_EndDisabled();
-    c.ImGui_SameLineEx(0, gui.px(gui.dialog.gap));
-    if (gui.buttonOf(.primary, i18n.t.common.done, gui.vec2(0, gui.button_height)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Escape)) {
-        state.settings_open = false;
-        c.ImGui_CloseCurrentPopup();
-    }
     if (changed) sendRaw(state, ctx);
+}
+
+/// Which end of a long list of resolutions a menu keeps: the lowest for previews, the highest for
+/// scans.
+const End = enum { lowest, highest };
+
+/// A drop-down of the scanner's `resolutions`, `width` design pixels wide, with `dpi` picked. It
+/// shows `dpi` alone, and can't be opened, while no scanner is open. Returns the one picked.
+fn resolutionMenu(id: [:0]const u8, resolutions: []const u32, end: End, dpi: u32, width: f32) ?u32 {
+    const listed = switch (end) {
+        .lowest => resolutions[0..@min(resolutions.len, max_resolutions)],
+        .highest => resolutions[resolutions.len -| max_resolutions..],
+    };
+    var items: [max_resolutions + 1][]const u8 = undefined;
+    for (items[0..listed.len], listed) |*item, r| item.* = gui.print("{d} dpi", .{r});
+    // A resolution this scanner doesn't have is shown after its own, as it was picked.
+    const chosen = std.mem.indexOfScalar(u32, listed, dpi) orelse extra: {
+        items[listed.len] = gui.print("{d} dpi", .{dpi});
+        break :extra listed.len;
+    };
+    const count = @max(listed.len, chosen + 1);
+    c.ImGui_BeginDisabled(listed.len == 0);
+    defer c.ImGui_EndDisabled();
+    const picked = gui.combo(id, items[0..count], chosen, width) orelse return null;
+    return if (picked < listed.len) listed[picked] else null;
+}
+
+/// A row's label on the Scanner page, with the control going after it.
+fn pageLabel(label: []const u8) void {
+    const x = c.ImGui_GetCursorPosX();
+    c.ImGui_AlignTextToFramePadding();
+    gui.textColored(theme.colors.text_secondary, label);
+    c.ImGui_SameLineEx(x + gui.px(page_label_width + gui.label_gap), 0);
 }
 
 fn notSaved(ctx: context.Context, err: anyerror) void {
@@ -1415,10 +1477,11 @@ fn percent(worker: ?*Worker) u32 {
     return @intFromFloat(@round(w.progress.fraction() * 100));
 }
 
-fn startPreview(state: *State, gpa: std.mem.Allocator) void {
+fn startPreview(state: *State, ctx: context.Context) void {
+    const gpa = ctx.gpa;
     const worker = state.worker orelse return;
     const caps = state.capabilities orelse return;
-    const dpi = caps.resolutionFrom(preview_dpi) orelse return;
+    const dpi = caps.resolutionFrom(ctx.preferences.values.preview_dpi) orelse return;
     if (state.preview_for) |p| gpa.free(p);
     state.preview_for = if (state.roll_path) |p| gpa.dupe(u8, p) catch null else null;
     worker.submit(.{ .preview = .{
@@ -1445,14 +1508,14 @@ fn drawMain(state: *State, ctx: context.Context, roll_index: usize) void {
     const x = origin.x + gui.px(main_padding_x);
     const y = origin.y + gui.px(main_padding_y);
     const height = size.y - gui.px(2 * main_padding_y);
-    const strip_width = drawPreviewColumn(state, list, x, y, height, ctx.library.rolls.items[roll_index].info);
+    const strip_width = drawPreviewColumn(state, list, x, y, height, ctx.library.rolls.items[roll_index].info, ctx.preferences.values.preview_dpi);
     const section_x = x + strip_width + gui.px(main_gap);
     const section_width = origin.x + size.x - gui.px(main_padding_x) - section_x;
     drawFrameSection(state, ctx, roll_index, list, section_x, y, section_width);
 }
 
 /// Draws the preview with the frames on it. Returns the column's width.
-fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, info: minilab.roll.Info) f32 {
+fn drawPreviewColumn(state: *State, list: *c.ImDrawList, x: f32, top: f32, height: f32, info: minilab.roll.Info, preview_dpi: u32) f32 {
     const format = info.format.format();
     const film = format.size;
     var y = top;

@@ -36,6 +36,8 @@
         .appearance_heading = "ASPETTO",
         .language = "Lingua",
         .language_heading = "LINGUA",
+        .scanner = "Scanner",
+        .scans = "Scansioni",
         .about = "Informazioni",
         .interface = "Interfaccia",
         .viewer = "Visore",
