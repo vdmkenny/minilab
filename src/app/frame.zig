@@ -128,7 +128,9 @@ pub const Frame = struct {
             if (std.meta.eql(c.with, s.dust) and c.finished == s.finished) return c.scan;
             frame.dropCleaned(gpa);
         }
-        const cleaned = try s.withoutDust(gpa, frame.preview, @max(frame.preview.width, frame.preview.height)) orelse return frame.preview;
+        // The viewer, the loupe and thumbnails don't have the infrared plane yet, so infrared dust
+        // removal finds dust by its shape here (https://github.com/vdmkenny/minilab/issues/90).
+        const cleaned = try s.withoutDust(gpa, frame.preview, null, @max(frame.preview.width, frame.preview.height)) orelse return frame.preview;
         frame.cleaned = .{ .scan = cleaned, .with = s.dust, .finished = s.finished };
         return cleaned;
     }
@@ -308,7 +310,9 @@ pub const Frame = struct {
             const around = area.grown(minilab.dust.margin(longest, frame.settings.dust), bounds);
             var context = try scan.crop(gpa, around);
             defer context.deinit(gpa);
-            if (try frame.settings.withoutDust(gpa, context, longest)) |cleaned| {
+            // The viewer, the loupe and thumbnails don't have the infrared plane yet, so infrared dust
+            // removal finds dust by its shape here (https://github.com/vdmkenny/minilab/issues/90).
+            if (try frame.settings.withoutDust(gpa, context, null, longest)) |cleaned| {
                 var clean = cleaned;
                 defer clean.deinit(gpa);
                 for (0..square.height) |y| @memcpy(square.row(y), clean.row(area.y - around.y + y)[area.x - around.x ..][0..square.width]);

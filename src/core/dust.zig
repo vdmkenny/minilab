@@ -38,11 +38,24 @@
 
 const std = @import("std");
 const image = @import("image.zig");
+const infrared = @import("infrared.zig");
+
+/// How dust is found.
+pub const Finder = enum {
+    /// By its shape: small spots that stand out from the grain, with the limits below.
+    shape,
+    /// From the scan's infrared plane, which shows the dust and nothing of the picture
+    /// (`infrared.zig`). Only for frames whose scan has one.
+    infrared,
+};
 
 /// A frame's dust removal, saved with its develop settings. The three limits are there to keep
-/// the picture's own small highlights from being taken for dust.
+/// the picture's own small highlights from being taken for dust when it's found by its shape.
 pub const Settings = struct {
     remove: bool = false,
+    finder: Finder = .shape,
+    /// The settings for finding it with infrared.
+    infrared: infrared.Settings = .{},
     /// How many times the grain around it a spot has to stand out by to count as dust. Lower finds
     /// fainter specks, and more of the picture's own detail by mistake.
     threshold: f32 = default_threshold,
@@ -117,8 +130,8 @@ const flat_sides = 0.5;
 
 /// Density is kept as a whole number of these steps per D, much finer than any scan's noise. The
 /// densest a 16-bit scan can be is log10(65535), about 4.8 D, which still fits in a `Code`.
-const steps_per_density = 10000;
-const Code = u16;
+pub const steps_per_density = 10000;
+pub const Code = u16;
 const max_code = std.math.maxInt(Code);
 comptime {
     if (@log10(@as(f64, image.full_scale)) * steps_per_density > max_code) @compileError("densities don't fit in a Code");
@@ -144,8 +157,8 @@ const Sizes = struct {
 
     fn of(frame_longest: usize, max_size: f32) Sizes {
         const longest: f32 = @floatFromInt(frame_longest);
-        const fitting = reach(longest, std.math.clamp(max_size, Settings.min_max_size, Settings.max_max_size));
-        const near = reach(longest, tuned_size);
+        const fitting = squareReach(frame_longest, std.math.clamp(max_size, Settings.min_max_size, Settings.max_max_size));
+        const near = squareReach(frame_longest, tuned_size);
         const speck = @max(near, fitting);
         return .{
             .speck = speck,
@@ -156,13 +169,6 @@ const Sizes = struct {
             .edge = @max(1, @as(usize, @intFromFloat(@round(longest * edge_share)))),
         };
     }
-
-    /// How far from its centre a square `size` percent of `longest` reaches.
-    fn reach(longest: f32, size: f32) usize {
-        return @max(1, @as(usize, @intFromFloat(@round(longest * size / percent / 2))));
-    }
-
-    const percent = 100;
 
     /// The opening's square, from side to side.
     fn across(sizes: Sizes) usize {
@@ -177,6 +183,21 @@ const Sizes = struct {
         return long <= sizes.widest or (long <= fibre_length * sizes.widest and count * fibre_width <= long * sizes.widest);
     }
 };
+
+/// How far from its centre a square `size` percent of `longest` pixels reaches, at least a pixel.
+pub fn squareReach(longest: usize, size: f32) usize {
+    const percent = 100;
+    return @max(1, @as(usize, @intFromFloat(@round(@as(f32, @floatFromInt(longest)) * size / percent / 2))));
+}
+
+/// Replaces `values`, a `width` × `height` image, with its grey opening over squares reaching
+/// `radius`: the minimum, then the maximum. Every bump narrower than the square goes, and
+/// everything wider stays, edges included. The values less their opening (the top hat) are the
+/// small bumps alone.
+pub fn opening(gpa: std.mem.Allocator, values: []Code, width: usize, height: usize, radius: usize) !void {
+    try filter(Code, .min, gpa, values, width, height, radius);
+    try filter(Code, .max, gpa, values, width, height, radius);
+}
 
 /// How far from a pixel dust removal with `settings` looks, in pixels, on a frame `frame_longest`
 /// pixels along its longer side. Removing the dust from part of a frame, cut this much bigger,
@@ -207,16 +228,15 @@ pub fn remove(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings, pola
     if (n == 0 or frame_longest < min_frame) return 0;
     const sizes: Sizes = .of(frame_longest, settings.max_size);
 
-    // The background is the density's opening, and the top hat is what stands up from it. The
-    // density itself isn't needed after that, so the top hat takes its place.
-    const top_hat = try gpa.alloc(Code, n);
+    // The background is the density's opening, and the top hat is what stands up from it.
+    const density = try gpa.alloc(Code, n);
+    defer gpa.free(density);
+    try densities(gpa, scan.pixels, polarity, density);
+    const top_hat = try gpa.dupe(Code, density);
     defer gpa.free(top_hat);
-    try densities(gpa, scan.pixels, polarity, top_hat);
-    const background = try gpa.alloc(Code, n);
+    const background = try gpa.dupe(Code, density);
     defer gpa.free(background);
-    @memcpy(background, top_hat);
-    try filter(Code, .min, gpa, background, scan.width, scan.height, sizes.speck);
-    try filter(Code, .max, gpa, background, scan.width, scan.height, sizes.speck);
+    try opening(gpa, background, scan.width, scan.height, sizes.speck);
     for (top_hat, background) |*t, b| t.* -= b;
 
     const marks = try gpa.alloc(Mark, n);
@@ -225,21 +245,82 @@ pub fn remove(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings, pola
 
     var found: Specks = .{};
     defer found.deinit(gpa);
-    const planes: Planes = .{ .marks = marks, .top_hat = top_hat, .background = background, .width = scan.width, .height = scan.height };
+    const planes: Planes = .{ .marks = marks, .density = density, .top_hat = top_hat, .background = background, .width = scan.width, .height = scan.height };
     try findSpecks(gpa, planes, sizes, settings.densest(), &found);
-    try fill(gpa, scan, planes, found, sizes.edge);
+    try fill(gpa, scan, planes.densityPlane(), found, sizes.edge);
     return found.boxes.items.len;
 }
 
-/// Fills `out` with each pixel's density as a `Code`: −log10 of its transmission, averaged over
-/// the channels. For `.light` it's turned upside down, so light specks stand up as dense ones do.
-fn densities(gpa: std.mem.Allocator, pixels: []const [image.channel_count]u16, polarity: Polarity, out: []Code) !void {
+/// Fills the pixels `mask` marks on `scan`, and `edge` pixels round them, the way dust removal
+/// fills its specks (`fill`): each group of marked pixels that touch takes the patch of film
+/// nearby that matches best. It's for defects found another way, such as from an infrared plane.
+/// Returns how many groups it filled.
+pub fn fillMask(gpa: std.mem.Allocator, scan: image.Scan, mask: []const bool, edge: usize) !usize {
+    std.debug.assert(mask.len == scan.pixels.len);
+    const density = try gpa.alloc(Code, scan.pixels.len);
+    defer gpa.free(density);
+    try densities(gpa, scan.pixels, .dense, density);
+    var found: Specks = .{};
+    defer found.deinit(gpa);
+    try groupMask(gpa, mask, scan.width, scan.height, &found);
+    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, edge);
+    return found.boxes.items.len;
+}
+
+/// Puts each group of `mask`'s marked pixels that touch, corners included, in `found` as a speck.
+fn groupMask(gpa: std.mem.Allocator, mask: []const bool, width: usize, height: usize, found: *Specks) !void {
+    const taken = try gpa.alloc(bool, mask.len);
+    defer gpa.free(taken);
+    @memset(taken, false);
+    var stack: std.ArrayList(u32) = .empty;
+    defer stack.deinit(gpa);
+    const Group = struct {
+        gpa: std.mem.Allocator,
+        mask: []const bool,
+        taken: []bool,
+        width: usize,
+        found: *Specks,
+        area: Bounds = .{},
+
+        fn enter(group: *@This(), at: u32) bool {
+            if (!group.mask[at] or group.taken[at]) return false;
+            group.taken[at] = true;
+            return true;
+        }
+
+        fn reach(group: *@This(), at: u32) !bool {
+            try group.found.pixels.append(group.gpa, at);
+            group.area.add(at % group.width, at / group.width);
+            return true;
+        }
+    };
+    for (0..mask.len) |start| {
+        var group: Group = .{ .gpa = gpa, .mask = mask, .taken = taken, .width = width, .found = found };
+        if (!group.enter(@intCast(start))) continue;
+        const first = found.pixels.items.len;
+        try stack.append(gpa, @intCast(start));
+        _ = try flood(gpa, &stack, width, height, &group);
+        try found.boxes.append(gpa, .{ .start = @intCast(first), .end = @intCast(found.pixels.items.len), .area = group.area.toArea() });
+    }
+}
+
+/// A table from each 16-bit transmission to its density as a `Code`: −log10 of the transmission,
+/// in `steps_per_density`. The caller frees it.
+pub fn densityTable(gpa: std.mem.Allocator) ![]Code {
     const table = try gpa.alloc(Code, image.full_scale + 1);
-    defer gpa.free(table);
     for (table, 0..) |*t, v| {
         const transmission = @as(f64, @floatFromInt(@max(v, 1))) / image.full_scale;
         t.* = @intFromFloat(@round(-std.math.log10(transmission) * steps_per_density));
     }
+    return table;
+}
+
+/// Fills `out` with each pixel's density as a `Code`, averaged over the channels
+/// (`densityTable`). For `.light` it's turned upside down, so light specks stand up as dense ones
+/// do.
+fn densities(gpa: std.mem.Allocator, pixels: []const [image.channel_count]u16, polarity: Polarity, out: []Code) !void {
+    const table = try densityTable(gpa);
+    defer gpa.free(table);
     for (out, pixels) |*d, p| {
         var sum: u32 = 0;
         for (p) |v| sum += table[v];
@@ -251,7 +332,7 @@ fn densities(gpa: std.mem.Allocator, pixels: []const [image.channel_count]u16, p
     }
 }
 
-const Op = enum { min, max };
+pub const Op = enum { min, max };
 
 fn pick(comptime T: type, comptime op: Op, a: T, b: T) T {
     return switch (op) {
@@ -266,7 +347,7 @@ const column_tile = 32;
 
 /// Replaces each value of the `width` × `height` image `values` with the minimum (or maximum) over
 /// the square reaching `radius` from it. Past the edges counts as nothing.
-fn filter(comptime T: type, comptime op: Op, gpa: std.mem.Allocator, values: []T, width: usize, height: usize, radius: usize) !void {
+pub fn filter(comptime T: type, comptime op: Op, gpa: std.mem.Allocator, values: []T, width: usize, height: usize, radius: usize) !void {
     const padded = @max(width, height) + 2 * radius;
     const forward = try gpa.alloc(T, padded);
     defer gpa.free(forward);
@@ -441,9 +522,22 @@ const Seen = packed struct(u8) {
 /// What `findSpecks` looks at, per pixel of a `width` × `height` scan.
 const Planes = struct {
     marks: []const Mark,
-    /// How far the pixel stands up from the background, and the background, both in `Code`s.
+    /// The density, how far the pixel stands up from the background, and the background, all in
+    /// `Code`s.
+    density: []const Code,
     top_hat: []const Code,
     background: []const Code,
+    width: usize,
+    height: usize,
+
+    fn densityPlane(planes: Planes) CodePlane {
+        return .{ .values = planes.density, .width = planes.width, .height = planes.height };
+    }
+};
+
+/// One `Code` per pixel of a `width` × `height` scan, such as its density.
+const CodePlane = struct {
+    values: []const Code,
     width: usize,
     height: usize,
 };
@@ -644,7 +738,7 @@ const clump_ring_in = 3;
 const clump_ring_out = 4;
 
 fn densityAt(planes: Planes, at: usize) u32 {
-    return @as(u32, planes.background[at]) + planes.top_hat[at];
+    return planes.density[at];
 }
 
 /// The mean of the background, or the density, over the pixels of `area` that aren't in
@@ -741,7 +835,7 @@ const patch_steps = 4;
 /// evened out to the speck's ring. So the grain, and the picture's own texture such as fur or
 /// leaves, carry on through the speck from real film. Where there's no patch to take, at the
 /// picture's edge or among other specks, the speck is filled smoothly from its edge inwards.
-fn fill(gpa: std.mem.Allocator, scan: image.Scan, planes: Planes, found: Specks, edge: usize) !void {
+fn fill(gpa: std.mem.Allocator, scan: image.Scan, density: CodePlane, found: Specks, edge: usize) !void {
     const w = scan.width;
     const h = scan.height;
     // Every pixel to fill, so a patch is never taken from another speck.
@@ -776,7 +870,7 @@ fn fill(gpa: std.mem.Allocator, scan: image.Scan, planes: Planes, found: Specks,
                 try ring.append(gpa, place);
             } else if (in_box) try inside.append(gpa, place);
         };
-        const patch: Patch = .{ .planes = planes, .holes = holes, .box = box, .ring = ring.items, .inside = inside.items };
+        const patch: Patch = .{ .density = density, .holes = holes, .box = box, .ring = ring.items, .inside = inside.items };
         if (patch.best()) |offset| {
             patch.copy(scan, offset);
         } else try smooth(gpa, scan, box, shape.items);
@@ -786,7 +880,7 @@ fn fill(gpa: std.mem.Allocator, scan: image.Scan, planes: Planes, found: Specks,
 /// Looking for a patch of film to fill a speck with, by how well the ring round it matches the
 /// speck's ring in density, after taking away any difference in their mean.
 const Patch = struct {
-    planes: Planes,
+    density: CodePlane,
     holes: []const bool,
     /// The speck and its edge, and the pixels in it to fill and the ring of film round them, as
     /// places from `box`'s corner.
@@ -826,7 +920,7 @@ const Patch = struct {
         for (patch.ring) |place| {
             const to = patch.at(place, offset) orelse return;
             if (patch.holes[to]) return;
-            const d = @as(f64, @floatFromInt(densityAt(patch.planes, patch.at(place, .{ 0, 0 }).?))) - @as(f64, @floatFromInt(densityAt(patch.planes, to)));
+            const d = @as(f64, @floatFromInt(patch.density.values[patch.at(place, .{ 0, 0 }).?])) - @as(f64, @floatFromInt(patch.density.values[to]));
             sum += d;
             squares += d * d;
         }
@@ -843,8 +937,8 @@ const Patch = struct {
     fn at(patch: Patch, place: [2]isize, offset: [2]isize) ?usize {
         const x = @as(isize, @intCast(patch.box.x)) + place[0] + offset[0];
         const y = @as(isize, @intCast(patch.box.y)) + place[1] + offset[1];
-        if (x < 0 or y < 0 or x >= patch.planes.width or y >= patch.planes.height) return null;
-        return @as(usize, @intCast(y)) * patch.planes.width + @as(usize, @intCast(x));
+        if (x < 0 or y < 0 or x >= patch.density.width or y >= patch.density.height) return null;
+        return @as(usize, @intCast(y)) * patch.density.width + @as(usize, @intCast(x));
     }
 
     /// Copies the patch at `offset` into the speck. Each channel's density is evened out to the
@@ -1005,13 +1099,13 @@ fn meanDensity(p: [image.channel_count]u16) f32 {
 const grain_match = 1.5;
 
 /// Grain for a test scan: noise of `density` D, in clumps that reach `clump` pixels.
-const TestGrain = struct { density: f32, clump: usize = 0 };
+pub const TestGrain = struct { density: f32, clump: usize = 0 };
 /// Fine grain, and coarse grain like a fast B&W film's.
 const fine_grain: TestGrain = .{ .density = 0.006 };
 const coarse_grain: TestGrain = .{ .density = 0.08, .clump = 2 };
 
 /// A test scan: thin film with a gentle slope across it and `grain` on top.
-fn testFilm(gpa: std.mem.Allocator, width: usize, height: usize, grain: TestGrain) !image.Scan {
+pub fn testFilm(gpa: std.mem.Allocator, width: usize, height: usize, grain: TestGrain) !image.Scan {
     const noise = try gpa.alloc(f32, width * height);
     defer gpa.free(noise);
     var random: std.Random.DefaultPrng = .init(0x5eed);
@@ -1043,7 +1137,8 @@ fn testFilm(gpa: std.mem.Allocator, width: usize, height: usize, grain: TestGrai
 }
 
 /// Adds `density` D to the disc of `radius` around (`cx`, `cy`). Negative makes it lighter.
-fn addDisc(scan: image.Scan, cx: usize, cy: usize, radius: usize, density: f32) void {
+/// Makes the disc of `radius` round (`cx`, `cy`) on `scan`, a scan or a plane, `density` denser.
+pub fn addDisc(scan: anytype, cx: usize, cy: usize, radius: usize, density: f32) void {
     const r: isize = @intCast(radius);
     var dy: isize = -r;
     while (dy <= r) : (dy += 1) {
@@ -1058,7 +1153,7 @@ fn addDisc(scan: image.Scan, cx: usize, cy: usize, radius: usize, density: f32) 
 }
 
 /// The mean density of the square reaching `radius` from (`cx`, `cy`).
-fn densityAround(scan: image.Scan, cx: usize, cy: usize, radius: usize) f32 {
+pub fn densityAround(scan: image.Scan, cx: usize, cy: usize, radius: usize) f32 {
     var sum: f32 = 0;
     for (cy - radius..cy + radius + 1) |y| {
         for (scan.row(y)[cx - radius .. cx + radius + 1]) |p| sum += meanDensity(p);
@@ -1313,11 +1408,7 @@ test "a speck in texture is filled with the texture round it" {
     const density = try gpa.alloc(Code, scan.pixels.len);
     defer gpa.free(density);
     try densities(gpa, scan.pixels, .dense, density);
-    const flat = try gpa.alloc(Code, scan.pixels.len);
-    defer gpa.free(flat);
-    @memset(flat, 0);
-    const planes: Planes = .{ .marks = &.{}, .top_hat = flat, .background = density, .width = scan.width, .height = scan.height };
-    try fill(gpa, scan, planes, found, 1);
+    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, 1);
     var squares: f32 = 0;
     for (found.pixels.items) |at| {
         const d = meanDensity(scan.pixels[at]) - meanDensity(film.pixels[at]);
@@ -1326,4 +1417,32 @@ test "a speck in texture is filled with the texture round it" {
     // A flat fill would be off by the stripes' spread, about 0.1 D; the stripes' own patch is
     // off by little more than the grain.
     try std.testing.expect(@sqrt(squares / @as(f32, @floatFromInt(found.pixels.items.len))) < 3 * fine_grain.density);
+}
+
+test "a mask is filled from the film round it, and nothing else changes" {
+    const gpa = std.testing.allocator;
+    var film = try testFilm(gpa, 640, 480, .{ .density = 0.02 });
+    defer film.deinit(gpa);
+    var scan: image.Scan = .{ .width = film.width, .height = film.height, .pixels = try gpa.dupe([image.channel_count]u16, film.pixels) };
+    defer scan.deinit(gpa);
+    const cx = 300;
+    const cy = 200;
+    const radius = 4;
+    addDisc(scan, cx, cy, radius, 1.5);
+    const mask = try gpa.alloc(bool, scan.pixels.len);
+    defer gpa.free(mask);
+    for (mask, 0..) |*m, i| {
+        const dx = @as(isize, @intCast(i % scan.width)) - cx;
+        const dy = @as(isize, @intCast(i / scan.width)) - cy;
+        m.* = dx * dx + dy * dy <= radius * radius;
+    }
+    try std.testing.expectEqual(1, try fillMask(gpa, scan, mask, 1));
+    // The disc is back to the film round it, to within the grain.
+    try std.testing.expectApproxEqAbs(densityAround(film, cx, cy, radius), densityAround(scan, cx, cy, radius), 0.05);
+    // Away from it, nothing changed.
+    for (scan.pixels, film.pixels, 0..) |after, before, i| {
+        const dx = @as(isize, @intCast(i % scan.width)) - cx;
+        const dy = @as(isize, @intCast(i / scan.width)) - cy;
+        if (@abs(dx) > radius + 1 or @abs(dy) > radius + 1) try std.testing.expectEqual(before, after);
+    }
 }

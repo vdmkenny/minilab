@@ -178,8 +178,12 @@ fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
         for (row, 0..) |v, j| try w.print("{s}{d:.4}", .{ if (i + j == 0) "" else " ", v });
     }
     try w.writeAll("\"\n");
-    // Dust removal, only when it's on: its threshold, max size in percent and max density in D.
-    if (s.dust.remove) try w.print("    minilab:DustRemoval=\"{d:.1} {d:.1} {d:.2}\"\n", .{ s.dust.threshold, s.dust.max_size, s.dust.max_density });
+    // Dust removal, only when it's on. Found by its shape: the threshold, max size in percent and
+    // max density in D. Found with infrared: "infrared", the threshold in D and the grow in percent.
+    if (s.dust.remove) switch (s.dust.finder) {
+        .shape => try w.print("    minilab:DustRemoval=\"{d:.1} {d:.1} {d:.2}\"\n", .{ s.dust.threshold, s.dust.max_size, s.dust.max_density }),
+        .infrared => try w.print("    minilab:DustRemoval=\"infrared {d:.2} {d:.2}\"\n", .{ s.dust.infrared.threshold, s.dust.infrared.grow }),
+    };
 }
 
 fn attribute(w: *std.Io.Writer, name: []const u8, value: []const u8) std.Io.Writer.Error!void {
@@ -594,6 +598,10 @@ test "XMP escapes what the roll says and gives dates as dates" {
     const cleaned = try xmp(gpa, dusted);
     defer gpa.free(cleaned);
     try std.testing.expect(std.mem.indexOf(u8, cleaned, "minilab:DustRemoval=\"8.0 0.5 1.50\"") != null);
+    dusted.develop.?.settings.?.dust.finder = .infrared;
+    const by_infrared = try xmp(gpa, dusted);
+    defer gpa.free(by_infrared);
+    try std.testing.expect(std.mem.indexOf(u8, by_infrared, "minilab:DustRemoval=\"infrared 0.05 0.05\"") != null);
 
     var vague = example;
     vague.shot = "summer";

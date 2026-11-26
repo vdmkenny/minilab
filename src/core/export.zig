@@ -134,43 +134,20 @@ pub const ConvertError = error{
 /// with its saved settings if it's been developed, or automatic ones for its film if not. Finally
 /// it's converted to `options.space` at the file's depth. Develop's preview and the thumbnails
 /// take the same steps, so the file looks like the screen.
-pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.FrameSettings, frame_look: look.Resolved, options: Options, cancel: ?*const Cancel) !Picture {
-    // Each step makes a copy. We hold on to the latest one here and free the one before.
-    var owned: ?image.Scan = null;
-    defer if (owned) |*s| s.deinit(gpa);
-    var current = scan;
-
-    if (frame.crop) |area| {
-        // The frame's crop reaches outside its scan.
-        if (!area.fitsIn(scan.width, scan.height)) return error.CropOutsideScan;
-        owned = try scan.crop(gpa, area);
-        current = owned.?;
-    }
-    if (frame.quarter_turns != 0 or frame.mirrored) {
-        const turned = try current.orient(gpa, frame.quarter_turns, frame.mirrored);
-        if (owned) |*s| s.deinit(gpa);
-        owned = turned;
-        current = turned;
-    }
+pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Plane, frame: roll.FrameSettings, frame_look: look.Resolved, options: Options, cancel: ?*const Cancel) !Picture {
+    var framed_scan: Framed([image.channel_count]u16) = try .of(gpa, scan, frame, options.long_edge);
+    defer framed_scan.deinit(gpa);
     try check(cancel);
-    const full_width = current.width;
-    if (options.long_edge) |edge| {
-        const size = resample.fitted(current.width, current.height, edge);
-        if (size.width != current.width or size.height != current.height) {
-            const reduced = try resample.reduce(u16, gpa, current, size);
-            if (owned) |*s| s.deinit(gpa);
-            owned = reduced;
-            current = reduced;
-        }
-    }
-    try check(cancel);
-    const scale = @as(f64, @floatFromInt(current.width)) / @as(f64, @floatFromInt(full_width));
+    var current = framed_scan.image;
+    const scale = framed_scan.scale;
+    var cleaned: ?image.Scan = null;
+    defer if (cleaned) |*s| s.deinit(gpa);
     if (frame.developed) {
-        if (try frame.settings.withoutDust(gpa, current, @max(current.width, current.height))) |cleaned| {
-            if (owned) |*s| s.deinit(gpa);
-            owned = cleaned;
-            current = cleaned;
-        }
+        // The infrared plane is only needed for dust removal, and goes through the same steps.
+        var framed_plane: ?Framed([1]u16) = if (plane != null and frame.settings.dust.remove) try .of(gpa, plane.?, frame, options.long_edge) else null;
+        defer if (framed_plane) |*p| p.deinit(gpa);
+        cleaned = try frame.settings.withoutDust(gpa, current, if (framed_plane) |p| p.image else null, @max(current.width, current.height));
+        if (cleaned) |s| current = s;
         try check(cancel);
     }
 
@@ -179,12 +156,51 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, frame: roll.Fram
     else
         try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, .{ .curves = frame.settings.curves(), .slide = frame.settings.slide_colour });
     defer developed.deinit(gpa);
-    if (owned) |*s| {
-        s.deinit(gpa);
-        owned = null;
-    }
     try check(cancel);
     return .{ .pixels = try convert(gpa, &developed, options, cancel), .scale = scale };
+}
+
+/// An image as a frame shows it: cut to its crop, mirrored and turned, then reduced to the long
+/// edge asked for. A scan and its infrared plane go through the same steps, so they stay lined up.
+fn Framed(comptime Pixel: type) type {
+    return struct {
+        const Self = @This();
+
+        image: image.Image(Pixel),
+        /// The reduced image's pixels per pixel before reducing.
+        scale: f64,
+        /// Whether `image` is a copy, to free.
+        owned: bool,
+
+        fn of(gpa: std.mem.Allocator, source: image.Image(Pixel), frame: roll.FrameSettings, long_edge: ?usize) !Self {
+            // Each step makes a copy. We hold on to the latest one and free the one before.
+            var framed: Self = .{ .image = source, .scale = 1, .owned = false };
+            errdefer framed.deinit(gpa);
+            if (frame.crop) |area| {
+                // The frame's crop reaches outside its scan.
+                if (!area.fitsIn(source.width, source.height)) return error.CropOutsideScan;
+                framed.replace(gpa, try source.crop(gpa, area));
+            }
+            if (frame.quarter_turns != 0 or frame.mirrored) framed.replace(gpa, try framed.image.orient(gpa, frame.quarter_turns, frame.mirrored));
+            const full_width = framed.image.width;
+            if (long_edge) |edge| {
+                const size = resample.fitted(framed.image.width, framed.image.height, edge);
+                if (size.width != framed.image.width or size.height != framed.image.height) framed.replace(gpa, try resample.reducePixels(Pixel, gpa, framed.image, size));
+            }
+            framed.scale = @as(f64, @floatFromInt(framed.image.width)) / @as(f64, @floatFromInt(full_width));
+            return framed;
+        }
+
+        fn replace(framed: *Self, gpa: std.mem.Allocator, next: image.Image(Pixel)) void {
+            framed.deinit(gpa);
+            framed.* = .{ .image = next, .scale = framed.scale, .owned = true };
+        }
+
+        fn deinit(framed: *Self, gpa: std.mem.Allocator) void {
+            if (framed.owned) framed.image.deinit(gpa);
+            framed.owned = false;
+        }
+    };
 }
 
 fn convert(gpa: std.mem.Allocator, linear: *image.Rendered, options: Options, cancel: ?*const Cancel) ConvertError!Picture.Pixels {
@@ -308,22 +324,30 @@ pub fn readScan(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Sca
     return (try input.read(gpa, io, path)).scan;
 }
 
-/// The scan of the last exported frame, kept while the next frame comes from the same strip.
+/// The scan of the last exported frame and its infrared plane, kept while the next frame comes
+/// from the same strip.
 const Kept = struct {
-    last: ?struct { path: []const u8, scan: image.Scan } = null,
+    last: ?struct { path: []const u8, source: Source } = null,
 
-    /// Returns the scan at `path`, reading it unless it's the one we kept. `path` must outlive the
-    /// next call.
-    fn get(kept: *Kept, gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Scan {
-        if (kept.last) |last| if (std.mem.eql(u8, last.path, path)) return last.scan;
+    const Source = struct { scan: image.Scan, plane: ?image.Plane };
+
+    /// Returns the scan at `path` and the plane at `infrared_path`, if there is one, reading them
+    /// unless they're the ones we kept. The paths must outlive the next call.
+    fn get(kept: *Kept, gpa: std.mem.Allocator, io: std.Io, path: []const u8, infrared_path: ?[]const u8) !Source {
+        if (kept.last) |last| if (std.mem.eql(u8, last.path, path)) return last.source;
         kept.drop(gpa);
-        const scan = try readScan(gpa, io, path);
-        kept.last = .{ .path = path, .scan = scan };
-        return scan;
+        var scan = try readScan(gpa, io, path);
+        errdefer scan.deinit(gpa);
+        const plane: ?image.Plane = if (infrared_path) |p| try input.readPlane(gpa, io, p) else null;
+        kept.last = .{ .path = path, .source = .{ .scan = scan, .plane = plane } };
+        return kept.last.?.source;
     }
 
     fn drop(kept: *Kept, gpa: std.mem.Allocator) void {
-        if (kept.last) |*last| last.scan.deinit(gpa);
+        if (kept.last) |*last| {
+            last.source.scan.deinit(gpa);
+            if (last.source.plane) |*p| p.deinit(gpa);
+        }
         kept.last = null;
     }
 };
@@ -495,6 +519,8 @@ pub const Batch = struct {
         number: usize,
         /// Null for a frame whose own file can't be read.
         scan_path: ?[]const u8,
+        /// The scan's infrared plane, if it has one.
+        infrared_path: ?[]const u8,
         frame: roll.FrameSettings,
         /// The look `frame` names, as the batch's own copy.
         look: look.Resolved,
@@ -542,11 +568,13 @@ pub const Batch = struct {
         for (batch.jobs, indices) |*job, index| {
             var frame = r.frames.items[index];
             if (frame.scan) |scan| frame.scan = try arena.dupe(u8, scan);
+            if (frame.infrared) |plane| frame.infrared = try arena.dupe(u8, plane);
             frame.film_base = r.baseFor(index);
             if (!frame.developed) frame.settings.stock_curves = request.stock_curves;
             job.* = .{
                 .number = index + 1,
                 .scan_path = if (frame.scan) |scan| try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, scan }) else null,
+                .infrared_path = if (frame.infrared) |plane| try std.fs.path.join(arena, &.{ r.path, roll.scans_dir, plane }) else null,
                 .frame = frame,
                 .look = try (try catalog.resolve(gpa, io, frame.look)).copy(arena),
                 .stem = try fileStem(arena, request.pattern, .{
@@ -607,10 +635,10 @@ pub const Batch = struct {
     fn exportJob(batch: *Batch, gpa: std.mem.Allocator, io: std.Io, job: Job, kept: *Kept) !void {
         batch.stage.store(.reading, .release);
         var picture = picture: {
-            const scan = try kept.get(gpa, io, job.scan_path orelse return error.UnreadableFrame);
+            const source = try kept.get(gpa, io, job.scan_path orelse return error.UnreadableFrame, job.infrared_path);
             try check(&batch.cancel);
             batch.stage.store(.developing, .release);
-            break :picture try developPicture(gpa, scan, job.frame, job.look, batch.options, &batch.cancel);
+            break :picture try developPicture(gpa, source.scan, source.plane, job.frame, job.look, batch.options, &batch.cancel);
         };
         defer picture.deinit(gpa);
 
@@ -722,7 +750,7 @@ test "an export loses the dust when the frame's settings ask" {
     var values: [2]u16 = undefined;
     for (&values, [_]bool{ false, true }) |*value, remove| {
         frame.settings.dust.remove = remove;
-        var picture = try developPicture(gpa, scan, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
+        var picture = try developPicture(gpa, scan, null, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
         defer picture.deinit(gpa);
         const pixels = picture.pixels.sixteen;
         value.* = pixels.pixels[200 * pixels.width + 300][1];
@@ -732,13 +760,43 @@ test "an export loses the dust when the frame's settings ask" {
     try std.testing.expect(values[0] != values[1]);
 }
 
+test "infrared dust removal takes out what the plane shows, cropped and turned with the scan" {
+    const gpa = std.testing.allocator;
+    var scan: image.Scan = try .init(gpa, 700, 500);
+    defer scan.deinit(gpa);
+    @memset(scan.pixels, .{ 30000, 20000, 12000 });
+    var plane: image.Plane = try .init(gpa, scan.width, scan.height);
+    defer plane.deinit(gpa);
+    @memset(plane.pixels, .{50000});
+    // A speck letting through half the light, visible and infrared alike.
+    for (249..252) |y| for (349..352) |x| {
+        for (&scan.pixels[y * scan.width + x]) |*v| v.* /= 2;
+        plane.pixels[y * plane.width + x][0] /= 2;
+    };
+    var frame: roll.FrameSettings = .{ .scan = "01.tif", .crop = .{ .x = 50, .y = 50, .width = 600, .height = 400 }, .quarter_turns = 1, .developed = true, .settings = .{ .base = .{ 0.6, 0.4, 0.25 } } };
+    frame.settings.dust = .{ .remove = true, .finder = .infrared };
+    var picture = try developPicture(gpa, scan, plane, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
+    defer picture.deinit(gpa);
+    const pixels = picture.pixels.sixteen;
+    // Cropped and turned a quarter clockwise, the speck at (350, 250) lands at (199, 300).
+    const speck = 300 * pixels.width + 199;
+    // To within the density's steps, a few parts in ten thousand.
+    const tolerance = 20;
+    for (pixels.pixels[50 * pixels.width + 50], pixels.pixels[speck]) |film, cleaned| try std.testing.expectApproxEqAbs(@as(f32, @floatFromInt(film)), @as(f32, @floatFromInt(cleaned)), tolerance);
+    // Without dust removal, it's there.
+    frame.settings.dust.remove = false;
+    var dusty = try developPicture(gpa, scan, plane, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
+    defer dusty.deinit(gpa);
+    try std.testing.expect(!std.meta.eql(dusty.pixels.sixteen.pixels[50 * pixels.width + 50], dusty.pixels.sixteen.pixels[speck]));
+}
+
 test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" {
     const gpa = std.testing.allocator;
     var scan = try testScan(gpa, 40, 30);
     defer scan.deinit(gpa);
     const frame: roll.FrameSettings = .{ .scan = "01.ppm", .crop = .{ .x = 5, .y = 5, .width = 20, .height = 10 }, .quarter_turns = 1 };
     const options: Options = .{ .format = .tiff, .space = .adobe_rgb, .long_edge = 8 };
-    var picture = try developPicture(gpa, scan, frame, .neutral, options, null);
+    var picture = try developPicture(gpa, scan, null, frame, .neutral, options, null);
     defer picture.deinit(gpa);
     // 20 × 10, turned to 10 × 20, reduced to 4 × 8.
     try std.testing.expectEqual(@as(usize, 4), picture.width());
@@ -773,7 +831,7 @@ test "a crop outside the scan is refused" {
     const gpa = std.testing.allocator;
     var scan = try testScan(gpa, 10, 10);
     defer scan.deinit(gpa);
-    try std.testing.expectError(error.CropOutsideScan, developPicture(gpa, scan, .{ .scan = "01.ppm", .crop = .{ .x = 5, .y = 0, .width = 6, .height = 2 } }, .neutral, .{}, null));
+    try std.testing.expectError(error.CropOutsideScan, developPicture(gpa, scan, null, .{ .scan = "01.ppm", .crop = .{ .x = 5, .y = 0, .width = 6, .height = 2 } }, .neutral, .{}, null));
 }
 
 test "a batch writes each frame's file with its metadata inside, and stops when cancelled" {

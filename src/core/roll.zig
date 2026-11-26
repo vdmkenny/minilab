@@ -2,6 +2,7 @@
 //!
 //!     roll.json          what the roll is: film, format, camera, dates, notes
 //!     scans/01.tif …     the raw scans, never changed
+//!     scans/01.ir.tif …  a scan's infrared plane, if it came with one, lined up with it
 //!     frames/01.json …   each frame's crop and develop settings
 //!     thumbs/01.ppm …    reduced copies of the raw scans for quick previews, named like the scans
 //!     exports/           developed files
@@ -32,6 +33,7 @@ const tiff = @import("../io/codecs/tiff.zig");
 const icc = @import("../io/codecs/icc.zig");
 const formats = @import("../frames/formats.zig");
 const framing = @import("framing.zig");
+const infrared = @import("infrared.zig");
 const file_input = @import("input.zig");
 const FlatField = @import("flat_field.zig").FlatField;
 pub const Field = @import("export_metadata.zig").Field;
@@ -44,6 +46,8 @@ pub const thumbs_dir = "thumbs";
 pub const flat_file = "flat.ppm";
 /// The extension of the raw scans a roll writes (`encodeRaw`).
 pub const raw_extension = ".tif";
+/// What a scan's infrared plane's file adds to the scan's number: 01.ir.tif for 01.tif.
+pub const infrared_extension = ".ir.tif";
 /// The colour space a raw scan's file says it's in: linear light, so other apps show the negative
 /// at the right brightness. minilab reads the samples as they are and doesn't use it (`input.zig`).
 pub const raw_space: icc.Space = .srgb_linear;
@@ -147,6 +151,10 @@ pub const FrameSettings = struct {
     height: usize = 0,
     /// The scan's resolution in pixels per inch, if the scanner gave one.
     dpi: ?f32 = null,
+    /// The scan's infrared plane's file in the scans folder, or null when it has none. It's a
+    /// 16-bit greyscale TIFF the size of the scan, lined up with it (`infrared.alignment`), and
+    /// infrared dust removal finds the dust in it.
+    infrared: ?[]const u8 = null,
     /// The frame within the scan, in the scan's pixels. Null means the whole scan.
     crop: ?image.Area = null,
     /// Quarter turns clockwise after cropping, 0 to 3.
@@ -320,6 +328,13 @@ pub const Roll = struct {
         return std.fs.path.join(gpa, &.{ roll.path, scans_dir, scan });
     }
 
+    /// Returns the path of frame `index`'s infrared plane, or null when its scan has none. The
+    /// caller frees it.
+    pub fn infraredPath(roll: *const Roll, gpa: std.mem.Allocator, index: usize) !?[]u8 {
+        const plane = roll.frames.items[index].infrared orelse return null;
+        return try std.fs.path.join(gpa, &.{ roll.path, scans_dir, plane });
+    }
+
     /// Returns frame `index`'s thumbnail the way Develop shows the frame: cut to its crop and
     /// turned. The caller frees it.
     pub fn frameThumbnail(roll: *Roll, gpa: std.mem.Allocator, io: Io, index: usize) !image.Scan {
@@ -362,13 +377,22 @@ pub const Roll = struct {
         return (try roll.addImage(gpa, io, scan, dpi)).first;
     }
 
+    /// What a new scan brings besides its pixels.
+    const Extras = struct {
+        dpi: ?f32 = null,
+        /// A camera's colour, which its frames use when they're slides.
+        slide: ?develop.SlideColour = null,
+        /// The scan's infrared plane, the size of the scan, as the source gave it.
+        infrared: ?image.Plane = null,
+    };
+
     /// Imports the file at `path`, of any kind `input.zig` reads, the way `addImage` does. If
     /// there's a flat field `flat` (the roll's, from `flatField`), a camera frame is divided by it
     /// first. A roll that's still empty and has no flat field takes its input from the file's
     /// kind. A camera RAW file's colour goes with its frames, for slides. With a flat field, which
     /// has already made the light behind the film white, only its matrix goes with them.
     pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField, transfer: Transfer) !Added {
-        var read = try file_input.read(gpa, io, path);
+        var read = try file_input.readWith(gpa, io, path, .{ .infrared = true });
         defer read.deinit(gpa);
         if (flat == null and roll.frames.items.len == 0 and roll.info.input != Input.of(read.kind)) {
             roll.info.input = .of(read.kind);
@@ -380,7 +404,7 @@ pub const Roll = struct {
         if (flat != null) {
             if (slide) |*s| s.balance = @splat(1);
         }
-        return roll.addImageWith(gpa, io, read.scan, null, slide);
+        return roll.addImageWith(gpa, io, read.scan, .{ .slide = slide, .infrared = read.infrared });
     }
 
     /// Saves `scan` as the roll's next scan file, with its thumbnail, and adds a frame for each
@@ -389,7 +413,7 @@ pub const Roll = struct {
     /// adds one per whole frame on it, all sharing the scan. If detection finds no frame, the scan
     /// adds one uncropped frame. `dpi` is the scan's resolution, if known.
     pub fn addImage(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32) !Added {
-        return roll.addImageWith(gpa, io, scan, dpi, null);
+        return roll.addImageWith(gpa, io, scan, .{ .dpi = dpi });
     }
 
     /// Adds the finished picture in the file at `path` as one frame that shows it as it is. The
@@ -425,13 +449,30 @@ pub const Roll = struct {
         return .{ .first = first, .count = 1 };
     }
 
-    /// Like `addImage`, for a scan with a camera's colour, `slide`, which its frames use when
-    /// they're slides.
-    fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, dpi: ?f32, slide: ?develop.SlideColour) !Added {
+    /// Like `addImage`, for a scan with `extras`. An infrared plane is lined up with the scan
+    /// (`infrared.alignment`) and saved next to it.
+    fn addImageWith(roll: *Roll, gpa: std.mem.Allocator, io: Io, scan: image.Scan, extras: Extras) !Added {
+        const dpi = extras.dpi;
         const first = roll.frames.items.len;
         // Frames added before a failure would have no file, so they're removed again.
         errdefer roll.dropFramesFrom(first);
         const name = try roll.nextScanName(raw_extension);
+        const plane_name: ?[]const u8 = if (extras.infrared) |plane| plane_name: {
+            if (plane.width != scan.width or plane.height != scan.height) {
+                std.log.warn("{s}'s infrared plane isn't the size of the scan, so it's left out", .{name});
+                break :plane_name null;
+            }
+            const shift = try infrared.alignment(gpa, scan, plane);
+            var lined_up = try infrared.aligned(gpa, plane, shift);
+            defer lined_up.deinit(gpa);
+            const bytes = try tiff.writePlane(gpa, lined_up, .{ .dpi = dpi });
+            defer gpa.free(bytes);
+            const plane_file = try std.fmt.allocPrint(roll.arena.allocator(), "{s}{s}", .{ std.fs.path.stem(name), infrared_extension });
+            var temporary = roll.scratch();
+            defer temporary.deinit();
+            try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(temporary.allocator(), &.{ roll.path, scans_dir, plane_file }), .data = bytes });
+            break :plane_name plane_file;
+        } else null;
 
         var reduced = try image.downscale(gpa, scan, framing.detection_longest);
         defer reduced.deinit(gpa);
@@ -466,7 +507,8 @@ pub const Roll = struct {
             .width = scan.width,
             .height = scan.height,
             .dpi = dpi,
-            .settings = .{ .kind = roll.info.kind, .slide_colour = slide },
+            .infrared = plane_name,
+            .settings = .{ .kind = roll.info.kind, .slide_colour = extras.slide },
         };
         if (found.len == 0) try roll.appendFrame(frame);
         for (found) |f| {
@@ -904,6 +946,40 @@ test "a 16-bit TIFF imports as the same pixels, kept as a TIFF" {
     const linear = try icc.profileBytes(gpa, raw_space);
     defer gpa.free(linear);
     try std.testing.expect(icc.sameProfile(linear, decoded.icc_profile.?));
+}
+
+test "a scan's infrared plane is kept next to it, and one of another size is left out" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var roll = try testRoll(&tmp, .{ .name = "Infrared" });
+    defer roll.close();
+
+    var scan: image.Scan = try .init(gpa, 37, 23);
+    defer scan.deinit(gpa);
+    @memset(scan.pixels, .{ 30000, 20000, 10000 });
+    var plane: image.Plane = try .init(gpa, scan.width, scan.height);
+    defer plane.deinit(gpa);
+    @memset(plane.pixels, .{50000});
+    _ = try roll.addImageWith(gpa, io, scan, .{ .infrared = plane });
+    try std.testing.expectEqualStrings("01.ir.tif", roll.frames.items[0].infrared.?);
+    const path = (try roll.infraredPath(gpa, 0)).?;
+    defer gpa.free(path);
+    var kept = try file_input.readPlane(gpa, io, path);
+    defer kept.deinit(gpa);
+    try std.testing.expectEqualSlices([1]u16, plane.pixels, kept.pixels);
+
+    // The frame's file keeps it.
+    var again = try Roll.open(gpa, io, roll.path);
+    defer again.close();
+    try std.testing.expectEqualStrings("01.ir.tif", again.frames.items[0].infrared.?);
+
+    var small: image.Plane = try .init(gpa, 10, 10);
+    defer small.deinit(gpa);
+    @memset(small.pixels, .{50000});
+    const added = try roll.addImageWith(gpa, io, scan, .{ .infrared = small });
+    try std.testing.expectEqual(null, roll.frames.items[added.first].infrared);
 }
 
 test "a roll from before keeps reading its PPM scans, and new scans go in next to them as TIFFs" {

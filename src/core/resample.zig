@@ -75,11 +75,17 @@ const Axis = struct {
     }
 };
 
-const channels = image.channel_count;
+/// Reduces `source`, a colour image, to `size` by area (`reducePixels`).
+pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image([image.channel_count]Sample), size: Size) !image.Image([image.channel_count]Sample) {
+    return reducePixels([image.channel_count]Sample, gpa, source, size);
+}
 
-/// Reduces `source` to `size` by area. Neither side may grow. Integer samples are rounded to the
+/// Reduces `source` to `size` by area. Neither side may grow. `Pixel` is an array of samples, any
+/// number of them: three for a colour image, one for a plane. Integer samples are rounded to the
 /// nearest value, and float samples are kept as they come out.
-pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image([channels]Sample), size: Size) !image.Image([channels]Sample) {
+pub fn reducePixels(comptime Pixel: type, gpa: std.mem.Allocator, source: image.Image(Pixel), size: Size) !image.Image(Pixel) {
+    const Sample = @typeInfo(Pixel).array.child;
+    const channels = @typeInfo(Pixel).array.len;
     std.debug.assert(size.width <= source.width and size.height <= source.height);
     var across: Axis = try .init(gpa, source.width, size.width);
     defer across.deinit(gpa);
@@ -103,7 +109,7 @@ pub fn reduce(comptime Sample: type, gpa: std.mem.Allocator, source: image.Image
     }
 
     // Down: squeeze every column to the output's height.
-    var result: image.Image([channels]Sample) = try .init(gpa, size.width, size.height);
+    var result: image.Image(Pixel) = try .init(gpa, size.width, size.height);
     errdefer result.deinit(gpa);
     const sums = try gpa.alloc([channels]f32, size.width);
     defer gpa.free(sums);

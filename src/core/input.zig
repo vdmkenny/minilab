@@ -165,9 +165,12 @@ pub const Read = struct {
     /// A camera RAW file's colour: its white balance as shot, for the light behind the film (or
     /// its daylight balance if it has none), and its matrix to sRGB. Null for scans.
     camera: ?develop.SlideColour = null,
+    /// The scan's infrared plane, when `Options.infrared` asked for it and the file has one.
+    infrared: ?image.Plane = null,
 
     pub fn deinit(read_scan: *Read, gpa: std.mem.Allocator) void {
         read_scan.scan.deinit(gpa);
+        if (read_scan.infrared) |*plane| plane.deinit(gpa);
         read_scan.* = undefined;
     }
 
@@ -179,28 +182,47 @@ pub const Read = struct {
     }
 };
 
+/// What to read besides the scan.
+pub const Options = struct {
+    /// An infrared plane that scanning software stored with the scan, in a TIFF
+    /// (`tiff.ReadOptions`).
+    infrared: bool = false,
+};
+
 /// Reads the scan in the file at `path`, as the kind of file its extension says.
 pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Read {
+    return readWith(gpa, io, path, .{});
+}
+
+/// Reads the scan in the file at `path`, and what `options` ask for besides.
+pub fn readWith(gpa: std.mem.Allocator, io: std.Io, path: []const u8, options: Options) !Read {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
     defer gpa.free(bytes);
-    const result = try decode(gpa, Kind.of(path), bytes);
+    const result = try decode(gpa, Kind.of(path), bytes, options);
     if (!result.linear()) log.warn("{s} has 8 bits per sample: it's probably not linear, and will develop with the wrong contrast", .{path});
     return result;
 }
 
+/// Reads the infrared plane in the TIFF file at `path`, such as a roll's (`roll.infraredName`).
+pub fn readPlane(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !image.Plane {
+    const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
+    defer gpa.free(bytes);
+    return tiff.readPlane(gpa, bytes);
+}
+
 /// Decodes `bytes`, a file of `kind`.
-pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8) !Read {
+pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8, options: Options) !Read {
     switch (kind) {
         .pnm => {
             const decoded = try pnm.decode(gpa, bytes);
             return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
         },
         .tiff => {
-            const decoded = try tiff.read(gpa, bytes);
+            const decoded = try tiff.readWith(gpa, bytes, .{ .infrared = options.infrared });
             // A profile says how to show the file's colours, but the density stage works in the
             // scanner's own channels, so we don't use it.
             if (decoded.icc_profile) |profile| gpa.free(profile);
-            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth };
+            return .{ .scan = decoded.scan, .kind = kind, .depth = decoded.depth, .infrared = decoded.infrared };
         },
         .jpeg => {
             var decoded = try jpeg.read(gpa, bytes);
@@ -290,7 +312,7 @@ test "a JPEG reads as linear, and encodes back to what it was" {
     for (picture.pixels, 0..) |*p, i| p.* = @splat(@intCast(i * 4));
     const file = try jpeg.write(gpa, picture, .{ .quality = 100 });
     defer gpa.free(file);
-    var read_back = try decode(gpa, .jpeg, file);
+    var read_back = try decode(gpa, .jpeg, file, .{});
     defer read_back.deinit(gpa);
     try std.testing.expect(read_back.linear());
     // Mid grey in sRGB is about a fifth of full scale in linear light.
@@ -305,7 +327,7 @@ test "a 16-bit TIFF is linear and an 8-bit one isn't" {
     for (encoded.pixels, 0..) |*p, i| p.* = .{ @intCast(i * 1000), @intCast(i * 2000), @intCast(i * 3000) };
     const file = try tiff.write(gpa, u16, encoded, .{});
     defer gpa.free(file);
-    var wide = try decode(gpa, .tiff, file);
+    var wide = try decode(gpa, .tiff, file, .{});
     defer wide.deinit(gpa);
     try std.testing.expect(wide.linear());
     try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, wide.scan.pixels);
@@ -315,7 +337,7 @@ test "a 16-bit TIFF is linear and an 8-bit one isn't" {
     narrow_pixels.pixels[0] = .{ 10, 20, 30 };
     const narrow_file = try tiff.write(gpa, u8, narrow_pixels, .{});
     defer gpa.free(narrow_file);
-    var narrow = try decode(gpa, .tiff, narrow_file);
+    var narrow = try decode(gpa, .tiff, narrow_file, .{});
     defer narrow.deinit(gpa);
     try std.testing.expect(!narrow.linear());
 }
