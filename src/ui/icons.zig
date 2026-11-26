@@ -3,7 +3,7 @@
 //! colour, copy, delete, edit, zoom, settings, close, the appearances, the pages of Settings, the
 //! links to minilab's website and its source code, and the calendar. Two more mark things rather
 //! than stand for words: a spool over an empty page, and a funnel before a filter. The eye shows
-//! what dust removal takes out.
+//! what dust removal takes out, and Develop's sections have an icon beside their headings.
 
 const std = @import("std");
 const c = @import("c");
@@ -34,6 +34,13 @@ pub const Icon = enum(u21) {
     calendar = lucide.calendar,
     chevron_left = lucide.@"chevron-left",
     chevron_right = lucide.@"chevron-right",
+    chevron_down = lucide.@"chevron-down",
+    film = lucide.film,
+    layers = lucide.layers,
+    contrast = lucide.contrast,
+    palette = lucide.palette,
+    brush_cleaning = lucide.@"brush-cleaning",
+    focus = lucide.focus,
     pencil = lucide.pencil,
     languages = lucide.languages,
     scan_line = lucide.@"scan-line",

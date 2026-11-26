@@ -149,7 +149,7 @@ pub fn cleaned(gpa: std.mem.Allocator, scan: image.Scan, plane: image.Plane, set
         const gain = std.math.pow(f32, 10, @as(f32, @floatFromInt(e)) / steps_per_density);
         for (p) |*v| v.* = @intFromFloat(@min(@round(@as(f32, @floatFromInt(v.*)) * gain), image.full_scale));
     }
-    if (any_opaque) _ = try dust.fillMask(gpa, result, fill, dust.squareReach(frame_longest, settings.grow) * @intFromBool(settings.grow > 0));
+    if (any_opaque) _ = try dust.fillMask(gpa, result, fill, dust.squareReach(frame_longest, settings.grow) * @intFromBool(settings.grow > 0), frame_longest);
     return result;
 }
 

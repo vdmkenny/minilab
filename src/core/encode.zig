@@ -38,6 +38,33 @@ pub fn luminance(linear: [3]f32) f32 {
     return luminance_weights[0] * linear[0] + luminance_weights[1] * linear[1] + luminance_weights[2] * linear[2];
 }
 
+/// CIELAB's curve, f(t), from a share of the white (t) to the cube-root scale L* is built on, with
+/// its straight toe near black.
+pub fn labCurve(t: f64) f64 {
+    const delta = 6.0 / 29.0;
+    return if (t > delta * delta * delta) std.math.cbrt(t) else t / (3 * delta * delta) + 4.0 / 29.0;
+}
+
+/// CIE lightness L*, 0 to 100, of relative luminance `y`, 0 to 1: a scale where equal steps look
+/// about equally different.
+pub fn lightness(y: f64) f64 {
+    return 116 * labCurve(y) - 16;
+}
+
+/// The relative luminance of CIE lightness `l` (`lightness`, backwards).
+pub fn luminanceOfLightness(l: f64) f64 {
+    const delta = 6.0 / 29.0;
+    const f = (l + 16) / 116;
+    return if (f > delta) f * f * f else 3 * delta * delta * (f - 4.0 / 29.0);
+}
+
+test "lightness and luminance go back and forth, with black at 0, mid-grey near 50 and white at 100" {
+    try std.testing.expectApproxEqAbs(@as(f64, 0), lightness(0), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 100), lightness(1), 1e-9);
+    try std.testing.expectApproxEqAbs(@as(f64, 50), lightness(0.1842), 0.01);
+    for ([_]f64{ 0, 0.001, 0.008856, 0.2, 0.5, 1 }) |y| try std.testing.expectApproxEqAbs(y, luminanceOfLightness(lightness(y)), 1e-9);
+}
+
 /// The sRGB transfer curve: linear 0..1 to encoded 0..1.
 pub fn srgb(linear: f32) f32 {
     const k = srgb_curve;

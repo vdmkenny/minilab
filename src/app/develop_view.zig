@@ -9,6 +9,7 @@ const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
+const Icon = @import("../ui/icons.zig").Icon;
 const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const display_colour = @import("../platform/display_colour.zig");
@@ -288,6 +289,8 @@ pub const State = struct {
     show_removed: bool = false,
     /// When the display's colours change, the viewer and the loupe are drawn again in them.
     display: display_colour.Watch = .{},
+    /// Which sections are open, from the preferences (`keepSections`).
+    sections: ?minilab.preferences.DevelopSections = null,
     /// Whether the crop tool starts once the selected frame has loaded.
     crop_on_open: bool = false,
     /// Whether the settings had a scrollbar last time, so the histogram above them can match their
@@ -503,6 +506,14 @@ pub const State = struct {
     }
 
     /// Marks what the viewer shows, and the negative, as out of date.
+    /// Whether section `which` is open, to read and to set.
+    fn section(state: *State, which: Section) *bool {
+        const sections = &state.sections.?;
+        return switch (which) {
+            inline else => |field| &@field(sections, @tagName(field)),
+        };
+    }
+
     fn markStale(state: *State) void {
         state.shown_stale = true;
         state.negative_stale = true;
@@ -1014,6 +1025,8 @@ pub fn draw(state: *State, ctx: context.Context, sides: bool) void {
     const library = ctx.library;
     const gpu = ctx.gpu;
     state.ensureFrame(gpa, io, library);
+    if (state.sections == null) state.sections = ctx.preferences.values.develop_sections;
+    defer keepSections(state, ctx);
     if (state.crop_on_open and state.frame != null) {
         state.crop_on_open = false;
         if (state.cropping == null) state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
@@ -1666,13 +1679,14 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     drawPreset(state, gpa, io, library, roll_index, fitted);
     drawBase(state);
 
+    // Each slider resets to the frame's automatic setting, on its current film base.
+    const auto = frame.automaticSettings();
     gui.beginSection("density");
-    gui.heading(i18n.t.develop.density_heading);
-    {
+    const density_open = state.section(.density);
+    gui.foldingHeading("##fold", iconOf(.density), i18n.t.develop.density_heading, density_open);
+    if (density_open.*) {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
         defer c.ImGui_PopStyleVar();
-        // Each slider resets to the frame's automatic setting, on its current film base.
-        const auto = frame.automaticSettings();
         if (gui.sliderRow(i18n.t.develop.d_max, &s.density_range, 0.1, 6, "{d:.2}", .{
             .default = auto.density_range,
             .help = i18n.t.develop.d_max_help,
@@ -1682,8 +1696,15 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
             .help = i18n.t.develop.offset_help,
         })) state.changed();
         drawMatrix(state);
-        c.ImGui_Dummy(gui.vec2(0, gui.px(inversion_gap)));
-        gui.heading(i18n.t.develop.inversion_heading);
+    }
+    gui.endSection(true);
+
+    gui.beginSection("inversion");
+    const inversion_open = state.section(.inversion);
+    gui.foldingHeading("##fold", iconOf(.inversion), i18n.t.develop.inversion_heading, inversion_open);
+    if (inversion_open.*) {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
+        defer c.ImGui_PopStyleVar();
         c.ImGui_BeginDisabled(fitted);
         defer c.ImGui_EndDisabled();
         if (gui.sliderRow(i18n.t.develop.contrast, &s.contrast, 1, 8, "{d:.2}", .{
@@ -1706,8 +1727,15 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     gui.endSection(true);
 
     gui.beginSection("balance");
-    gui.heading(i18n.t.develop.color_balance_heading);
-    {
+    const balance_open = state.section(.balance);
+    gui.foldingHeading("##fold", iconOf(.balance), i18n.t.develop.color_balance_heading, balance_open);
+    if (balance_open.*) {
+        {
+            c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
+            defer c.ImGui_PopStyleVar();
+            drawWhiteBalance(state, library, roll_index);
+            if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
+        }
         c.ImGui_BeginDisabled(s.kind.isMonochrome());
         defer c.ImGui_EndDisabled();
         {
@@ -1739,6 +1767,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
 
     const stock = if (roll_index) |r| library.rolls.items[r].info.stock else null;
     drawDust(state, labels.infraredFit(stock));
+    drawSharpen(state);
 }
 
 /// Draws the dust section: its heading is the check box that turns dust removal on, with the
@@ -1748,15 +1777,13 @@ fn drawDust(state: *State, fit: ?minilab.infrared.Fit) void {
     const frame = &state.frame.?;
     const d = &frame.settings.dust;
     gui.beginSection("dust");
+    const open = state.section(.dust);
     const heading_y = c.ImGui_GetCursorPosY();
-    fonts.pushSized(.semibold, fonts.small_size);
-    const toggled = gui.checkbox(i18n.t.develop.remove_dust_heading, &d.remove);
-    fonts.pop();
-    if (toggled) state.changed();
-    // The button that shows what's removed sits on the heading's line, at the right.
+    if (gui.checkboxHeading(iconOf(.dust), i18n.t.develop.remove_dust_heading, &d.remove, open)) state.changed();
+    // The button that shows what's removed sits on the heading's line, before the fold's chevron.
     const side = c.ImGui_GetFrameHeight();
     const below = c.ImGui_GetCursorPosY();
-    c.ImGui_SetCursorPos(gui.vec2(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - side, heading_y + (below - heading_y - c.ImGui_GetStyle().*.ItemSpacing.y - side) / 2));
+    c.ImGui_SetCursorPos(gui.vec2(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - gui.foldSpace() - side, heading_y + (below - heading_y - c.ImGui_GetStyle().*.ItemSpacing.y - side) / 2));
     c.ImGui_BeginDisabled(!d.remove);
     if (gui.iconButton(i18n.t.develop.show_removed, if (state.show_removed) .selected else .outline, .eye)) state.show_removed = !state.show_removed;
     c.ImGui_EndDisabled();
@@ -1764,6 +1791,10 @@ fn drawDust(state: *State, fit: ?minilab.infrared.Fit) void {
     c.ImGui_SetCursorPosY(below);
 
     const unsuitable = fit == .unsuitable;
+    if (!open.*) {
+        gui.endSection(true);
+        return;
+    }
     // A film infrared fails on finds its dust by its shape.
     if (frame.hasInfrared() and unsuitable and d.finder == .infrared) {
         d.finder = .shape;
@@ -1793,7 +1824,60 @@ fn drawDust(state: *State, fit: ?minilab.infrared.Fit) void {
         }
         if (by_infrared) drawInfraredSliders(state) else drawShapeSliders(state);
     }
+    gui.endSection(true);
+}
+
+/// Draws the sharpening section: its heading is the check box that turns it on, then how much,
+/// how wide and how fine the detail it sharpens is.
+fn drawSharpen(state: *State) void {
+    const s = &state.frame.?.settings.sharpen;
+    const Sharpen = minilab.sharpen.Settings;
+    gui.beginSection("sharpen");
+    const open = state.section(.sharpen);
+    if (gui.checkboxHeading(iconOf(.sharpen), i18n.t.develop.sharpen_heading, &s.on, open)) state.changed();
+    if (open.*) {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
+        defer c.ImGui_PopStyleVar();
+        c.ImGui_BeginDisabled(!s.on);
+        defer c.ImGui_EndDisabled();
+        if (gui.sliderRow(i18n.t.develop.amount, &s.amount, Sharpen.min_amount, Sharpen.max_amount, "{d:.2}", .{
+            .default = Sharpen.default_amount,
+            .help = i18n.t.develop.sharpen_amount_help,
+        })) state.changed();
+        if (gui.sliderRow(i18n.t.develop.radius, &s.radius, Sharpen.min_radius, Sharpen.max_radius, "{d:.1} px", .{
+            .default = Sharpen.default_radius,
+            .help = i18n.t.develop.sharpen_radius_help,
+        })) state.changed();
+        if (gui.sliderRow(i18n.t.develop.threshold, &s.threshold, Sharpen.min_threshold, Sharpen.max_threshold, "{d:.1}", .{
+            .default = Sharpen.default_threshold,
+            .help = i18n.t.develop.sharpen_threshold_help,
+        })) state.changed();
+    }
     gui.endSection(false);
+}
+
+/// Saves which sections are open in the preferences, when that changed, so they open the same way
+/// next time.
+fn keepSections(state: *const State, ctx: context.Context) void {
+    const sections = state.sections orelse return;
+    if (std.meta.eql(sections, ctx.preferences.values.develop_sections)) return;
+    var values = ctx.preferences.values;
+    values.develop_sections = sections;
+    ctx.preferences.set(ctx.gpa, ctx.io, values) catch |err| std.log.warn("can't save the preferences: {t}", .{err});
+}
+
+/// The panel's sections, which open and close (`minilab.preferences.DevelopSections`).
+const Section = std.meta.FieldEnum(minilab.preferences.DevelopSections);
+
+fn iconOf(which: Section) Icon {
+    return switch (which) {
+        .preset => .film,
+        .density => .layers,
+        .inversion => .contrast,
+        .balance => .palette,
+        .dust => .brush_cleaning,
+        .sharpen => .focus,
+    };
 }
 
 /// The finders, in the order the dust section offers them.
@@ -1839,8 +1923,9 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const frame = &state.frame.?;
     const s = &frame.settings;
     gui.beginSection("preset");
-    gui.heading(i18n.t.develop.preset_heading);
-    {
+    const open = state.section(.preset);
+    gui.foldingHeading("##fold", iconOf(.preset), i18n.t.develop.preset_heading, open);
+    if (open.*) {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
         defer c.ImGui_PopStyleVar();
         gui.rowLabel(i18n.t.develop.film_type);
@@ -1865,10 +1950,8 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
             state.changed();
         }
         c.ImGui_EndDisabled();
-        drawWhiteBalance(state, library, roll_index);
-        if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
     }
-    if (fitted) gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.fitted_note);
+    if (open.* and fitted) gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.fitted_note);
     gui.endSection(true);
 }
 
@@ -2062,6 +2145,7 @@ fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         .{ &state.sync.density, i18n.t.develop.sync_density },
         .{ &state.sync.base, i18n.t.develop.film_base },
         .{ &state.sync.dust, i18n.t.develop.sync_dust },
+        .{ &state.sync.sharpen, i18n.t.develop.sync_sharpen },
         .{ &state.sync.geometry, i18n.t.develop.sync_geometry },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
@@ -2080,6 +2164,7 @@ const SyncGroups = struct {
     density: bool = false,
     base: bool = false,
     dust: bool = true,
+    sharpen: bool = true,
     geometry: bool = false,
 };
 
@@ -2130,6 +2215,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
         own.base_source = s.base_source;
     }
     if (groups.dust) own.dust = s.dust;
+    if (groups.sharpen) own.sharpen = s.sharpen;
     if (groups.balance) {
         own.white_balance = s.white_balance;
         own.temperature = s.temperature;

@@ -21,13 +21,8 @@ pub fn lab(encoded: [3]f32) [3]f32 {
     var xyz: [3]f64 = undefined;
     for (&xyz, srgb.srgb_to_xyz) |*v, row| v.* = row[0] * rgb[0] + row[1] * rgb[1] + row[2] * rgb[2];
     var f: [3]f64 = undefined;
-    for (&f, xyz, white) |*out, v, n| out.* = labCurve(v / n);
+    for (&f, xyz, white) |*out, v, n| out.* = srgb.labCurve(v / n);
     return .{ @floatCast(116 * f[1] - 16), @floatCast(500 * (f[0] - f[1])), @floatCast(200 * (f[1] - f[2])) };
-}
-
-fn labCurve(t: f64) f64 {
-    const delta = 6.0 / 29.0;
-    return if (t > delta * delta * delta) std.math.cbrt(t) else t / (3 * delta * delta) + 4.0 / 29.0;
 }
 
 fn degrees(angle: f64) f64 {

@@ -63,6 +63,16 @@ pub const Language = enum {
     }
 };
 
+/// Develop's sections, in the order the panel shows them: open or closed.
+pub const DevelopSections = struct {
+    preset: bool = true,
+    density: bool = true,
+    inversion: bool = true,
+    balance: bool = true,
+    dust: bool = true,
+    sharpen: bool = true,
+};
+
 /// The preferences, as preferences.json keeps them. The defaults are for a first start.
 pub const Preferences = struct {
     /// Dark by default: a light interface around a photo makes it look darker and flatter than
@@ -77,6 +87,8 @@ pub const Preferences = struct {
     /// The resolution previews are scanned at, or the scanner's next one up. Enough to find the
     /// frames, and quick.
     preview_dpi: u32 = 300,
+    /// Which of Develop's sections are open. Each starts open, and stays as you leave it.
+    develop_sections: DevelopSections = .{},
     /// The resolution scans start at, or the scanner's closest one. Enough for a 35mm frame to
     /// print at about 30 by 20 cm.
     scan_dpi: u32 = 2400,

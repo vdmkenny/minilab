@@ -575,6 +575,38 @@ A scan that comes with an infrared plane can find its dust from that instead, wi
 guess: [infrared.md](infrared.md) explains it. It shares this fill for the defects too dense to
 bring back.
 
+### Sharpening
+
+Scans are a little soft, from the scanner's optics and the film itself, so Develop has a mild
+sharpening, the capture sharpening photo editors offer. The Sharpen box, which heads its own
+section, turns it on, and it's off to begin with. Like every develop setting it's saved with the
+frame and applied whenever the frame is shown or exported; the scan never changes. Sync copies it
+too.
+
+It's an unsharp mask (`core/sharpen.zig`), as the established tools have it:
+
+- **Lightness only.** It works on CIE L* and scales each pixel's colour by how much its luminance
+  changed, so colours don't fringe: darktable and RawTherapee sharpen lightness, and RawTherapee's
+  capture sharpening carries the change back to RGB as this ratio.
+- **Radius**, 0.3 to 3 pixels of the full scan, 0.9 to begin with: the Gaussian's sigma, as in
+  darktable, GEGL and ImageMagick. Capture sharpening rarely goes past one or two pixels.
+- **Amount**, 0 to 1.5, 0.5 to begin with, darktable's default.
+- **Threshold**, 0 to 5 L*, 0.5 to begin with, darktable's soft threshold: detail smaller than it
+  is grain or noise and is left out, and the rest is shrunk by it, so grain isn't sharpened into
+  noise.
+
+The radius is measured on the full scan and shrinks with a smaller copy, as darktable scales it,
+so Develop's viewer shows what a scaled-down export would look like. On the viewer's copy that's
+usually under a pixel, so it shows little there: like Lightroom, judge sharpening at 1:1, in the
+loupe, which sharpens at full size. Thumbnails are too small for it to show, and aren't sharpened.
+
+Sources: [darktable's sharpen](https://github.com/darktable-org/darktable/blob/master/src/iop/sharpen.c),
+[RawTherapee's capture sharpening](https://github.com/RawTherapee/RawTherapee/blob/dev/rtengine/capturesharpening.cc)
+and [unsharp mask](https://github.com/RawTherapee/RawTherapee/blob/dev/rtengine/ipsharpen.cc),
+[GEGL's unsharp mask](https://gitlab.gnome.org/GNOME/gegl/-/raw/master/operations/common/unsharp-mask.c),
+[ImageMagick's options](https://imagemagick.org/command-line-options/) and
+[Adobe on sharpening in Lightroom](https://www.adobe.com/learn/lightroom-cc/web/sharpen-photos).
+
 The idea comes from Tea and Tech Time's [automatic sensor dust
 removal](https://teaandtechtime.com/automatic-sensor-dust-removal/), for digital camera pictures:
 threshold against the neighbourhood, merge busy areas into big blobs, and fill the small blobs that
@@ -582,6 +614,12 @@ are left. Its code is GPL-3.0 and uses OpenCV, so minilab's is written from the 
 code.
 
 ## 8. Settings and sync
+
+Develop's settings come in sections, in the order the work goes: Preset (film type, stock, look
+and tone), the film base, Density, Inversion, Color balance (the white balance first), then Remove
+dust and Sharpen. Each heading has an icon and a chevron, and opens and closes its section, so you
+keep open only what you're working on. Which are open is a preference
+(`preferences.DevelopSections`), the same for every frame and library, and stays as you left it.
 
 Every frame has a settings file of its own. It holds the crop, the turns, the film base, the look
 by name and every develop setting, fully worked out. So a frame you open again later renders the
@@ -595,7 +633,7 @@ and rejected frames start out unchosen. A frame whose rating changes in Develop 
 the filter; frames you pick by hand otherwise stay picked.
 
 Sync copies some of one frame's settings to the roll's other frames. You choose the groups: the
-look (with tone and saturation), the white balance and dust removal are on by default; density,
+look (with tone and saturation), the white balance, dust removal and sharpening are on by default; density,
 film base, and crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
 saved settings, or, if it was never developed, automatic ones measured on its thumbnail. An
 automatic white balance is always worked out again on each frame.
