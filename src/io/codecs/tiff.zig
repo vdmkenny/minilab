@@ -1,6 +1,7 @@
 //! TIFF input and output through LibTIFF. Reading takes the first image in a file and puts it in
 //! a `Scan`: 8-bit or 16-bit RGB or greyscale, in strips or tiles, chunky or planar, in any
-//! compression LibTIFF decodes. Writing stores 8-bit or 16-bit RGB with Deflate and the horizontal
+//! compression LibTIFF decodes. It can also pick up an infrared plane that scanning software
+//! stores with the scan (`ReadOptions`). Writing stores 8-bit or 16-bit RGB with Deflate and the horizontal
 //! predictor, plus an ICC profile if there is one. It compresses the strips on all the cores, and
 //! only makes a BigTIFF when the file wouldn't fit in a classic one. A 16-bit file laid out that
 //! way, like a roll's raw scans, is decompressed on all the cores too. Both work on files in
@@ -21,10 +22,13 @@ pub const Decoded = struct {
     depth: image.Depth,
     /// The file's embedded ICC profile, if it has one.
     icc_profile: ?[]u8,
+    /// The scan's infrared plane, when `ReadOptions.infrared` asked for it and the file has one.
+    infrared: ?image.Plane = null,
 
     pub fn deinit(decoded: *Decoded, gpa: std.mem.Allocator) void {
         decoded.scan.deinit(gpa);
         if (decoded.icc_profile) |profile| gpa.free(profile);
+        if (decoded.infrared) |*plane| plane.deinit(gpa);
         decoded.* = undefined;
     }
 };
@@ -110,22 +114,95 @@ const write_mode_big = "w8l";
 /// The value that tells LibTIFF a seek failed: `(toff_t)-1`.
 const seek_failed = std.math.maxInt(c.toff_t);
 
+pub const ReadOptions = struct {
+    /// Whether to look for an infrared plane, in either of the two ways scanning software stores
+    /// one with the scan:
+    ///
+    /// - as a fourth sample of an RGB image, when it isn't marked as alpha. The TIFF spec wants
+    ///   extra samples described, but some software (VueScan) leaves that out, so an extra sample
+    ///   that's undescribed or "unspecified" is taken as infrared;
+    /// - as a later page of the same size, flagged as a mask (SilverFast's HDRi files).
+    infrared: bool = false,
+};
+
 /// Reads the first image in the TIFF file `bytes`.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8) ReadError!Decoded {
+    return readWith(gpa, bytes, .{});
+}
+
+/// Reads the first image in the TIFF file `bytes`, and its infrared plane if `options` ask.
+pub fn readWith(gpa: std.mem.Allocator, bytes: []const u8, options: ReadOptions) ReadError!Decoded {
     var source: Source = .{ .bytes = bytes };
     const tif = open(&source, read_mode, Source) orelse return error.InvalidTiff;
     defer c.TIFFClose(tif);
-    const header = try readHeader(tif);
+    var header = try readHeader(tif);
+    header.layout.infrared = options.infrared and header.layout.colour == .rgb and fourthIsInfrared(tif);
 
     var scan: image.Scan = try .init(gpa, header.width, header.height);
     errdefer scan.deinit(gpa);
-    if (!try readInParallel(gpa, tif, bytes, header, scan)) switch (header.depth) {
+    var infrared: ?image.Plane = if (header.layout.infrared) try .init(gpa, header.width, header.height) else null;
+    errdefer if (infrared) |*plane| plane.deinit(gpa);
+    if (infrared != null or !try readInParallel(gpa, tif, bytes, header, scan)) {
+        try readAs(gpa, tif, header, &scan, if (infrared) |*plane| plane else null);
+    }
+    const profile = try iccProfile(gpa, tif);
+    errdefer if (profile) |p| gpa.free(p);
+    if (options.infrared and infrared == null) infrared = try maskPage(gpa, tif, header);
+    return .{ .scan = scan, .depth = header.depth, .icc_profile = profile, .infrared = infrared };
+}
+
+/// Reads the first image in the TIFF file `bytes`, which has to be greyscale, as a plane: a
+/// roll's infrared plane, or one that scanning software saved in a file of its own.
+pub fn readPlane(gpa: std.mem.Allocator, bytes: []const u8) ReadError!image.Plane {
+    var source: Source = .{ .bytes = bytes };
+    const tif = open(&source, read_mode, Source) orelse return error.InvalidTiff;
+    defer c.TIFFClose(tif);
+    return planeOf(gpa, tif, try readHeader(tif));
+}
+
+/// Reads the current image of `tif`, a greyscale one described by `header`, as a plane.
+fn planeOf(gpa: std.mem.Allocator, tif: *c.TIFF, header: Header) ReadError!image.Plane {
+    if (header.layout.colour != .grey) return error.UnsupportedTiff;
+    var plane: image.Plane = try .init(gpa, header.width, header.height);
+    errdefer plane.deinit(gpa);
+    try readAs(gpa, tif, header, &plane, null);
+    return plane;
+}
+
+/// Reads the current image's pixels into `target`, and its infrared sample into `infrared`, in
+/// the file's depth.
+fn readAs(gpa: std.mem.Allocator, tif: *c.TIFF, header: Header, target: anytype, infrared: ?*image.Plane) ReadError!void {
+    switch (header.depth) {
         inline else => |known| try readPixels(switch (known) {
             .eight => u8,
             .sixteen => u16,
-        }, gpa, tif, header.layout, &scan),
-    };
-    return .{ .scan = scan, .depth = header.depth, .icc_profile = try iccProfile(gpa, tif) };
+        }, gpa, tif, header.layout, target, infrared),
+    }
+}
+
+/// Whether an RGB image's fourth sample is infrared: there is one, and it isn't described as
+/// alpha (`ReadOptions.infrared`).
+fn fourthIsInfrared(tif: *c.TIFF) bool {
+    var samples: u16 = 0;
+    if (c.TIFFGetFieldDefaulted(tif, c.TIFFTAG_SAMPLESPERPIXEL, &samples) == 0 or samples <= image.channel_count) return false;
+    var count: u16 = 0;
+    var kinds: [*c]u16 = null;
+    if (c.TIFFGetField(tif, c.TIFFTAG_EXTRASAMPLES, &count, &kinds) == 0 or count == 0 or kinds == null) return true;
+    return kinds[0] == c.EXTRASAMPLE_UNSPECIFIED;
+}
+
+/// The first page after the current one that's flagged as a mask, greyscale and the size of the
+/// image `main` describes, read as a plane: where SilverFast keeps a scan's infrared. Null when
+/// there's none.
+fn maskPage(gpa: std.mem.Allocator, tif: *c.TIFF, main: Header) ReadError!?image.Plane {
+    while (c.TIFFReadDirectory(tif) != 0) {
+        var kind: u32 = 0;
+        if (c.TIFFGetFieldDefaulted(tif, c.TIFFTAG_SUBFILETYPE, &kind) == 0 or kind & c.FILETYPE_MASK == 0) continue;
+        const header = readHeader(tif) catch continue;
+        if (header.width != main.width or header.height != main.height or header.layout.colour != .grey) continue;
+        return try planeOf(gpa, tif, header);
+    }
+    return null;
 }
 
 /// What `readHeader` finds out about an image before reading its pixels.
@@ -232,23 +309,28 @@ const Layout = struct {
     /// one when it's planar.
     samples_per_pixel: usize,
     tiled: bool,
+    /// Whether the fourth sample of an RGB image is read, as infrared (`ReadOptions.infrared`).
+    infrared: bool = false,
     block_width: u32,
     block_height: u32,
 };
 
-/// Decodes every block and copies its pixels into `scan`, reading `Sample`s of 8 or 16 bits.
-/// Planar files are read plane by plane, and planes beyond the colour ones (such as alpha) are
-/// skipped.
-fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layout: Layout, scan: *image.Scan) ReadError!void {
+/// Decodes every block and copies its pixels into `target`, a scan or a plane, reading `Sample`s
+/// of 8 or 16 bits. When the layout says so, the fourth sample goes into `infrared`. Planar files
+/// are read plane by plane, and other planes beyond the colour ones (such as alpha) are skipped.
+fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layout: Layout, target: anytype, infrared: ?*image.Plane) ReadError!void {
+    const channels = @typeInfo(@typeInfo(@TypeOf(target.pixels)).pointer.child).array.len;
+    if (layout.colour.channels() > channels) return error.UnsupportedTiff;
+    const infrared_plane = image.channel_count;
     const block_bytes = if (layout.tiled) c.TIFFTileSize(tif) else c.TIFFStripSize(tif);
     if (block_bytes <= 0) return error.InvalidTiff;
     const block = try gpa.alloc(u8, @intCast(block_bytes));
     defer gpa.free(block);
 
-    const width: u32 = @intCast(scan.width);
-    const height: u32 = @intCast(scan.height);
+    const width: u32 = @intCast(target.width);
+    const height: u32 = @intCast(target.height);
     const row_samples = layout.block_width * layout.samples_per_pixel;
-    const planes: usize = if (layout.planar) layout.colour.channels() else 1;
+    const planes: usize = if (layout.planar) layout.colour.channels() + @intFromBool(infrared != null) else 1;
     for (0..planes) |plane| {
         var y: u32 = 0;
         while (y < height) : (y += layout.block_height) {
@@ -265,16 +347,20 @@ fn readPixels(comptime Sample: type, gpa: std.mem.Allocator, tif: *c.TIFF, layou
 
                 for (0..rows) |r| {
                     const source = block[r * row_samples * @sizeOf(Sample) ..];
-                    const target = scan.row(y + r)[x..][0..columns];
+                    const row = target.row(y + r)[x..][0..columns];
+                    const ir_row: [][1]u16 = if (infrared) |p| p.row(y + r)[x..][0..columns] else &.{};
                     switch (layout.colour) {
-                        .rgb => if (layout.planar) {
-                            for (target, 0..) |*pixel, column| pixel[plane] = sampleAt(Sample, source, column);
+                        .rgb => if (channels != image.channel_count) unreachable else if (layout.planar) {
+                            if (plane == infrared_plane) {
+                                for (ir_row, 0..) |*pixel, column| pixel[0] = sampleAt(Sample, source, column);
+                            } else for (row, 0..) |*pixel, column| pixel[plane] = sampleAt(Sample, source, column);
                         } else {
-                            for (target, 0..) |*pixel, column| {
+                            for (row, 0..) |*pixel, column| {
                                 for (pixel, 0..) |*channel, index| channel.* = sampleAt(Sample, source, column * layout.samples_per_pixel + index);
                             }
+                            for (ir_row, 0..) |*pixel, column| pixel[0] = sampleAt(Sample, source, column * layout.samples_per_pixel + infrared_plane);
                         },
-                        .grey => for (target, 0..) |*pixel, column| {
+                        .grey => for (row, 0..) |*pixel, column| {
                             pixel.* = @splat(sampleAt(Sample, source, column * layout.samples_per_pixel));
                         },
                     }
@@ -315,12 +401,24 @@ fn depthOf(comptime Sample: type) image.Depth {
 /// are compressed first, on all the cores (`compressStrips`), since on one core Deflate takes
 /// seconds for a scan. The caller owns the bytes.
 pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), options: WriteOptions) WriteError![]u8 {
+    return writePixels([image.channel_count]Sample, gpa, encoded, options);
+}
+
+/// Writes `plane` as a 16-bit greyscale TIFF, the way `write` writes a colour one. A roll keeps
+/// a scan's infrared plane like this.
+pub fn writePlane(gpa: std.mem.Allocator, plane: image.Plane, options: WriteOptions) WriteError![]u8 {
+    return writePixels([1]u16, gpa, plane, options);
+}
+
+/// Writes `encoded`, whose `Pixel`s are arrays of samples: three for RGB, one for greyscale.
+fn writePixels(comptime Pixel: type, gpa: std.mem.Allocator, encoded: image.Image(Pixel), options: WriteOptions) WriteError![]u8 {
     const shape: Shape = .{
         .width = std.math.cast(u32, encoded.width) orelse return error.ImageTooLarge,
         .height = std.math.cast(u32, encoded.height) orelse return error.ImageTooLarge,
-        .depth = depthOf(Sample),
+        .depth = depthOf(@typeInfo(Pixel).array.child),
+        .channels = @typeInfo(Pixel).array.len,
     };
-    var strips = try compressStrips(gpa, Sample, encoded, shape.rowsPerStrip());
+    var strips = try compressStrips(gpa, Pixel, encoded, shape.rowsPerStrip());
     defer strips.deinit(gpa);
 
     var sink: Sink = .{ .gpa = gpa };
@@ -343,28 +441,35 @@ pub fn write(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image
     return sink.bytes.toOwnedSlice(gpa);
 }
 
-/// The size and depth of an image `write` writes.
+/// The size, depth and channels of an image `write` writes.
 const Shape = struct {
     width: u32,
     height: u32,
     depth: image.Depth,
+    /// Three for RGB, one for greyscale.
+    channels: u16,
+
+    /// RGB, or greyscale with black at 0.
+    fn photometric(shape: Shape) Photometric {
+        return if (shape.channels == 1) .min_is_black else .rgb;
+    }
 
     /// How many rows go in each strip: as many as make about `strip_bytes_target`.
     fn rowsPerStrip(shape: Shape) u32 {
-        const row_bytes = @as(usize, shape.width) * image.channel_count * shape.depth.bytes();
+        const row_bytes = @as(usize, shape.width) * shape.channels * shape.depth.bytes();
         return @intCast(std.math.clamp(strip_bytes_target / @max(row_bytes, 1), 1, shape.height));
     }
 };
 
-/// Sets the tags `write` gives a file of `shape`: RGB, chunky, in strips of Deflate with the
+/// Sets the tags `write` gives a file of `shape`: RGB or greyscale, chunky, in strips of Deflate with the
 /// horizontal predictor, with the profile and the resolution in `options`. Returns false if
 /// LibTIFF refuses one.
 fn setTags(tif: *c.TIFF, shape: Shape, options: WriteOptions) bool {
     if (c.TIFFSetField(tif, c.TIFFTAG_IMAGEWIDTH, shape.width) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_IMAGELENGTH, shape.height) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_BITSPERSAMPLE, @as(c_int, @backingInt(shape.depth))) == 0 or
-        c.TIFFSetField(tif, c.TIFFTAG_SAMPLESPERPIXEL, @as(c_int, image.channel_count)) == 0 or
-        c.TIFFSetField(tif, c.TIFFTAG_PHOTOMETRIC, @as(c_int, @backingInt(Photometric.rgb))) == 0 or
+        c.TIFFSetField(tif, c.TIFFTAG_SAMPLESPERPIXEL, @as(c_int, shape.channels)) == 0 or
+        c.TIFFSetField(tif, c.TIFFTAG_PHOTOMETRIC, @as(c_int, @backingInt(shape.photometric()))) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_PLANARCONFIG, @as(c_int, @backingInt(PlanarConfig.contiguous))) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_COMPRESSION, @as(c_int, @backingInt(Compression.adobe_deflate))) == 0 or
         c.TIFFSetField(tif, c.TIFFTAG_PREDICTOR, @as(c_int, @backingInt(Predictor.horizontal))) == 0 or
@@ -424,10 +529,10 @@ const Strips = struct {
 /// Compresses `encoded` in strips of `rows_per_strip` rows, each with the horizontal predictor and
 /// then Deflate, the way LibTIFF's own encoder does it. Each strip stands alone, so they're split
 /// between the cores.
-fn compressStrips(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.Image([image.channel_count]Sample), rows_per_strip: usize) WriteError!Strips {
-    const Job = DeflateJob(Sample);
+fn compressStrips(gpa: std.mem.Allocator, comptime Pixel: type, encoded: image.Image(Pixel), rows_per_strip: usize) WriteError!Strips {
+    const Job = DeflateJob(Pixel);
     const strip_pixels = rows_per_strip * encoded.width;
-    const strip_bytes = std.math.cast(c.uLong, strip_pixels * @sizeOf(Job.Pixel)) orelse return error.ImageTooLarge;
+    const strip_bytes = std.math.cast(c.uLong, strip_pixels * @sizeOf(Pixel)) orelse return error.ImageTooLarge;
     const count = (encoded.height + rows_per_strip - 1) / rows_per_strip;
     const slot_bytes: usize = c.compressBound(strip_bytes);
     const bytes = try gpa.alloc(u8, std.math.mul(usize, count, slot_bytes) catch return error.ImageTooLarge);
@@ -440,7 +545,7 @@ fn compressStrips(gpa: std.mem.Allocator, comptime Sample: type, encoded: image.
     // Each strip is worth a thread of its own.
     const bands = parallel.bandCount(count, 1);
     // Each thread needs room for one strip, to apply the predictor to.
-    const scratch = try gpa.alloc(Job.Pixel, bands * strip_pixels);
+    const scratch = try gpa.alloc(Pixel, bands * strip_pixels);
     defer gpa.free(scratch);
     const job: Job = .{
         .encoded = encoded,
@@ -465,8 +570,8 @@ fn stripOf(picture: anytype, rows_per_strip: usize, index: usize) @TypeOf(pictur
     return picture.pixels[y * picture.width ..][0 .. @min(rows_per_strip, picture.height - y) * picture.width];
 }
 
-/// What each thread of `compressStrips` works on, for samples of type `Sample`.
-fn DeflateJob(comptime Sample: type) type {
+/// What each thread of `compressStrips` works on, for pixels of type `Pixel`.
+fn DeflateJob(comptime Pixel: type) type {
     return struct {
         encoded: image.Image(Pixel),
         rows_per_strip: usize,
@@ -477,7 +582,7 @@ fn DeflateJob(comptime Sample: type) type {
         scratch: []Pixel,
 
         const Job = @This();
-        const Pixel = [image.channel_count]Sample;
+        const Sample = @typeInfo(Pixel).array.child;
 
         /// Compresses strips `first` up to `end`, in `band`'s room.
         pub fn run(job: Job, band: usize, first: usize, end: usize) void {
@@ -788,7 +893,7 @@ test "a file of many strips, compressed on several threads, is what LibTIFF writ
     const tif = open(&sink, write_mode, Sink) orelse return error.TestUnexpectedResult;
     var closed = false;
     defer if (!closed) c.TIFFClose(tif);
-    const shape: Shape = .{ .width = @intCast(encoded.width), .height = @intCast(encoded.height), .depth = .sixteen };
+    const shape: Shape = .{ .width = @intCast(encoded.width), .height = @intCast(encoded.height), .depth = .sixteen, .channels = image.channel_count };
     try std.testing.expect(setTags(tif, shape, .{}));
     // LibTIFF may change the data it encodes, so it gets a copy.
     const copy = try gpa.dupe([image.channel_count]u16, encoded.pixels);
@@ -858,7 +963,17 @@ const TestLayout = struct {
     mode: [:0]const u8,
     grey: bool = false,
     predictor: Predictor = .none,
+    infrared: TestInfrared = .none,
 };
+
+/// Where `writeLayout` puts an infrared plane: nowhere, as a fourth sample with its ExtraSamples
+/// value (null for no tag), or as a mask page after the image.
+const TestInfrared = union(enum) { none, sample: ?u16, page };
+
+/// The infrared sample `writeLayout` writes for `pixel`.
+fn testInfrared(pixel: [image.channel_count]u16) u16 {
+    return pixel[0] ^ 0xa5a5;
+}
 
 /// Writes 16-bit `encoded` with LibTIFF directly, in a `layout` that `write` doesn't offer, so
 /// `read` has something to be tested on. Greyscale uses the red channel.
@@ -870,7 +985,8 @@ fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLay
     defer if (!closed) c.TIFFClose(tif);
     const width: u32 = @intCast(encoded.width);
     const height: u32 = @intCast(encoded.height);
-    const channels: u16 = if (layout.grey) 1 else image.channel_count;
+    const fourth = layout.infrared == .sample;
+    const channels: u16 = if (layout.grey) 1 else @as(u16, image.channel_count) + @intFromBool(fourth);
     _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGEWIDTH, width);
     _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGELENGTH, height);
     _ = c.TIFFSetField(tif, c.TIFFTAG_BITSPERSAMPLE, @as(c_int, 16));
@@ -879,6 +995,10 @@ fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLay
     _ = c.TIFFSetField(tif, c.TIFFTAG_PLANARCONFIG, @as(c_int, if (layout.planar) c.PLANARCONFIG_SEPARATE else c.PLANARCONFIG_CONTIG));
     _ = c.TIFFSetField(tif, c.TIFFTAG_COMPRESSION, layout.compression);
     if (layout.predictor != .none) _ = c.TIFFSetField(tif, c.TIFFTAG_PREDICTOR, @as(c_int, @backingInt(layout.predictor)));
+    if (layout.infrared == .sample) if (layout.infrared.sample) |kind| {
+        var kinds = [_]u16{kind};
+        _ = c.TIFFSetField(tif, c.TIFFTAG_EXTRASAMPLES, @as(c_int, 1), &kinds);
+    };
     const block_width: u32, const block_height: u32 = if (layout.tile) |tile| .{ tile, tile } else .{ width, 3 };
     if (layout.tile) |tile| {
         _ = c.TIFFSetField(tif, c.TIFFTAG_TILEWIDTH, tile);
@@ -900,7 +1020,13 @@ fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLay
                         if (y + r >= height or x + column >= width) continue;
                         const pixel = encoded.at(x + column, y + r);
                         const at = (r * block_width + column) * samples_per_pixel;
-                        if (layout.planar) block[at] = pixel[plane] else @memcpy(block[at..][0..channels], pixel[0..channels]);
+                        if (layout.planar) {
+                            block[at] = if (plane == image.channel_count) testInfrared(pixel) else pixel[plane];
+                        } else {
+                            const colour = @min(channels, image.channel_count);
+                            @memcpy(block[at..][0..colour], pixel[0..colour]);
+                            if (fourth) block[at + image.channel_count] = testInfrared(pixel);
+                        }
                     }
                 }
                 const bytes = std.mem.sliceAsBytes(block);
@@ -913,9 +1039,72 @@ fn writeLayout(gpa: std.mem.Allocator, encoded: image.Encoded16, layout: TestLay
         }
     }
     if (c.TIFFWriteDirectory(tif) == 0) return error.TestUnexpectedResult;
+    if (layout.infrared == .page) {
+        _ = c.TIFFSetField(tif, c.TIFFTAG_SUBFILETYPE, @as(u32, c.FILETYPE_MASK));
+        _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGEWIDTH, width);
+        _ = c.TIFFSetField(tif, c.TIFFTAG_IMAGELENGTH, height);
+        _ = c.TIFFSetField(tif, c.TIFFTAG_BITSPERSAMPLE, @as(c_int, 16));
+        _ = c.TIFFSetField(tif, c.TIFFTAG_SAMPLESPERPIXEL, @as(c_int, 1));
+        _ = c.TIFFSetField(tif, c.TIFFTAG_PHOTOMETRIC, @as(c_int, c.PHOTOMETRIC_MINISBLACK));
+        _ = c.TIFFSetField(tif, c.TIFFTAG_ROWSPERSTRIP, height);
+        const plane = try gpa.alloc(u16, encoded.pixels.len);
+        defer gpa.free(plane);
+        for (plane, encoded.pixels) |*p, pixel| p.* = testInfrared(pixel);
+        const bytes = std.mem.sliceAsBytes(plane);
+        if (c.TIFFWriteEncodedStrip(tif, 0, bytes.ptr, @intCast(bytes.len)) < 0 or c.TIFFWriteDirectory(tif) == 0) return error.TestUnexpectedResult;
+    }
     closed = true;
     c.TIFFClose(tif);
     return sink.bytes.toOwnedSlice(gpa);
+}
+
+test "an infrared fourth sample or mask page is read as the plane, and alpha isn't" {
+    const gpa = std.testing.allocator;
+    var encoded = try testImage(gpa, u16, 17, 9);
+    defer encoded.deinit(gpa);
+    const cases = [_]struct { planar: bool, infrared: TestInfrared, found: bool }{
+        // No ExtraSamples tag at all, as VueScan writes it, and an unspecified extra sample.
+        .{ .planar = false, .infrared = .{ .sample = null }, .found = true },
+        .{ .planar = false, .infrared = .{ .sample = c.EXTRASAMPLE_UNSPECIFIED }, .found = true },
+        .{ .planar = true, .infrared = .{ .sample = c.EXTRASAMPLE_UNSPECIFIED }, .found = true },
+        // Alpha stays alpha.
+        .{ .planar = false, .infrared = .{ .sample = c.EXTRASAMPLE_ASSOCALPHA }, .found = false },
+        // A mask page after the image, as SilverFast writes it.
+        .{ .planar = false, .infrared = .page, .found = true },
+        .{ .planar = false, .infrared = .none, .found = false },
+    };
+    for (cases) |case| {
+        const file = try writeLayout(gpa, encoded, .{ .planar = case.planar, .tile = null, .compression = c.COMPRESSION_ADOBE_DEFLATE, .mode = "wl", .infrared = case.infrared });
+        defer gpa.free(file);
+        var decoded = try readWith(gpa, file, .{ .infrared = true });
+        defer decoded.deinit(gpa);
+        try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, decoded.scan.pixels);
+        try std.testing.expectEqual(case.found, decoded.infrared != null);
+        if (decoded.infrared) |plane| for (encoded.pixels, plane.pixels) |pixel, ir| try std.testing.expectEqual(testInfrared(pixel), ir[0]);
+        // Without asking, the plane isn't read.
+        var plain = try read(gpa, file);
+        defer plain.deinit(gpa);
+        try std.testing.expect(plain.infrared == null);
+        try std.testing.expectEqualSlices([image.channel_count]u16, encoded.pixels, plain.scan.pixels);
+    }
+}
+
+test "a plane written as greyscale reads back as written" {
+    const gpa = std.testing.allocator;
+    var plane: image.Plane = try .init(gpa, 23, 7);
+    defer plane.deinit(gpa);
+    for (plane.pixels, 0..) |*p, i| p.* = .{@intCast(i * 997 % 65536)};
+    const file = try writePlane(gpa, plane, .{ .dpi = 2400 });
+    defer gpa.free(file);
+    var back = try readPlane(gpa, file);
+    defer back.deinit(gpa);
+    try std.testing.expectEqualSlices([1]u16, plane.pixels, back.pixels);
+    // A colour file isn't a plane.
+    var colour = try testImage(gpa, u16, 4, 4);
+    defer colour.deinit(gpa);
+    const colour_file = try write(gpa, u16, colour, .{});
+    defer gpa.free(colour_file);
+    try std.testing.expectError(error.UnsupportedTiff, readPlane(gpa, colour_file));
 }
 
 test "planar, tiled, LZW, big-endian 16-bit RGB reads as written" {

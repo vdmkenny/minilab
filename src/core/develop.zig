@@ -23,6 +23,7 @@ const encode = @import("encode.zig");
 const statistics = @import("stats.zig");
 const stock_curves = @import("stock_curves.zig");
 const dust = @import("dust.zig");
+const infrared = @import("infrared.zig");
 
 pub const FilmKind = enum {
     colour_negative,
@@ -212,10 +213,25 @@ pub const Settings = struct {
     }
 
     /// Returns `scan` with its dust removed as the settings ask, in a copy the caller frees, or
-    /// null when there's nothing to remove (`dust.cleaned`). `frame_longest` is the frame's longer
-    /// side at `scan`'s resolution. A raw scan of film shows dust denser than around it; a finished
-    /// picture is already a positive, usually of a negative, so there it's lighter.
-    pub fn withoutDust(settings: *const Settings, gpa: std.mem.Allocator, scan: image.Scan, frame_longest: usize) !?image.Scan {
+    /// null when there's nothing to remove. `frame_longest` is the frame's longer side at `scan`'s
+    /// resolution. `plane` is the scan's infrared plane, lined up and the same size, if it has one.
+    ///
+    /// With the infrared finder and a plane, the plane finds the dust (`infrared.cleaned`). A
+    /// plane that isn't usable leaves the scan as it is. Without a plane, as on a frame the
+    /// settings were copied to, the dust is found by its shape (`dust.cleaned`). A raw scan of
+    /// film shows dust denser than around it; a finished picture is already a positive, usually of
+    /// a negative, so there it's lighter.
+    pub fn withoutDust(settings: *const Settings, gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Plane, frame_longest: usize) !?image.Scan {
+        if (!settings.dust.remove) return null;
+        if (settings.dust.finder == .infrared) if (plane) |p| {
+            return infrared.cleaned(gpa, scan, p, settings.dust.infrared, frame_longest) catch |err| switch (err) {
+                error.InfraredNotUsable => {
+                    std.log.warn("the infrared plane isn't usable on this film, so dust is left as it is", .{});
+                    return null;
+                },
+                else => |e| return e,
+            };
+        };
         return dust.cleaned(gpa, scan, settings.dust, if (settings.finished) .light else .dense, frame_longest);
     }
 

@@ -195,6 +195,8 @@ pub fn downscale(gpa: std.mem.Allocator, scan: Scan, longest: usize) !Scan {
 
 /// A scan: linear transmission, 16 bits per channel.
 pub const Scan = Image([channel_count]u16);
+/// One channel of a scan on its own, like an infrared plane: linear transmission, 16-bit.
+pub const Plane = Image([1]u16);
 /// A rendered image in 0..1, before encoding.
 pub const Rendered = Image([channel_count]f32);
 /// An encoded image, 8 bits per channel.

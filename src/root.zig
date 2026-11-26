@@ -6,6 +6,8 @@ pub const image = @import("core/image.zig");
 pub const develop = @import("core/develop.zig");
 /// Finding dust on a scan and filling it in.
 pub const dust = @import("core/dust.zig");
+/// Finding dust from a scan's infrared plane.
+pub const infrared = @import("core/infrared.zig");
 pub const encode = @import("core/encode.zig");
 /// Showing film on screen the way it looks on a light table.
 pub const light_table = @import("core/light_table.zig");

@@ -63,11 +63,11 @@ What's in:
 - all common film sizes and formats, with one format per roll;
 - automatic frame detection that keeps the format's aspect ratio, plus boxes drawn by hand;
 - dust removal from the scan itself, for any scanner or camera, without an infrared channel;
+- dust removal with an infrared plane, for scans that come with one ([infrared.md](infrared.md));
 - macOS, Linux and Windows, each on x86-64 and Arm.
 
 What's out, at least for now:
 
-- dust and scratch removal with an infrared channel (the V200 doesn't have one);
 - grain, halation and other film simulation effects;
 - stitching several camera shots of one medium format frame.
 
@@ -567,6 +567,10 @@ dust settings or the crop change. The loupe removes it from the full scan around
 export from the frame at the size it's saved at. Thumbnails are usually too small to show dust, and
 then they stay as they are. A finished picture, such as a lab's scan, is already a positive,
 usually of a negative, so there dust is lighter than around it, and that's what it looks for.
+
+A scan that comes with an infrared plane can find its dust from that instead, with nothing to
+guess: [infrared.md](infrared.md) explains it. It shares this fill for the defects too dense to
+bring back.
 
 The idea comes from Tea and Tech Time's [automatic sensor dust
 removal](https://teaandtechtime.com/automatic-sensor-dust-removal/), for digital camera pictures:

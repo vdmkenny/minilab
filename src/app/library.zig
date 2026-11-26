@@ -288,7 +288,9 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
         minilab.light_table.toScreen(scan.pixels, gain, pixels);
     } else {
         // A thumbnail is usually too small for dust to show, and then this leaves it as it is.
-        var cleaned = try settings.settings.withoutDust(gpa, scan, @max(scan.width, scan.height));
+        // The viewer, the loupe and thumbnails don't have the infrared plane yet, so infrared dust
+        // removal finds dust by its shape here (https://github.com/vdmkenny/minilab/issues/90).
+        var cleaned = try settings.settings.withoutDust(gpa, scan, null, @max(scan.width, scan.height));
         defer if (cleaned) |*s| s.deinit(gpa);
         var rendered = try minilab.look.render(gpa, cleaned orelse scan, settings.settings, try library.looks.resolve(gpa, io, settings.look));
         defer rendered.deinit(gpa);
