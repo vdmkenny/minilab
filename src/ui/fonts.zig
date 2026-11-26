@@ -50,6 +50,10 @@ pub fn load(display_scale: f32) void {
     icon_face = add(atlas, icon_data);
 }
 
+/// How big Japanese is drawn next to Latin text of the same size. A Japanese font fills its whole
+/// em square, so at full size its characters look a size bigger than IBM Plex's.
+const japanese_scale = 0.9;
+
 /// The longest path to a system font we read.
 const japanese_path = 1024;
 
@@ -61,7 +65,7 @@ fn merge(atlas: *c.ImFontAtlas, face: system_fonts.Face) bool {
         .GlyphMaxAdvanceX = std.math.floatMax(f32),
         .RasterizerMultiply = 1,
         .RasterizerDensity = 1,
-        .ExtraSizeScale = 1,
+        .ExtraSizeScale = japanese_scale,
     };
     return c.ImFontAtlas_AddFontFromFileTTF(atlas, face.path.ptr, ui_size * scale, &config, null) != null;
 }
