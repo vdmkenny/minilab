@@ -112,7 +112,7 @@ pub const Event = union(enum) {
                 r.capabilities.deinit(gpa);
             },
             .preview => |*p| p.scan.deinit(gpa),
-            .frame_done => |d| gpa.free(d.ppm),
+            .frame_done => |*d| d.deinit(gpa),
             else => {},
         }
         event.* = undefined;
@@ -138,6 +138,14 @@ pub const Scanned = struct {
     crop: image.Area,
     /// Whether the crop was found again on this scan, rather than carried over from the preview.
     refined: bool,
+    /// The scan's infrared pass, the size of the scan, when one was asked for and came.
+    infrared: ?image.Plane = null,
+
+    pub fn deinit(scanned: *Scanned, gpa: std.mem.Allocator) void {
+        gpa.free(scanned.ppm);
+        if (scanned.infrared) |*plane| plane.deinit(gpa);
+        scanned.* = undefined;
+    }
 };
 
 pub const Worker = struct {
@@ -430,7 +438,7 @@ pub const Worker = struct {
                 continue;
             }
             worker.post(.{ .frame_checking = job.index });
-            const scanned = finish(gpa, job, picture) catch |err| {
+            const scanned = finish(gpa, job, &picture) catch |err| {
                 worker.post(.{ .frame_failed = .{ .index = job.index, .err = err } });
                 continue;
             };
@@ -455,9 +463,10 @@ fn sameDevice(devices: []const scan.Device, old: scan.Device) ?usize {
     return null;
 }
 
-/// Turns a frame's scan into what the roll keeps: its PPM bytes and the crop. If the frame was
-/// detected rather than placed by hand, the crop is found again on this scan.
-fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
+/// Turns a frame's scan into what the roll keeps: its PPM bytes, the crop and its infrared pass,
+/// which it takes from `picture`. If the frame was detected rather than placed by hand, the crop is
+/// found again on this scan.
+fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: *scan.Image) !Scanned {
     const whole = picture.scan;
     const px_per_mm = [2]f32{ picture.dpi[0] / minilab.formats.mm_per_inch, picture.dpi[1] / minilab.formats.mm_per_inch };
     // Where the preview says the crop is, in this scan's pixels.
@@ -470,12 +479,15 @@ fn finish(gpa: std.mem.Allocator, job: FrameJob, picture: scan.Image) !Scanned {
             refined = true;
         }
     }
+    const ppm = try minilab.pnm.write(gpa, u16, whole);
+    defer picture.infrared = null;
     return .{
         .index = job.index,
-        .ppm = try minilab.pnm.write(gpa, u16, whole),
+        .ppm = ppm,
         .dpi = picture.dpi[0],
         .crop = crop,
         .refined = refined,
+        .infrared = picture.infrared,
     };
 }
 

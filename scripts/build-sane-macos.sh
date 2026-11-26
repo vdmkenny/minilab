@@ -90,6 +90,11 @@ fetch() {
     tar -xf "$file" -C "$work/src"
 }
 fetch "$sane_url" "$sane_sha256"
+# minilab's changes to sane-backends, until they're upstream: scripts/sane-patches/README.md says
+# what each does.
+for change in "$(dirname "$0")"/sane-patches/*.patch; do
+    patch -d "$work/src/sane-backends-$sane_version" -p1 -s < "$change"
+done
 fetch "$usb_url" "$usb_sha256"
 fetch "$jpeg_url" "$jpeg_sha256"
 

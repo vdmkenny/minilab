@@ -564,6 +564,7 @@ pub const Scanner = struct {
             .area = scanner.fullArea(),
             .deep = deep,
             .film_setting = scanner.hasFilmSetting() or raw_film,
+            .infrared = scanner.infraredWay() != null,
             .profile = scanner.profile,
             .options = options,
         };
@@ -778,12 +779,14 @@ pub const Scanner = struct {
         if (!try scanner.selectSource(request.source) and request.source != .flatbed) return error.Unsupported;
         step = "the raw setup";
         try scanner.setUpRaw(gpa, request.film, request.raw, request.deep);
-        step = "the resolution";
-        if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
+        step = "the resolution and the area";
+        try scanner.setResolutionAndArea(request);
+    }
 
-        // Now the area. Move the far corner out of the way first, so the near corner can go
-        // anywhere.
-        step = "the scan area";
+    /// Sets the resolution and the area `request` asks for.
+    fn setResolutionAndArea(scanner: *Scanner, request: interface.Request) Error!void {
+        if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
+        // Move the far corner out of the way first, so the near corner can go anywhere.
         const full = scanner.fullArea();
         const area = if (request.area) |a| a.clip(full) orelse return error.Unsupported else full;
         _ = try scanner.setNumber("br-x", full.right());
@@ -792,6 +795,28 @@ pub const Scanner = struct {
         _ = try scanner.setNumber("tl-y", area.y);
         _ = try scanner.setNumber("br-x", area.right());
         _ = try scanner.setNumber("br-y", area.bottom());
+    }
+
+    /// How the scanner offers an infrared pass, if it does. SANE has no standard for it yet, so
+    /// drivers do it one of these ways, found by their options rather than by their names, so any
+    /// driver that offers it in one of them works. docs/infrared.md lists the ones known.
+    fn infraredWay(scanner: *Scanner) ?InfraredWay {
+        if (scanner.find("mode")) |found| {
+            var each = found.option.strings();
+            while (each.next()) |mode| {
+                if (interface.isInfrared(mode)) return .{ .mode = mode };
+                if (std.ascii.eqlIgnoreCase(mode, "RGBI")) return .{ .rgbi = mode };
+            }
+        }
+        if (scanner.find("source")) |found| {
+            var each = found.option.strings();
+            while (each.next()) |source| if (interface.isInfrared(source)) return .{ .source = source };
+        }
+        for (infrared_switches) |name| {
+            const found = scanner.find(name) orelse continue;
+            if (found.option.type == .bool and found.option.settable()) return .{ .toggle = name };
+        }
+        return null;
     }
 
     /// The area the scanner will use, after rounding.
@@ -807,17 +832,64 @@ pub const Scanner = struct {
     pub fn scan(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request, progress: *interface.Progress) Error!interface.Image {
         progress.reset();
         try scanner.prepare(gpa, request);
+        const way: ?InfraredWay = if (request.infrared) scanner.infraredWay() else null;
+        // A mode or a switch that sends the infrared with the scan goes on before it.
+        if (way) |w| switch (w) {
+            .rgbi => |mode| _ = try scanner.setString("mode", mode),
+            .toggle => |name| _ = try scanner.setNumber(name, 1),
+            .mode, .source => {},
+        };
         const area = scanner.usedArea();
         const dpi: f32 = @floatCast(scanner.getNumber("resolution") orelse @as(f64, @floatFromInt(request.dpi)));
         const x_dpi: f32 = @floatCast(scanner.getNumber("x-resolution") orelse dpi);
         const y_dpi: f32 = @floatCast(scanner.getNumber("y-resolution") orelse dpi);
 
+        var colour = try scanner.read(gpa, progress, way != null);
+        errdefer colour.deinit(gpa);
+        if (way) |w| switch (w) {
+            // The infrared is a scan of its own, of the same area, in its mode or from its light.
+            .mode => |mode| colour.infrared = try scanner.secondPass(gpa, request, progress, "mode", mode),
+            .source => |source| colour.infrared = try scanner.secondPass(gpa, request, progress, "source", source),
+            .rgbi, .toggle => {},
+        };
+        if (colour.infrared) |*plane| if (plane.width != colour.scan.width or plane.height != colour.scan.height) {
+            std.log.warn("the infrared pass came out {d} × {d}, not the scan's {d} × {d}, so it's left out", .{ plane.width, plane.height, colour.scan.width, colour.scan.height });
+            plane.deinit(gpa);
+            colour.infrared = null;
+        };
+        if (way != null and colour.infrared == null) std.log.warn("the scanner sent no infrared pass", .{});
+        return .{
+            .scan = colour.scan,
+            .depth = colour.depth,
+            .dpi = .{ x_dpi, y_dpi },
+            .area = area,
+            .infrared = colour.infrared,
+        };
+    }
+
+    /// What `read` read.
+    const Read = struct {
+        scan: image.Scan,
+        depth: image.Depth,
+        infrared: ?image.Plane = null,
+
+        fn deinit(read_scan: *Read, gpa: std.mem.Allocator) void {
+            read_scan.scan.deinit(gpa);
+            if (read_scan.infrared) |*plane| plane.deinit(gpa);
+        }
+    };
+
+    /// Runs the scan the scanner is set up for and reads it to the end. Three-pass scanners send
+    /// red, green and blue as separate frames. With `infrared`, an infrared sample after the
+    /// colour ones, or a grey frame after the colour, is read as the infrared pass.
+    fn read(scanner: *Scanner, gpa: std.mem.Allocator, progress: *interface.Progress, infrared: bool) Error!Read {
         var pixels: std.ArrayList([3]u16) = .empty;
         defer pixels.deinit(gpa);
+        var plane: std.ArrayList([1]u16) = .empty;
+        defer plane.deinit(gpa);
         var width: usize = 0;
         var depth: image.Depth = .eight;
         var rows: usize = 0;
-        // Three-pass scanners send red, green and blue as separate frames.
         var frame: usize = 0;
         while (true) : (frame += 1) {
             const started = scanner.api.start(scanner.handle);
@@ -827,7 +899,7 @@ pub const Scanner = struct {
             }
             var parameters: Parameters = undefined;
             try scanner.checkOrFinish(scanner.api.get_parameters(scanner.handle, &parameters));
-            const layout = Layout.of(parameters) catch |err| {
+            const layout = Layout.of(parameters, infrared) catch |err| {
                 std.log.warn("minilab can't read the scanner's data: {d}-bit, format {d}", .{ parameters.depth, @backingInt(parameters.format) });
                 scanner.finish();
                 return err;
@@ -845,25 +917,61 @@ pub const Scanner = struct {
             }
             const lines: u32 = @intCast(@max(parameters.lines, 0));
             if (frame == 0) progress.total.store(lines * @as(u32, if (layout.channel == null) 1 else 3), .release);
-            const read = try scanner.readFrame(gpa, parameters, layout, &pixels, progress);
-            if (frame == 0) rows = read;
+            const read_rows = try scanner.readFrame(gpa, parameters, layout, &pixels, &plane, progress);
+            if (frame == 0) rows = read_rows;
             if (parameters.last_frame != 0 or frame == 2) break;
         }
+        // A switch can send the infrared as a grey frame after the colour (coolscan2, avision).
+        if (infrared and plane.items.len == 0) try scanner.readInfraredFrame(gpa, width, &plane, progress);
         // After the last frame, `sane_cancel` puts the backend back to idle.
         scanner.api.cancel(scanner.handle);
 
         if (rows == 0 or width == 0) return error.Failed;
         pixels.shrinkRetainingCapacity(rows * width);
-        return .{
-            .scan = .{ .width = width, .height = rows, .pixels = try pixels.toOwnedSlice(gpa) },
-            .depth = depth,
-            .dpi = .{ x_dpi, y_dpi },
-            .area = area,
-        };
+        var result: Read = .{ .scan = .{ .width = width, .height = rows, .pixels = try pixels.toOwnedSlice(gpa) }, .depth = depth };
+        errdefer result.deinit(gpa);
+        if (plane.items.len >= rows * width) {
+            plane.shrinkRetainingCapacity(rows * width);
+            result.infrared = .{ .width = width, .height = rows, .pixels = try plane.toOwnedSlice(gpa) };
+        }
+        return result;
     }
 
-    /// Reads one frame to the end into `pixels`, and returns how many lines it had.
-    fn readFrame(scanner: *Scanner, gpa: std.mem.Allocator, parameters: Parameters, layout: Layout, pixels: *std.ArrayList([3]u16), progress: *interface.Progress) Error!usize {
+    /// Reads one more frame, if the scanner sends a grey one `width` wide, into `plane`.
+    fn readInfraredFrame(scanner: *Scanner, gpa: std.mem.Allocator, width: usize, plane: *std.ArrayList([1]u16), progress: *interface.Progress) Error!void {
+        if (scanner.api.start(scanner.handle) != .good) return;
+        var parameters: Parameters = undefined;
+        if (scanner.api.get_parameters(scanner.handle, &parameters) != .good or parameters.format != .gray) return;
+        const layout = Layout.of(parameters, false) catch return;
+        if (layout.width != width) return;
+        var grey: std.ArrayList([3]u16) = .empty;
+        defer grey.deinit(gpa);
+        var unused: std.ArrayList([1]u16) = .empty;
+        defer unused.deinit(gpa);
+        _ = try scanner.readFrame(gpa, parameters, layout, &grey, &unused, progress);
+        try plane.ensureTotalCapacity(gpa, grey.items.len);
+        for (grey.items) |p| plane.appendAssumeCapacity(.{p[0]});
+    }
+
+    /// Scans the infrared as a pass of its own: the same area at the same resolution, with option
+    /// `name` set to `value`, the infrared mode or light source. The next scan's `prepare` puts the
+    /// scanner back. Returns null when the scanner won't take it.
+    fn secondPass(scanner: *Scanner, gpa: std.mem.Allocator, request: interface.Request, progress: *interface.Progress, name: []const u8, value: []const u8) Error!?image.Plane {
+        if (!try scanner.setString(name, value)) return null;
+        // A backend may reset the resolution, the area or the depth when the mode changes.
+        _ = try scanner.setNumber("depth", if (request.deep) 16 else 8);
+        try scanner.setResolutionAndArea(request);
+        progress.reset();
+        var pass = try scanner.read(gpa, progress, false);
+        defer pass.deinit(gpa);
+        const plane: image.Plane = try .init(gpa, pass.scan.width, pass.scan.height);
+        for (plane.pixels, pass.scan.pixels) |*ir, p| ir.* = .{p[0]};
+        return plane;
+    }
+
+    /// Reads one frame to the end into `pixels`, and its infrared samples into `plane` when the
+    /// layout has them, and returns how many lines it had.
+    fn readFrame(scanner: *Scanner, gpa: std.mem.Allocator, parameters: Parameters, layout: Layout, pixels: *std.ArrayList([3]u16), plane: *std.ArrayList([1]u16), progress: *interface.Progress) Error!usize {
         const line_bytes: usize = @intCast(parameters.bytes_per_line);
         const line = try gpa.alloc(u8, line_bytes);
         defer gpa.free(line);
@@ -892,7 +1000,7 @@ pub const Scanner = struct {
                 chunk = chunk[take..];
                 if (filled < line_bytes) continue;
                 filled = 0;
-                if (failure == null) layout.decode(gpa, line, row, pixels) catch |err| {
+                if (failure == null) layout.decode(gpa, line, row, pixels, plane) catch |err| {
                     failure = err;
                 };
                 row += 1;
@@ -919,11 +1027,33 @@ pub const Scanner = struct {
     }
 };
 
+/// The ways a SANE driver offers an infrared pass (`Scanner.infraredWay`).
+const InfraredWay = union(enum) {
+    /// A scan mode for it, like epson2's and pixma's "Infrared": a second scan of the same area,
+    /// in grey.
+    mode: []const u8,
+    /// A light source for it, like genesys's "Transparency Adapter Infrared": a second scan.
+    source: []const u8,
+    /// A mode that scans red, green, blue and infrared at once, like pieusb's "RGBI": a fourth
+    /// sample with each pixel.
+    rgbi: []const u8,
+    /// A switch, like coolscan's `infrared` and avision's `infra-red`: switched on, the scan
+    /// comes with a fourth sample, or with a grey frame after the colour.
+    toggle: []const u8,
+};
+
+/// The switches drivers have for infrared. `infra-red` is SANE's own name for one.
+const infrared_switches = [_][]const u8{ "infrared", "infra-red" };
+
 /// The longest string option value we handle.
 const max_string = 1024;
 
 /// How many bytes we ask `sane_read` for at a time.
 const read_size = 64 * 1024;
+
+/// Samples in an RGBI pixel, and where its infrared is.
+const rgbi_samples = 4;
+const infrared_sample = 3;
 
 /// How the samples are laid out in a frame's lines.
 const Layout = struct {
@@ -933,8 +1063,13 @@ const Layout = struct {
     gray: bool,
     /// For three-pass frames, the one channel this frame holds.
     channel: ?usize,
+    /// Whether each colour pixel has a fourth sample, infrared, after red, green and blue.
+    infrared: bool = false,
 
-    fn of(parameters: Parameters) Error!Layout {
+    /// The layout of a frame with `parameters`. With `infrared`, a colour frame whose lines hold
+    /// four samples a pixel has infrared as the fourth: SANE has no frame type for it, so drivers
+    /// that send it that way label the frame RGB.
+    fn of(parameters: Parameters, infrared: bool) Error!Layout {
         const depth = std.enums.fromInt(image.Depth, parameters.depth) orelse return error.Unsupported;
         if (parameters.pixels_per_line <= 0) return error.Failed;
         const width: usize = @intCast(parameters.pixels_per_line);
@@ -944,9 +1079,11 @@ const Layout = struct {
             _ => return error.Unsupported,
         };
         if (parameters.bytes_per_line < width * channels * depth.bytes()) return error.Failed;
+        const with_infrared = infrared and parameters.format == .rgb and parameters.bytes_per_line >= width * rgbi_samples * depth.bytes();
         return .{
             .width = width,
             .depth = depth,
+            .infrared = with_infrared,
             .gray = parameters.format == .gray,
             .channel = switch (parameters.format) {
                 .red => 0,
@@ -963,9 +1100,9 @@ const Layout = struct {
         return image.sampleAt(line, index, layout.depth, builtin.cpu.arch.endian());
     }
 
-    /// Decodes line `row` into `pixels`. The first pass appends the pixels, and the other passes
-    /// fill in their own channel.
-    fn decode(layout: Layout, gpa: std.mem.Allocator, line: []const u8, row: usize, pixels: *std.ArrayList([3]u16)) !void {
+    /// Decodes line `row` into `pixels`, and its infrared samples into `plane`. The first pass
+    /// appends the pixels, and the other passes fill in their own channel.
+    fn decode(layout: Layout, gpa: std.mem.Allocator, line: []const u8, row: usize, pixels: *std.ArrayList([3]u16), plane: *std.ArrayList([1]u16)) !void {
         if (layout.channel) |channel| {
             if (channel == 0 or pixels.items.len < (row + 1) * layout.width) {
                 for (0..layout.width) |x| {
@@ -979,6 +1116,15 @@ const Layout = struct {
             return;
         }
         try pixels.ensureUnusedCapacity(gpa, layout.width);
+        if (layout.infrared) {
+            try plane.ensureUnusedCapacity(gpa, layout.width);
+            for (0..layout.width) |x| {
+                const at = x * rgbi_samples;
+                pixels.appendAssumeCapacity(.{ layout.sample(line, at), layout.sample(line, at + 1), layout.sample(line, at + 2) });
+                plane.appendAssumeCapacity(.{layout.sample(line, at + infrared_sample)});
+            }
+            return;
+        }
         for (0..layout.width) |x| {
             const p: [3]u16 = if (layout.gray) @splat(layout.sample(line, x)) else .{ layout.sample(line, x * 3), layout.sample(line, x * 3 + 1), layout.sample(line, x * 3 + 2) };
             pixels.appendAssumeCapacity(p);
@@ -1046,15 +1192,17 @@ test "lines decode at 8 and 16 bits, colour and grey" {
     const gpa = std.testing.allocator;
     var pixels: std.ArrayList([3]u16) = .empty;
     defer pixels.deinit(gpa);
+    var plane: std.ArrayList([1]u16) = .empty;
+    defer plane.deinit(gpa);
 
     const rgb16: Layout = .{ .width = 1, .depth = .sixteen, .gray = false, .channel = null };
     var line16: [6]u8 = undefined;
     for (0..3) |i| std.mem.writeInt(u16, line16[i * 2 ..][0..2], @intCast(1000 * (i + 1)), builtin.cpu.arch.endian());
-    try rgb16.decode(gpa, &line16, 0, &pixels);
+    try rgb16.decode(gpa, &line16, 0, &pixels, &plane);
     try std.testing.expectEqual([3]u16{ 1000, 2000, 3000 }, pixels.items[0]);
 
     const gray8: Layout = .{ .width = 2, .depth = .eight, .gray = true, .channel = null };
-    try gray8.decode(gpa, &.{ 0, 255 }, 1, &pixels);
+    try gray8.decode(gpa, &.{ 0, 255 }, 1, &pixels, &plane);
     try std.testing.expectEqual([3]u16{ 0, 0, 0 }, pixels.items[1]);
     try std.testing.expectEqual([3]u16{ 65535, 65535, 65535 }, pixels.items[2]);
 }
@@ -1063,12 +1211,40 @@ test "three-pass frames fill one channel each" {
     const gpa = std.testing.allocator;
     var pixels: std.ArrayList([3]u16) = .empty;
     defer pixels.deinit(gpa);
+    var plane: std.ArrayList([1]u16) = .empty;
+    defer plane.deinit(gpa);
     for ([_]usize{ 0, 1, 2 }) |channel| {
         const layout: Layout = .{ .width = 1, .depth = .eight, .gray = false, .channel = channel };
-        try layout.decode(gpa, &.{@intCast(channel + 1)}, 0, &pixels);
+        try layout.decode(gpa, &.{@intCast(channel + 1)}, 0, &pixels, &plane);
     }
     try std.testing.expectEqual(@as(usize, 1), pixels.items.len);
     try std.testing.expectEqual([3]u16{ 1 * image.widen_8_to_16, 2 * image.widen_8_to_16, 3 * image.widen_8_to_16 }, pixels.items[0]);
+}
+
+test "an RGB frame with four samples a pixel has infrared as the fourth, when it's asked for" {
+    const gpa = std.testing.allocator;
+    const width = 2;
+    const parameters: Parameters = .{ .format = .rgb, .last_frame = 1, .bytes_per_line = width * rgbi_samples * 2, .pixels_per_line = width, .lines = 1, .depth = 16 };
+    try std.testing.expect(!(try Layout.of(parameters, false)).infrared);
+    const layout = try Layout.of(parameters, true);
+    try std.testing.expect(layout.infrared);
+    var line: [width * rgbi_samples * 2]u8 = undefined;
+    for (0..width * rgbi_samples) |i| std.mem.writeInt(u16, line[i * 2 ..][0..2], @intCast(100 * (i + 1)), builtin.cpu.arch.endian());
+    var pixels: std.ArrayList([3]u16) = .empty;
+    defer pixels.deinit(gpa);
+    var plane: std.ArrayList([1]u16) = .empty;
+    defer plane.deinit(gpa);
+    try layout.decode(gpa, &line, 0, &pixels, &plane);
+    try std.testing.expectEqualSlices([3]u16, &.{ .{ 100, 200, 300 }, .{ 500, 600, 700 } }, pixels.items);
+    try std.testing.expectEqualSlices([1]u16, &.{ .{400}, .{800} }, plane.items);
+    // A plain colour frame doesn't have it, asked for or not.
+    const rgb: Parameters = .{ .format = .rgb, .last_frame = 1, .bytes_per_line = width * 3 * 2, .pixels_per_line = width, .lines = 1, .depth = 16 };
+    try std.testing.expect(!(try Layout.of(rgb, true)).infrared);
+}
+
+test "an infrared light source isn't an ordinary one" {
+    try std.testing.expectEqual(@as(?interface.Source, null), interface.Source.classify("Transparency Adapter Infrared"));
+    try std.testing.expectEqual(@as(?interface.Source, .transparency), interface.Source.classify("Transparency Adapter"));
 }
 
 test "SANE's test backend scans, where libsane is installed" {

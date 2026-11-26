@@ -482,6 +482,9 @@ pub const State = struct {
     /// The resolution to scan at. It starts at the preferences' (`devices` sets it), or the
     /// scanner's closest one.
     dpi: u32 = (Preferences{}).scan_dpi,
+    /// Whether frames are scanned with an infrared pass too, for scanners that can
+    /// (`scan.Capabilities.infrared`). It's off to begin with: it takes about twice as long.
+    infrared: bool = false,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
     editing_margin: bool = false,
@@ -689,10 +692,10 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
         .frame_checking => |index| if (queueItem(state, index)) |item| {
             item.* = .checking;
         },
-        .frame_done => |done| {
-            defer gpa.free(done.ppm);
+        .frame_done => |*done| {
+            defer done.deinit(gpa);
             const item = queueItem(state, done.index);
-            const frame = addToRoll(state, ctx, done) catch |err| {
+            const frame = addToRoll(state, ctx, done.*) catch |err| {
                 std.log.err("can't add frame {d} to the roll: {t}", .{ done.index + 1, err });
                 if (item) |i| i.* = .{ .failed = err };
                 return;
@@ -741,7 +744,7 @@ fn addToRoll(state: *State, ctx: context.Context, done: scan_worker.Scanned) !us
     const path = state.queue_roll orelse return error.NoRoll;
     const index = ctx.library.find(path) orelse return error.RollNotFound;
     const r = &ctx.library.rolls.items[index];
-    const frame = try r.addScanAt(ctx.gpa, ctx.io, done.ppm, done.dpi);
+    const frame = try r.addScanAt(ctx.gpa, ctx.io, done.ppm, done.dpi, done.infrared);
     const saved = &r.frames.items[frame];
     saved.crop = done.crop;
     saved.quarter_turns = state.queue_turns;
@@ -874,6 +877,7 @@ fn drawScanner(state: *State, ctx: context.Context, roll_index: ?usize) void {
     y = drawSetup(state, panel, y);
     y = drawFilmChoice(state, panel, y);
     y = drawResolution(state, panel, y);
+    y = drawInfrared(state, panel, y);
     y = drawMargin(state, panel, y);
     y = drawFit(state, panel, y);
     drawActions(state, panel, y, origin.y + size.y - gui.px(panel_padding));
@@ -1007,6 +1011,19 @@ fn drawResolution(state: *State, panel: ScannerPanel, top: f32) f32 {
         y += gui.px(device_height + group_gap);
     }
     return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.colors.text_tertiary, sizeNote(state, panel.ctx, panel.roll_index)) + gui.px(scanner_gap);
+}
+
+/// Draws the switch for an infrared pass at `y`, for a scanner that can scan one. Returns the y
+/// below it.
+fn drawInfrared(state: *State, panel: ScannerPanel, y: f32) f32 {
+    const caps = state.capabilities orelse return y;
+    if (!caps.infrared) return y;
+    c.ImGui_SetCursorScreenPos(gui.vec2(panel.x, y));
+    c.ImGui_BeginDisabled(state.scanning);
+    _ = gui.checkbox(i18n.t.scan.infrared_pass, &state.infrared);
+    c.ImGui_EndDisabled();
+    gui.tooltip(i18n.t.scan.infrared_pass_help);
+    return y + gui.px(pill_height + scanner_gap);
 }
 
 /// Draws the margin around the frames at `y`. Returns the y below it.
@@ -2344,7 +2361,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         area = area.clip(caps.area) orelse caps.area;
         job.* = .{
             .index = i,
-            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area },
+            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area, .infrared = state.infrared and caps.infrared },
             .crop = crop,
             .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .fit = state.fit, .inset = box.inset / 100 },
         };

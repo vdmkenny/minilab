@@ -151,6 +151,8 @@
         .scanner_mode = "Modo del escáner: {0} · {1}",
         .positive_film = "Positive Film",
         .resolution = "Resolución",
+        .infrared_pass = "Pasada infrarroja",
+        .infrared_pass_help = "Para eliminar el polvo con infrarrojos · cada fotograma tarda casi el doble",
         .size_about = "Unos {0} × {1} px por fotograma",
         .size_about_mb = "Unos {0} × {1} px · {2} MB por fotograma",
         .size = "{0} × {1} px por fotograma",

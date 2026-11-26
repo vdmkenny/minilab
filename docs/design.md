@@ -857,6 +857,11 @@ What that rules out, and how minilab stays within it:
   program, like the CC BY looks and the OFL fonts, fits under the GPL in that larger work is a grey
   area. We chose to cover more scanners. If that ever has to change, the build script can leave
   the GPL-only backends out, and they'd load from the system's SANE where it's installed.
+- One of the GPL-only backends ships changed: epson2, whose infrared mode we turn on
+  (`scripts/sane-patches`). The changes are in this repository as patches, which the build script
+  applies to the release archive, so the source of what ships is that archive plus the patches.
+  The changed files say they were changed, and when, as the GPL asks, and the patches are offered
+  upstream.
 - libusb is under the LGPL-2.1 and stays a library of its own, so anyone can swap in their own.
 - LibRaw is linked statically under the LGPL-2.1, which means users must be able to relink minilab
   with their own LibRaw. minilab's source and build are public, so they can.
