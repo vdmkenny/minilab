@@ -472,7 +472,10 @@ Each stage has its own settings. Dust removal, when it's on, works on the frame'
    After that comes the look (section 9), then saturation: each pixel mixed with its own
    luminance in linear light, which keeps its hue and its luminance.
 7. **Output.** What Develop produces is linear light from 0 to 1, in the scanner's RGB, which we
-   take as having Rec. 709's primaries. The viewer shows it sRGB-encoded. Export converts it to
+   take as having Rec. 709's primaries. The viewer shows it sRGB-encoded, in the display's own
+   colours: macOS converts the window to each display itself, and on Windows and Linux pictures
+   are converted to the display's ICC profile as they go to the GPU (`platform/display_colour.zig`),
+   so a wide-gamut display doesn't show them oversaturated. Export converts it to
    linear Rec. 2020 (with ITU-R BT.2087's matrix), and Little CMS then converts that to the export
    space: sRGB, Display P3, Adobe RGB or ProPhoto RGB. The space's ICC profile is embedded in the
    file.
@@ -953,7 +956,6 @@ Still open:
   V200's linearity hasn't been measured with a wedge.
 - Slides use the scanner's colour as it is, or the camera's matrix. An input profile made from an
   IT8.7/1 transparency target isn't built.
-- The viewer shows sRGB and doesn't use the display's ICC profile.
 - HEIC with a gain map: the codecs minilab builds don't write HEIC yet.
 - Exact stock values could come from a calibration frame on each stock (a grey card, bracketed
   over several stops), saved per stock and scanner. That isn't built.

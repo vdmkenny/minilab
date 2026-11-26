@@ -17,6 +17,7 @@ const shortcuts = @import("shortcuts.zig");
 const labels = @import("labels.zig");
 const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
+const display_colour = @import("../platform/display_colour.zig");
 const Library = @import("library.zig").Library;
 const bundled = minilab.bundled_looks;
 const looks = minilab.looks;
@@ -440,6 +441,8 @@ const Running = struct {
 
 pub const State = struct {
     loaded: bool = false,
+    /// When the display's colours change, the previews and figures are made again in them.
+    display: display_colour.Watch = .{},
     own: std.ArrayList(Own) = .empty,
     /// The LUTs imported into the library's Looks folder.
     imported: std.ArrayList(minilab.look.Id) = .empty,
@@ -1038,6 +1041,10 @@ fn placementOf(r: *const minilab.roll.Roll, index: usize) draft.Placement {
 /// Draws the workspace. Returns a workspace to go to, when the page asks for one.
 pub fn draw(state: *State, ctx: context.Context) ?context.Workspace {
     if (!state.loaded) state.load(ctx);
+    if (state.display.changed()) {
+        state.previews.release(ctx.gpa, ctx.gpu);
+        state.figures.release(ctx.gpu);
+    }
     state.pump(ctx);
     state.handle(ctx.keys);
     if (state.current()) |own| {

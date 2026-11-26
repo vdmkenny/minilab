@@ -5,6 +5,7 @@ const std = @import("std");
 const c = @import("c");
 const minilab = @import("minilab");
 const Texture = @import("../platform/texture.zig").Texture;
+const display_colour = @import("../platform/display_colour.zig");
 const trash = @import("../platform/trash.zig");
 
 const image = minilab.image;
@@ -28,6 +29,8 @@ pub const Library = struct {
     label: []const u8,
     rolls: std.ArrayList(roll.Roll) = .empty,
     thumbnails: std.AutoHashMapUnmanaged(Key, Texture) = .empty,
+    /// When the display's colours change, the thumbnails are made again in them.
+    display: display_colour.Watch = .{},
     /// Thumbnails that have been asked for but aren't made yet.
     wanted: std.ArrayList(Key) = .empty,
     /// Thumbnails that couldn't be made. They aren't tried again until their frame changes.
@@ -255,6 +258,7 @@ pub const Library = struct {
     /// Returns the thumbnail for `key`. Returns null if it isn't made yet (it's then asked for) or
     /// couldn't be made.
     pub fn thumbnail(library: *Library, gpa: std.mem.Allocator, key: Key) ?Texture {
+        if (library.display.changed()) library.forgetThumbnails();
         if (library.thumbnails.get(key)) |t| return t;
         if (library.failed.contains(key)) return null;
         for (library.wanted.items) |w| if (std.meta.eql(w, key)) return null;

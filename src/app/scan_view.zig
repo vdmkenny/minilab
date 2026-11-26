@@ -33,6 +33,7 @@ const holes = @import("holes.zig");
 const labels = @import("labels.zig");
 const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
+const display_colour = @import("../platform/display_colour.zig");
 const scan_worker = @import("scan_worker.zig");
 const scan = scan_worker.scan;
 const Worker = scan_worker.Worker;
@@ -466,6 +467,8 @@ const Drag = union(enum) {
 
 pub const State = struct {
     worker: ?*Worker = null,
+    /// When the display's colours change, the preview is put on the GPU again in them.
+    display: display_colour.Watch = .{},
     devices: []scan.Device = &.{},
     /// The device that's open or being opened.
     device: ?usize = null,
@@ -2604,6 +2607,10 @@ fn axisOf(preview: minilab.image.Scan) frames.Axis {
 /// white through the mask.
 fn uploadPreview(state: *State, ctx: context.Context) void {
     const preview = if (state.preview) |*p| p else return;
+    if (state.display.changed()) if (preview.texture) |*t| {
+        t.release(ctx.gpu);
+        preview.texture = null;
+    };
     if (preview.texture != null) return;
     const pixels = ctx.gpa.alloc([4]u8, preview.scan.pixels.len) catch return;
     defer ctx.gpa.free(pixels);

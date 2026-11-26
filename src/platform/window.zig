@@ -6,6 +6,7 @@ const c = @import("c");
 const icon = @import("icon.zig");
 const sdl = @import("sdl.zig");
 const locale = @import("locale.zig");
+const display_colour = @import("display_colour.zig");
 const Language = @import("minilab").preferences.Language;
 
 pub const Error = sdl.Error;
@@ -83,12 +84,17 @@ pub const Window = struct {
             .PresentMode = c.SDL_GPU_PRESENTMODE_VSYNC,
         };
         if (!c.cImGui_ImplSDLGPU3_Init(&info)) return fail("ImGui_ImplSDLGPU3_Init");
-        if (!hidden) _ = c.SDL_ShowWindow(handle);
+        if (!hidden) {
+            _ = c.SDL_ShowWindow(handle);
+            // A hidden window draws screenshots, which stay sRGB wherever they're taken.
+            display_colour.update(handle);
+        }
         return .{ .handle = handle, .gpu = gpu, .scale = scale, .system_light = systemLight(), .system_language = locale.preferredLanguage() };
     }
 
     pub fn close(window: *Window) void {
         _ = c.SDL_WaitForGPUIdle(window.gpu);
+        display_colour.deinit();
         c.cImGui_ImplSDL3_Shutdown();
         c.cImGui_ImplSDLGPU3_Shutdown();
         c.ImGui_DestroyContext(null);
@@ -131,6 +137,7 @@ pub const Window = struct {
             },
             c.SDL_EVENT_SYSTEM_THEME_CHANGED => window.system_light = systemLight(),
             c.SDL_EVENT_LOCALE_CHANGED => window.system_language = locale.preferredLanguage(),
+            c.SDL_EVENT_WINDOW_ICCPROF_CHANGED, c.SDL_EVENT_WINDOW_DISPLAY_CHANGED => display_colour.update(window.handle),
             c.SDL_EVENT_DROP_FILE => if (event.drop.data) |data| {
                 window.dropped.add(std.mem.span(data), .{ event.drop.x, event.drop.y });
             },

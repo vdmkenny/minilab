@@ -258,6 +258,49 @@ pub fn Transform(comptime Sample: type) type {
     };
 }
 
+/// A transform from sRGB to a display's own profile, for showing pictures on it: 8-bit RGBA in and
+/// out, the alpha kept. Relative colorimetric with black point compensation, as screens are
+/// usually matched: colours inside the display's gamut stay as they are, and black is the
+/// display's black.
+pub const DisplayTransform = struct {
+    handle: *anyopaque,
+
+    /// Builds the transform to `display_profile`, an ICC file. A profile that isn't RGB, or that
+    /// LittleCMS can't read, gives `error.ColourManagementFailed`.
+    pub fn init(display_profile: []const u8) Error!DisplayTransform {
+        var source: Profile = try .init(.srgb);
+        defer source.deinit();
+        const display = c.cmsOpenProfileFromMem(display_profile.ptr, @intCast(display_profile.len)) orelse return error.ColourManagementFailed;
+        defer _ = c.cmsCloseProfile(display);
+        const handle = c.cmsCreateTransform(
+            source.handle,
+            c.TYPE_RGBA_8,
+            display,
+            c.TYPE_RGBA_8,
+            @backingInt(Intent.relative_colorimetric),
+            c.cmsFLAGS_BLACKPOINTCOMPENSATION | c.cmsFLAGS_COPY_ALPHA,
+        ) orelse return error.ColourManagementFailed;
+        return .{ .handle = handle };
+    }
+
+    pub fn deinit(transform: *DisplayTransform) void {
+        c.cmsDeleteTransform(transform.handle);
+        transform.* = undefined;
+    }
+
+    /// Converts `input` into `output`, which should be the same length (`Transform.apply`).
+    pub fn apply(transform: DisplayTransform, input: []const [4]u8, output: [][4]u8) void {
+        std.debug.assert(input.len == output.len);
+        const total = @min(input.len, output.len);
+        var done: usize = 0;
+        while (done < total) {
+            const count = @min(total - done, max_pixels_per_call);
+            c.cmsDoTransform(transform.handle, input[done..].ptr, output[done..].ptr, @intCast(count));
+            done += count;
+        }
+    }
+};
+
 /// Where the size, the version and the signature are in an ICC profile's header.
 const header_size_offset = 0;
 const header_version_offset = 8;
@@ -341,4 +384,30 @@ test "two copies of a profile are the same apart from when they were made" {
     try std.testing.expect(sameProfile(first, second));
     second[0] +%= 1;
     try std.testing.expect(!sameProfile(first, second));
+}
+
+test "a display transform to sRGB leaves pictures as they are, and one to a wider display tones them down" {
+    const gpa = std.testing.allocator;
+    const pixels = [_][4]u8{ .{ 255, 0, 0, 255 }, .{ 128, 128, 128, 40 }, .{ 0, 0, 0, 0 } };
+    var out: [pixels.len][4]u8 = undefined;
+
+    const srgb = try profileBytes(gpa, .srgb);
+    defer gpa.free(srgb);
+    var same = try DisplayTransform.init(srgb);
+    defer same.deinit();
+    same.apply(&pixels, &out);
+    for (pixels, out) |p, o| for (p, o) |a, b| try std.testing.expect(@abs(@as(i16, a) - b) <= 1);
+
+    // sRGB's red is less saturated than Display P3's, so on a P3 display it needs some green and
+    // blue. Grey stays grey, and the alpha stays.
+    const p3 = try profileBytes(gpa, .display_p3);
+    defer gpa.free(p3);
+    var wide = try DisplayTransform.init(p3);
+    defer wide.deinit();
+    wide.apply(&pixels, &out);
+    try std.testing.expect(out[0][0] < 255 and out[0][1] > 0);
+    try std.testing.expect(@abs(@as(i16, out[1][0]) - out[1][2]) <= 1);
+    try std.testing.expectEqual(@as(u8, 40), out[1][3]);
+
+    try std.testing.expectError(error.ColourManagementFailed, DisplayTransform.init("not a profile"));
 }
