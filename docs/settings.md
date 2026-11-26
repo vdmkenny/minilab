@@ -159,6 +159,9 @@ Settings and the scanner's settings, the three appearances, and the pages of Set
 set (ISC licence) that grew out of Feather, drawn from its icon font (`src/ui/icons.zig`).
 Buttons whose icon could mean several things, like Fit, Auto, Sync or Reset, keep their words.
 
+Two icons mark things rather than stand for words: a film spool over a page with no roll open or
+no rolls yet, and a funnel before a filter (the film sizes on Rolls, the rating on Export).
+
 ## Where it's kept
 
 `preferences.json` holds the appearance, the language, the scanner picked last and the

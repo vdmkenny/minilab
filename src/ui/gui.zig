@@ -335,8 +335,10 @@ pub fn fittedWidth(label: [:0]const u8, padding: f32) f32 {
 /// Draws "No roll open" at `at` with a Go to Rolls button under it, for a page that needs a roll.
 /// Returns true when the button is clicked.
 pub fn noRoll(at: Vec2) bool {
-    const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.colors.text_secondary, i18n.t.gui.no_roll_open);
-    c.ImGui_SetCursorScreenPos(vec2(at.x, at.y + height + px(no_roll_gap)));
+    const list = c.ImGui_GetWindowDrawList();
+    const text_y = at.y + emptySpool(list, at);
+    const height = lineAt(list, at.x, text_y, theme.colors.text_secondary, i18n.t.gui.no_roll_open);
+    c.ImGui_SetCursorScreenPos(vec2(at.x, text_y + height + px(no_roll_gap)));
     const label = i18n.t.gui.go_to_rolls;
     return buttonOf(.normal, label, vec2(fittedWidth(label, button_padding) / scale, button_height));
 }
@@ -391,6 +393,31 @@ pub const icon_size = 16;
 
 /// Draws `icon` at the size buttons use, centred on `centre`, faded with the item when it's
 /// disabled: ImGui fades disabled items through the style's alpha, which a draw list doesn't use.
+/// The spool over an empty page, in the design's pixels: its size and the gap under it.
+const spool_size = 32;
+const spool_gap = 12;
+
+/// Draws a spool with its top left at `at`, over the message on a page with no roll or no rolls.
+/// Returns the height it takes, with the gap under it.
+pub fn emptySpool(list: *c.ImDrawList, at: Vec2) f32 {
+    const size = px(spool_size);
+    icons.draw(list, .spool, vec2(at.x + size / 2, at.y + size / 2), size, theme.colors.text_tertiary);
+    return size + px(spool_gap);
+}
+
+/// The gap between a filter's funnel and its drop-down, in the design's pixels.
+pub const filter_icon_gap = 6;
+/// How much room a funnel before a filter takes, with its gap, in the design's pixels.
+pub const filter_icon_space = icon_size + filter_icon_gap;
+
+/// Draws a funnel before a filter's drop-down, at the cursor, and leaves the cursor after it on
+/// the same line. `height` is the drop-down's height.
+pub fn filterIcon(height: f32) void {
+    const at = c.ImGui_GetCursorScreenPos();
+    drawIcon(.funnel, vec2(at.x + px(icon_size) / 2, at.y + height / 2), theme.colors.text_tertiary);
+    c.ImGui_SetCursorScreenPos(vec2(at.x + px(filter_icon_space), at.y));
+}
+
 pub fn drawIcon(icon: icons.Icon, centre: Vec2, colour: theme.Color) void {
     icons.draw(c.ImGui_GetWindowDrawList(), icon, centre, px(icon_size), theme.withAlpha(colour, colour.w * c.ImGui_GetStyle().*.Alpha));
 }
@@ -966,6 +993,9 @@ const slider_thumb_segments = 16;
 /// A range slider drawn the way the design draws one: a thin track, amber up to the value, and a
 /// round thumb. `width` is in the design's pixels, and 0 fills up to the value column. Returns true
 /// when it moved.
+///
+/// Esc or a right-click while dragging cancels the drag: the value goes back to where it was, and
+/// the slider ignores the mouse until it's let go. ImGui's own sliders do the same since 1.93.
 pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) bool {
     const room = c.ImGui_GetContentRegionAvail().x;
     const w = if (width == 0) room - px(value_column + label_gap + reset_space) else px(width);
@@ -976,9 +1006,10 @@ pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) boo
     const active = c.ImGui_IsItemActive();
     const hovered = c.ImGui_IsItemHovered(0);
     var changed = false;
+    if (dragCancelled(value)) changed = true;
     const left = origin.x + thumb;
     const span = w - 2 * thumb;
-    if (active and span > 0) {
+    if (active and !c.ImGuiStorage_GetBool(c.ImGui_GetStateStorage(), cancelKey(), false) and span > 0) {
         const at = std.math.clamp((c.ImGui_GetMousePos().x - left) / span, 0, 1);
         const next = min + at * (max - min);
         if (next != value.*) {
@@ -996,6 +1027,31 @@ pub fn slider(id: [:0]const u8, value: *f32, min: f32, max: f32, width: f32) boo
     c.ImDrawList_AddRectFilledEx(list, vec2(left, middle - track), vec2(left + span * share, middle + track), theme.imU32(amber), px(track_rounding), 0);
     c.ImDrawList_AddCircleFilled(list, vec2(left + span * share, middle), if (hovered or active) thumb + px(slider_thumb_grow) else thumb, theme.imU32(amber), slider_thumb_segments);
     return changed;
+}
+
+/// Where the last item, a slider, keeps whether its drag was cancelled: next to its value at the
+/// start of the drag, which is kept under its own ID.
+fn cancelKey() c.ImGuiID {
+    return c.ImGui_GetItemID() +% 1;
+}
+
+/// Keeps the last item's value at the start of a drag, and puts `value` back to it when the drag
+/// is cancelled with Esc or a right-click. Returns true when it did.
+fn dragCancelled(value: *f32) bool {
+    const storage = c.ImGui_GetStateStorage();
+    const item = c.ImGui_GetItemID();
+    if (c.ImGui_IsItemActivated()) {
+        c.ImGuiStorage_SetFloat(storage, item, value.*);
+        c.ImGuiStorage_SetBool(storage, cancelKey(), false);
+        return false;
+    }
+    if (!c.ImGui_IsItemActive() or c.ImGuiStorage_GetBool(storage, cancelKey(), false)) return false;
+    if (!c.ImGui_IsKeyPressed(c.ImGuiKey_Escape) and !c.ImGui_IsMouseClicked(c.ImGuiMouseButton_Right)) return false;
+    c.ImGuiStorage_SetBool(storage, cancelKey(), true);
+    const start = c.ImGuiStorage_GetFloat(storage, item, value.*);
+    if (start == value.*) return false;
+    value.* = start;
+    return true;
 }
 
 /// Draws a value in the value column after a slider, monospaced and right-aligned.
