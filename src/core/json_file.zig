@@ -93,7 +93,9 @@ fn old(arena: std.mem.Allocator, io: Io, path: []const u8, options: std.json.Par
 /// open a folder to sync it, and NTFS journals renames anyway.
 fn syncFolder(io: Io, folder: []const u8) !void {
     if (builtin.os.tag == .windows) return;
-    const dir = try Io.Dir.cwd().openDir(io, folder, .{});
+    // Linux opens a folder that won't be listed with O_PATH, which can't be synced, so ask for
+    // one that can be listed.
+    const dir = try Io.Dir.cwd().openDir(io, folder, .{ .iterate = true });
     defer dir.close(io);
     const as_file: Io.File = .{ .handle = dir.handle, .flags = .{ .nonblocking = false } };
     try as_file.sync(io);
