@@ -93,10 +93,20 @@ pub const aliases = [_]Alias{
     .{ .name = "Kodak Ektapan 100", .of = "Kodak T-Max 100", .source = ektapan_source },
     .{ .name = "Kodak Ektapan 400", .of = "Kodak T-Max 400", .source = ektapan_source },
     .{ .name = "Kodak Ektapan P3200", .of = "Kodak T-Max P3200", .source = ektapan_source },
+    .{ .name = "Silbersalz35 50D", .of = "Kodak Vision3 50D 5203", .source = silbersalz_source },
+    .{ .name = "Silbersalz35 250D", .of = "Kodak Vision3 250D 5207", .source = silbersalz_source },
+    .{ .name = "Silbersalz35 200T", .of = "Kodak Vision3 200T 5213", .source = silbersalz_source },
+    .{ .name = "Silbersalz35 500T", .of = "Kodak Vision3 500T 5219", .source = silbersalz_source },
+    .{ .name = "Reflx Lab 500T", .of = "Kodak Vision3 500T 5219", .source = "Reflx Lab's product page: \"Respooled from fresh 65mm Vision3\" 500T, rem-jet left on" },
+    .{ .name = "Elektra 100", .of = "Kodak Aerocolor IV 2460", .source = "B&H's product page describes it as re-spooled Kodak Aerocolor IV (a retailer, not Kodak)" },
+    .{ .name = "Reflx Lab Pro 100", .of = "Kodak Aerocolor IV 2460", .source = "Reflx Lab's product page: \"originally developed as Kodak Aerocolor 2460\" (not Kodak)" },
 };
 
-const ektacolor_source = "PENDING";
-const ektapan_source = "PENDING";
+/// Kodak doesn't say Ektacolor Pro is Portra, and publishes no data sheet for it. These names
+/// rest on the formats and Kodak's own wording matching speed for speed, and the press saying so.
+const ektacolor_source = "Kodak (2026) sells Ektacolor Pro in Portra's speeds and formats, 4x5 and 8x10 included, and calls the 400 \"the world's sharpest and finest grain 400 speed color negative film\", as Kodak Alaris calls Portra 400; Digital Camera World and PhotographyTalk report the same emulsions. Neither company confirms it (35mmc, October 2026)";
+const ektapan_source = "Kodak (2026) calls Ektapan a T-Grain emulsion, sells it in T-Max's speeds and formats, and calls the 400 \"the world's sharpest and finest grain 400 speed black-and-white film\", Kodak's line for T-Max 400; P3200 is \"designed to be pushed to ISO 3200\". Kodak doesn't say it's T-Max";
+const silbersalz_source = "Kodak's blog post on Silbersalz35: buyers get KODAK VISION3 50D, 250D, 200T and 500T 35mm movie emulsions, https://www.kodak.com/en/motion/blog-post/silbersalz35/";
 
 pub const stocks = [_]Stock{
     // Colour negative: Status M densities.

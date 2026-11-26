@@ -436,14 +436,44 @@ for a characteristic curve. Here's what turned up for the ones still without a p
 | Kentmere Pan 100, Pan 400 | Nothing usable. No edition prints a characteristic curve, a contrast-time graph or a contrast figure: January 2009 (kentmere.co.uk, archived), January 2019 and the current sheets only have reciprocity, temperature and time tables. Tried: https://web.archive.org/web/20121116050051id_/http://www.kentmere.co.uk/Webfiles/20091291713401332.pdf, https://web.archive.org/web/20121120120022id_/http://www.kentmere.co.uk/Webfiles/20091291714152280.pdf, https://web.archive.org/web/20220709053530id_/https://www.ilfordphoto.com/amfile/file/download/file/1921/product/696/, https://web.archive.org/web/20201112030440id_/https://www.ilfordphoto.com/amfile/file/download/file/1922/product/697/; kentmerephoto.com and kentmere.com didn't connect and have no archived captures. |
 | Kodak ColorPlus 200 | Nothing found from Kodak or Kodak Alaris. None of the archived PDF folders on Kodak Alaris's domains has a ColorPlus sheet, the current "everyday film" pages only list Gold 200 and UltraMax 400, the Kodak Alaris site search finds nothing for "colorplus" or "kodacolor", and the imaging.kodakalaris.com product page returns 404. |
 | CineStill 400D | Nothing. CineStill doesn't name a base stock for 400D and hosts no datasheet for it; its only 400D PDF is a 4x5 handling sheet with no data (https://cdn.shopify.com/s/files/1/0339/5113/files/CineStill_400D_4x5_Handling_Tips.pdf). https://cinestillfilm.com/pages/datasheets returns 404. |
+| Kentmere Pan 200 | Nothing usable. The March 2025 sheet (https://firstcall-photographic.co.uk/cdn/shop/files/Kentmere_Pan_200_B_W_Film_Data_Sheet.pdf, a retailer's copy) has only time and temperature graphs. |
+| Agfa APX 100, 400 | The October 2014 sheets (e.g. https://www.robisa.es/wp-content/uploads/2022/02/APX100_Product-Information_GB.pdf) give no curve and no numbers. We found no newer edition. |
+| ADOX CMS 20 II | The ADOTECH IV sheet (https://www.fotoimpex.com/shop/images/products/media/30945_5_PDF-Datasheet.pdf) gives no curve, only "density of approximately 0.9" at its nominal speed. |
+| ADOX Silvermax | Discontinued. The February 2019 sheet has no curve, and the same unlabelled 0,65 column as HR-50. |
+| Lucky New SHD400 | Lucky's own page (http://lkyl.luckyfilm.com/index/product/239.html?cate=134) only gives D-76, 7 min at 20 °C. |
+| Lucky C200, C400 | Lucky's colour negatives (C200 from July 2025, C400 from 2026). No data sheet on Lucky's sites, and none from its sellers. |
+| Harman Phoenix II | The July 2025 sheet (https://www.harmanphoto.co.uk/amfile/file/download/file/1968/product/2208/) has spectral and reciprocity graphs, but no characteristic curve and no numbers. |
+| Kodak Kodacolor 100, 200 | Eastman Kodak's product pages (https://www.kodak.com/en/still-film/product/consumer/kodacolor-100-film/, and -200-) give no data, and there's no data sheet. Forums guess at the stocks behind them; Kodak doesn't say. |
+| CineStill 400D | Still nothing. CineStill's help page (archived January 2025, https://web.archive.org/web/20250113135820id_/https://help.cinestillfilm.com/hc/en-us/articles/5077764900877-What-film-is-400D-based-on) says it's a new film that combines parts of many films, so it can't borrow another stock's curves. |
 | Lomography Color Negative 100, 400, 800 | Nothing usable. Lomography's film guides (https://cdn.downloads.lomography.com/downloads/color-negative-100-film-guide.pdf, and the same with -400- and -800-) only give ISO and C-41 and show sample photos. We didn't find a datasheet: lomography.com and shop.lomography.com returned 403, guessed datasheet names on cdn.downloads.lomography.com returned 404, and the web.archive.org index searches were offline. |
+
+## Other names a stock is sold under
+
+Some films are sold under more than one name: renamed by their maker, or respooled and sold by
+someone else. `aliases` in `src/presets/stocks.zig` lists them, and each takes its stock's preset.
+Each says who claims it's the same film. Where only a seller or the press says so, the alias says
+that too.
+
+| Name | Preset | Who says so |
+|---|---|---|
+| Kodak Ektacolor Pro 160, 400, 800 (2026) | Portra 160, 400, 800 | Not Kodak in so many words: the speeds, formats and Kodak's own wording match Portra's, and the press reports the same emulsions. 35mmc (October 2026) says neither company will confirm it. |
+| Kodak Ektapan 100, 400, P3200 (2026) | T-Max 100, 400, P3200 | The same: Kodak calls it a T-Grain emulsion and uses T-Max's wording and formats, but doesn't say it's T-Max. |
+| Silbersalz35 50D, 250D, 200T, 500T | Vision3 50D, 250D, 200T, 500T | Kodak's blog, https://www.kodak.com/en/motion/blog-post/silbersalz35/ |
+| Reflx Lab 500T | Vision3 500T 5219 | Reflx Lab's product page. |
+| Elektra 100, Reflx Lab Pro 100 | Aerocolor IV 2460 | Their sellers' product pages (B&H for Elektra 100, Reflx Lab for Pro 100), not Kodak. Other rebrands, like SantaColor 100, only have blogs saying so, and aren't listed. |
+
+"Fujicolor 200" isn't an alias, because it names two films. In the US since December 2021 it's
+the film on Fujifilm's AF3-0261E sheet (the "Fujifilm 200" preset), and in Europe it's C200.
 
 ## Stocks left out
 
 | Stock | Why |
 |---|---|
-| Kentmere Pan 100, Pan 400 | No figures and no curves (see above). |
-| Kodak ColorPlus 200 | No Kodak datasheet found. |
+| Kentmere Pan 100, 200, 400 | No figures and no curves (see above). |
+| Kodak ColorPlus 200, Kodacolor 100, Kodacolor 200 | No Kodak datasheet found. |
+| Harman Phoenix II | No curve and no figures (see above). |
+| Lucky New SHD400, C200, C400 | No data published (see above). |
+| ADOX CMS 20 II | No contrast figure and no curve. |
 | CineStill 400D | See above. |
 | Lomography Color Negative 100/400/800, Lomochrome Purple, Lady Grey, Berlin Kino, Earl Grey | No datasheet found. |
 | Fujifilm Neopan 400 Presto | Discontinued. Its Japanese sheet has stated G-bar values and a vector curve, so it could be added. |
@@ -451,8 +481,8 @@ for a characteristic curve. Here's what turned up for the ones still without a p
 | CineStill BwXX | CineStill calls it "Double-X" but gives no data. Kodak Double-X is included. |
 | ADOX Silvermax, Scala 50 | The contrast column (0,65) has no heading, so it isn't clear what it measures. |
 | ADOX HR-50 | Same unheaded 0,65 column (datasheet of 20 November 2018, https://www.macodirect.de/media/pdf/c2/97/cf/ASC5011_Datenblatt_e.pdf). Its "Characteristic Curve ADOX HR-50 in ADOX FX-39" has no development time and no numbers on the log E axis, so no slope can be read from it, and its density labels (0, 0.1, 0.2, 0.3, 0.5, then every 0.2) are unevenly spaced. The 6 September 2018 sheet on adox.de (https://web.archive.org/web/20251015072916id_/https://www.adox.de/Technical_Informations/TA_HR-50_EN.pdf) prints the same chart. |
-| ADOX CMS 20 II, Color Mission | No contrast figure, or no datasheet. |
-| Agfa APX 100, 400 | The sheets the distributor hosts don't state any numbers. |
+| ADOX Color Mission | No datasheet, and ADOX no longer lists it. |
+| Agfa APX 100, 400 | The October 2014 sheets state no numbers, and there's no newer edition. |
 | Foma Retropan 320 soft | No γ, and the curve's axis labels don't agree with each other. The datasheet (FOMA 09/19, https://www.foma.cz/en/retropan320) draws Retro Special Developer curves at 3, 5 and 8 min, a vector drawing. On the log exposure axis the -3 label sits at the frame's left edge, 66.3 pt from the -2 gridline, but -2 to -1 is 55.2 pt, so the slope you read depends on which labels you trust (20 % apart). The density gridlines are 2 % uneven too. Neither the sheet nor Foma's products catalogue (2020) states a γ for this film. |
 
 ## Redoing the readings
