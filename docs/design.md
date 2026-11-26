@@ -615,6 +615,12 @@ code.
 
 ## 8. Settings and sync
 
+Develop's settings come in sections, in the order the work goes: Preset (film type, stock, look
+and tone), the film base, Density, Inversion, Color balance (the white balance first), then Remove
+dust and Sharpen. Each heading has an icon and a chevron, and opens and closes its section, so you
+keep open only what you're working on. Which are open is a preference
+(`preferences.DevelopSections`), the same for every frame and library, and stays as you left it.
+
 Every frame has a settings file of its own. It holds the crop, the turns, the film base, the look
 by name and every develop setting, fully worked out. So a frame you open again later renders the
 same, even if a default changed in between.
@@ -627,7 +633,7 @@ and rejected frames start out unchosen. A frame whose rating changes in Develop 
 the filter; frames you pick by hand otherwise stay picked.
 
 Sync copies some of one frame's settings to the roll's other frames. You choose the groups: the
-look (with tone and saturation), the white balance and dust removal are on by default; density,
+look (with tone and saturation), the white balance, dust removal and sharpening are on by default; density,
 film base, and crop with turns are there when you want them. Whatever isn't synced, each frame keeps: its own
 saved settings, or, if it was never developed, automatic ones measured on its thumbnail. An
 automatic white balance is always worked out again on each frame.

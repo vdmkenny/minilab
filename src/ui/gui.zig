@@ -143,6 +143,64 @@ pub fn paragraph(color: theme.Color, value: []const u8) void {
 
 /// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
 /// writes headings in capitals, and so do the callers.
+/// The gap after a section heading's icon, in the design's pixels.
+const heading_icon_gap = 8;
+
+/// A section's heading that opens and closes it: its `icon` and `name`, with a chevron at the
+/// right of its line, pointing down while it's open. The whole line opens and closes it. `id`
+/// names it for ImGui.
+pub fn foldingHeading(id: [:0]const u8, icon: icons.Icon, name: []const u8, open: *bool) void {
+    const start = c.ImGui_GetCursorScreenPos();
+    const width = c.ImGui_GetContentRegionAvail().x;
+    const height = c.ImGui_GetFrameHeight();
+    if (c.ImGui_InvisibleButton(id, vec2(width, height), 0)) open.* = !open.*;
+    const lit = c.ImGui_IsItemHovered(0);
+    const ink = if (lit) theme.colors.text else theme.colors.text_secondary;
+    drawIcon(icon, vec2(start.x + px(icon_size) / 2, start.y + height / 2), ink);
+    fonts.pushSized(.semibold, fonts.small_size);
+    textIn(c.ImGui_GetWindowDrawList(), start.x + px(icon_size + heading_icon_gap), start.y, height, ink, name);
+    fonts.pop();
+    drawFold(open.*, vec2(start.x + width - px(icon_size) / 2, start.y + height / 2), lit);
+}
+
+/// A section's heading that's a check box, turning the section's work on and off, with its `icon`
+/// before it and the chevron that opens and closes it at the right. Returns true when the box
+/// was clicked.
+pub fn checkboxHeading(icon: icons.Icon, label: [:0]const u8, checked: *bool, open: *bool) bool {
+    const x = c.ImGui_GetCursorPosX();
+    c.ImGui_SetCursorPosX(x + px(icon_size + heading_icon_gap));
+    fonts.pushSized(.semibold, fonts.small_size);
+    const toggled = checkbox(label, checked);
+    fonts.pop();
+    const min = c.ImGui_GetItemRectMin();
+    const max = c.ImGui_GetItemRectMax();
+    drawIcon(icon, vec2(min.x - px(heading_icon_gap) - px(icon_size) / 2, (min.y + max.y) / 2), theme.colors.text_secondary);
+    foldButton("##fold", open, min.y, max.y - min.y);
+    return toggled;
+}
+
+/// The chevron that opens and closes a section, on its own, for a heading that's something else,
+/// like a check box: at the right of the line that runs from `top` (on screen) and is `height`
+/// high. The cursor goes back to where it was.
+pub fn foldButton(id: [:0]const u8, open: *bool, top: f32, height: f32) void {
+    const was = c.ImGui_GetCursorScreenPos();
+    defer c.ImGui_SetCursorScreenPos(was);
+    const side = c.ImGui_GetFrameHeight();
+    const right = was.x + c.ImGui_GetContentRegionAvail().x;
+    c.ImGui_SetCursorScreenPos(vec2(right - side, top + (height - side) / 2));
+    if (c.ImGui_InvisibleButton(id, vec2(side, side), 0)) open.* = !open.*;
+    drawFold(open.*, vec2(right - px(icon_size) / 2, top + height / 2), c.ImGui_IsItemHovered(0));
+}
+
+/// The room `foldButton` takes at the right of a line, for what goes before it.
+pub fn foldSpace() f32 {
+    return c.ImGui_GetFrameHeight() + px(label_gap);
+}
+
+fn drawFold(open: bool, centre: Vec2, lit: bool) void {
+    drawIcon(if (open) .chevron_down else .chevron_right, centre, if (lit) theme.colors.text else theme.colors.text_tertiary);
+}
+
 pub fn heading(value: []const u8) void {
     fonts.pushSized(.semibold, fonts.small_size);
     textColored(theme.colors.text_secondary, value);
