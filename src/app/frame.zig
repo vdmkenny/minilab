@@ -26,6 +26,15 @@ pub const Frame = struct {
     path: []const u8,
     /// The scan at full resolution, read the first time the loupe needs it.
     full_scan: ?image.Scan = null,
+    /// The scan's infrared plane, when it has one (`loadInfrared`): its file, the plane at full
+    /// resolution for the loupe (read with `full_scan`), and reduced and cut like `full` and
+    /// `preview`.
+    infrared_path: ?[]const u8 = null,
+    full_plane: ?image.Plane = null,
+    reduced_plane: ?image.Plane = null,
+    preview_plane: ?image.Plane = null,
+    /// The longer side `full` was reduced to fit, so the plane is reduced the same way.
+    reduced_longest: usize,
     /// The scan's size, for the info line and for crops (which are in the scan's pixels).
     scan_width: usize,
     scan_height: usize,
@@ -41,6 +50,9 @@ pub const Frame = struct {
     /// `preview` with its dust removed, and the settings it was removed with, so moving another
     /// slider doesn't look for the dust again.
     cleaned: ?Cleaned = null,
+    /// When set, the viewer and the loupe tint what dust removal changes in this colour, so you
+    /// can see what it takes out.
+    removed_tint: ?[4]u8 = null,
     /// Statistics for the middle of the frame (`centre`) and all of it (`whole`), for the
     /// automatic settings.
     centre: develop.Statistics,
@@ -73,7 +85,8 @@ pub const Frame = struct {
     pub fn load(gpa: std.mem.Allocator, io: std.Io, path: []const u8, name: []const u8, crop: ?image.Area, quarter_turns: u2, mirrored: bool) !Frame {
         var scan = (try minilab.input.read(gpa, io, path)).scan;
         defer scan.deinit(gpa);
-        var full = try image.downscale(gpa, scan, reducedLongest(scan, crop));
+        const longest = reducedLongest(scan, crop);
+        var full = try image.downscale(gpa, scan, longest);
         errdefer full.deinit(gpa);
         const owned_path = try gpa.dupe(u8, path);
         errdefer gpa.free(owned_path);
@@ -82,6 +95,7 @@ pub const Frame = struct {
             .path = owned_path,
             .scan_width = scan.width,
             .scan_height = scan.height,
+            .reduced_longest = longest,
             .full = full,
             .preview = .{ .width = 0, .height = 0, .pixels = &.{} },
             .centre = undefined,
@@ -94,16 +108,66 @@ pub const Frame = struct {
         return frame;
     }
 
+    /// Reads the scan's infrared plane at `path` (`roll.Roll.infraredPath`), for infrared dust
+    /// removal. A plane that can't be read, or isn't the scan's size, is left out, and dust is
+    /// found by its shape instead.
+    pub fn loadInfrared(frame: *Frame, gpa: std.mem.Allocator, io: std.Io, path: []const u8) !void {
+        var plane = minilab.input.readPlane(gpa, io, path) catch |err| {
+            std.log.err("can't read the infrared plane {s}: {t}", .{ path, err });
+            return;
+        };
+        defer plane.deinit(gpa);
+        if (plane.width != frame.scan_width or plane.height != frame.scan_height) {
+            std.log.err("the infrared plane {s} isn't the scan's size, so it's left out", .{path});
+            return;
+        }
+        var reduced = try image.downscale(gpa, plane, frame.reduced_longest);
+        errdefer reduced.deinit(gpa);
+        const owned_path = try gpa.dupe(u8, path);
+        errdefer gpa.free(owned_path);
+        var preview = try cutAndTurn(gpa, reduced, frame.reducedArea(frame.crop), frame.quarter_turns, frame.mirrored);
+        errdefer preview.deinit(gpa);
+        frame.dropPlanes(gpa);
+        frame.infrared_path = owned_path;
+        frame.reduced_plane = reduced;
+        frame.preview_plane = preview;
+        frame.dropCleaned(gpa);
+        frame.stale = true;
+    }
+
+    /// Whether the frame's scan has an infrared plane.
+    pub fn hasInfrared(frame: *const Frame) bool {
+        return frame.reduced_plane != null;
+    }
+
+    /// Whether infrared dust removal was asked for and the plane isn't a map of dust on this
+    /// film, as of the last rendering.
+    pub fn infraredNotUsable(frame: *const Frame) bool {
+        const c = frame.cleaned orelse return false;
+        return c.infrared_not_usable;
+    }
+
+    fn dropPlanes(frame: *Frame, gpa: std.mem.Allocator) void {
+        if (frame.infrared_path) |p| gpa.free(p);
+        inline for (.{ &frame.full_plane, &frame.reduced_plane, &frame.preview_plane }) |plane| {
+            if (plane.*) |*p| p.deinit(gpa);
+            plane.* = null;
+        }
+        frame.infrared_path = null;
+    }
+
     pub fn close(frame: *Frame, gpa: std.mem.Allocator) void {
         gpa.free(frame.name);
         gpa.free(frame.path);
+        frame.dropPlanes(gpa);
         if (frame.full_scan) |*s| s.deinit(gpa);
         frame.full.deinit(gpa);
         frame.dropPreview(gpa);
         frame.* = undefined;
     }
 
-    const Cleaned = struct { scan: image.Scan, with: minilab.dust.Settings, finished: bool };
+    /// `preview` without its dust, or null when nothing changed, and what it was worked out with.
+    const Cleaned = struct { scan: ?image.Scan, with: minilab.dust.Settings, finished: bool, infrared_not_usable: bool };
 
     fn dropPreview(frame: *Frame, gpa: std.mem.Allocator) void {
         frame.dropCleaned(gpa);
@@ -116,7 +180,7 @@ pub const Frame = struct {
     }
 
     fn dropCleaned(frame: *Frame, gpa: std.mem.Allocator) void {
-        if (frame.cleaned) |*c| c.scan.deinit(gpa);
+        if (frame.cleaned) |*c| if (c.scan) |*scan| scan.deinit(gpa);
         frame.cleaned = null;
     }
 
@@ -125,14 +189,17 @@ pub const Frame = struct {
     fn withoutDust(frame: *Frame, gpa: std.mem.Allocator) !image.Scan {
         const s = frame.settings;
         if (frame.cleaned) |c| {
-            if (std.meta.eql(c.with, s.dust) and c.finished == s.finished) return c.scan;
+            if (std.meta.eql(c.with, s.dust) and c.finished == s.finished) return c.scan orelse frame.preview;
             frame.dropCleaned(gpa);
         }
-        // The viewer, the loupe and thumbnails don't have the infrared plane yet, so infrared dust
-        // removal finds dust by its shape here (https://github.com/vdmkenny/minilab/issues/90).
-        const cleaned = try s.withoutDust(gpa, frame.preview, null, @max(frame.preview.width, frame.preview.height)) orelse return frame.preview;
-        frame.cleaned = .{ .scan = cleaned, .with = s.dust, .finished = s.finished };
-        return cleaned;
+        const dustless = try s.withoutDust(gpa, frame.preview, frame.preview_plane, @max(frame.preview.width, frame.preview.height));
+        frame.cleaned = .{ .scan = dustless.scan, .with = s.dust, .finished = s.finished, .infrared_not_usable = dustless.infrared_not_usable };
+        return dustless.scan orelse frame.preview;
+    }
+
+    /// `crop`, in the scan's pixels, on `full`; or all of `full` for a null crop.
+    fn reducedArea(frame: *const Frame, crop: ?image.Area) image.Area {
+        return if (crop) |c| c.rescale(frame.scan_width, frame.full.width, frame.full.width, frame.full.height) else .whole(frame.full.width, frame.full.height);
     }
 
     /// How many of the scan's pixels there are per pixel of `full`.
@@ -144,17 +211,19 @@ pub const Frame = struct {
     /// and measures it again. The settings stay as they are; the caller re-measures them if it
     /// wants.
     pub fn setGeometry(frame: *Frame, gpa: std.mem.Allocator, crop: ?image.Area, quarter_turns: u2, mirrored: bool) !void {
-        const area: image.Area = if (crop) |c| c.rescale(frame.scan_width, frame.full.width, frame.full.width, frame.full.height) else .whole(frame.full.width, frame.full.height);
-        var cut = try frame.full.crop(gpa, area);
-        defer cut.deinit(gpa);
-        var preview = try cut.orient(gpa, quarter_turns, mirrored);
+        const area = frame.reducedArea(crop);
+        var preview = try cutAndTurn(gpa, frame.full, area, quarter_turns, mirrored);
         errdefer preview.deinit(gpa);
+        var preview_plane: ?image.Plane = if (frame.reduced_plane) |plane| try cutAndTurn(gpa, plane, area, quarter_turns, mirrored) else null;
+        errdefer if (preview_plane) |*p| p.deinit(gpa);
         const rendered = try gpa.alloc([4]u8, preview.pixels.len);
         errdefer gpa.free(rendered);
         const negative = try gpa.alloc([4]u8, preview.pixels.len);
         errdefer gpa.free(negative);
         const stats = try develop.FrameStatistics.measure(gpa, preview);
         frame.dropPreview(gpa);
+        if (frame.preview_plane) |*p| p.deinit(gpa);
+        frame.preview_plane = preview_plane;
         frame.preview = preview;
         frame.rendered = rendered;
         frame.negative = negative;
@@ -249,11 +318,15 @@ pub const Frame = struct {
         const started = std.Io.Clock.awake.now(io);
         defer std.log.scoped(.develop).debug("rendered {d} × {d} in {d} ms", .{ frame.preview.width, frame.preview.height, @divTrunc(started.durationTo(std.Io.Clock.awake.now(io)).toNanoseconds(), std.time.ns_per_ms) });
         frame.histogram = std.mem.zeroes(Histogram);
-        var linear = try look.render(gpa, try frame.withoutDust(gpa), frame.settings, try catalog.resolve(gpa, io, frame.look));
+        const shown = try frame.withoutDust(gpa);
+        var linear = try look.render(gpa, shown, frame.settings, try catalog.resolve(gpa, io, frame.look));
         defer linear.deinit(gpa);
         var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
         frame.store(encoded);
+        if (frame.removed_tint) |tint| for (frame.rendered, shown.pixels, frame.preview.pixels) |*out, after, before| {
+            if (!std.meta.eql(after, before)) out.* = tinted(out.*, tint);
+        };
         frame.stale = false;
     }
 
@@ -272,7 +345,7 @@ pub const Frame = struct {
             3 => .{ w - at[1], at[0] },
         };
         if (frame.mirrored) p[0] = w - p[0];
-        const area: image.Area = if (frame.crop) |c| c.rescale(frame.scan_width, frame.full.width, frame.full.width, frame.full.height) else .whole(frame.full.width, frame.full.height);
+        const area = frame.reducedArea(frame.crop);
         const s: f32 = @floatCast(frame.scale());
         return .{ (@as(f32, @floatFromInt(area.x)) + p[0]) * s, (@as(f32, @floatFromInt(area.y)) + p[1]) * s };
     }
@@ -292,6 +365,9 @@ pub const Frame = struct {
     /// edge are the ones an export finds.
     pub fn loupe(frame: *Frame, gpa: std.mem.Allocator, io: std.Io, catalog: *look.Catalog, at: [2]f32, side: usize, negative: bool) !Patch {
         if (frame.full_scan == null) frame.full_scan = (try minilab.input.read(gpa, io, frame.path)).scan;
+        if (frame.full_plane == null) if (frame.infrared_path) |path| {
+            frame.full_plane = try minilab.input.readPlane(gpa, io, path);
+        };
         const scan = frame.full_scan.?;
         const bounds: image.Area = frame.crop orelse .whole(scan.width, scan.height);
         const centre = frame.scanPoint(at);
@@ -305,21 +381,31 @@ pub const Frame = struct {
         };
         var square = try scan.crop(gpa, area);
         defer square.deinit(gpa);
+        // Which of the square's pixels dust removal changed, for `removed_tint`.
+        var changed: image.Image(bool) = try .init(gpa, square.width, square.height);
+        defer changed.deinit(gpa);
+        @memset(changed.pixels, false);
         if (!negative and frame.settings.dust.remove) {
             const longest = @max(bounds.width, bounds.height);
             const around = area.grown(minilab.dust.margin(longest, frame.settings.dust), bounds);
             var context = try scan.crop(gpa, around);
             defer context.deinit(gpa);
-            // The viewer, the loupe and thumbnails don't have the infrared plane yet, so infrared dust
-            // removal finds dust by its shape here (https://github.com/vdmkenny/minilab/issues/90).
-            if (try frame.settings.withoutDust(gpa, context, null, longest)) |cleaned| {
+            var context_plane: ?image.Plane = if (frame.full_plane) |plane| try plane.crop(gpa, around) else null;
+            defer if (context_plane) |*p| p.deinit(gpa);
+            if ((try frame.settings.withoutDust(gpa, context, context_plane, longest)).scan) |cleaned| {
                 var clean = cleaned;
                 defer clean.deinit(gpa);
-                for (0..square.height) |y| @memcpy(square.row(y), clean.row(area.y - around.y + y)[area.x - around.x ..][0..square.width]);
+                for (0..square.height) |y| {
+                    const from = clean.row(area.y - around.y + y)[area.x - around.x ..][0..square.width];
+                    for (changed.row(y), square.row(y), from) |*c, before, after| c.* = !std.meta.eql(before, after);
+                    @memcpy(square.row(y), from);
+                }
             }
         }
         var turned = try square.orient(gpa, frame.quarter_turns, frame.mirrored);
         defer turned.deinit(gpa);
+        var turned_changed = try changed.orient(gpa, frame.quarter_turns, frame.mirrored);
+        defer turned_changed.deinit(gpa);
         const pixels = try gpa.alloc([4]u8, turned.pixels.len);
         errdefer gpa.free(pixels);
         if (negative) {
@@ -328,6 +414,9 @@ pub const Frame = struct {
             var linear = try look.render(gpa, turned, frame.settings, try catalog.resolve(gpa, io, frame.look));
             defer linear.deinit(gpa);
             minilab.encode.toRgba8(linear, pixels);
+            if (frame.removed_tint) |tint| for (pixels, turned_changed.pixels) |*p, c| {
+                if (c) p.* = tinted(p.*, tint);
+            };
         }
         return .{ .pixels = pixels, .width = turned.width, .height = turned.height };
     }
@@ -372,6 +461,23 @@ fn squareStart(centre: f32, length: usize, start: usize, room: usize) usize {
 /// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.
 /// For a frame of a strip, it's `preview_longest` times the whole number of times the scan is
 /// longer than the frame, so the frame still gets `preview_longest` (up to `strip_longest`).
+/// `source`, a scan or a plane, cut to `area` and turned the way a frame is.
+fn cutAndTurn(gpa: std.mem.Allocator, source: anytype, area: image.Area, quarter_turns: u2, mirrored: bool) !@TypeOf(source) {
+    var cut = try source.crop(gpa, area);
+    defer cut.deinit(gpa);
+    return cut.orient(gpa, quarter_turns, mirrored);
+}
+
+/// How strongly `removed_tint` covers a changed pixel, out of 255.
+const tint_strength = 200;
+
+/// `pixel` with `tint` laid over it at `tint_strength`.
+fn tinted(pixel: [4]u8, tint: [4]u8) [4]u8 {
+    var out = pixel;
+    for (out[0..3], tint[0..3]) |*o, t| o.* = @intCast((@as(u16, o.*) * (255 - tint_strength) + @as(u16, t) * tint_strength) / 255);
+    return out;
+}
+
 fn reducedLongest(scan: image.Scan, crop: ?image.Area) usize {
     const area = crop orelse return preview_longest;
     const times = @max(scan.width, scan.height) / @max(1, area.width, area.height);

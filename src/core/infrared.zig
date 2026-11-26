@@ -27,6 +27,16 @@ const dust = @import("dust.zig");
 const Code = dust.Code;
 const steps_per_density = dust.steps_per_density;
 
+/// How well a film suits infrared dust removal.
+pub const Fit = enum {
+    /// Colour film, and chromogenic black and white like XP2: its dyes let infrared through.
+    suits,
+    /// Kodachrome: its cyan dye shows in the plane, so fine detail can soften.
+    poor,
+    /// Silver black and white: the silver blocks infrared, so the picture looks like dust.
+    unsuitable,
+};
+
 /// A frame's infrared dust removal, saved with its dust settings.
 pub const Settings = struct {
     /// How much infrared a defect has to block to count, in D. Lower finds fainter dust, and

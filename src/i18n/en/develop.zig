@@ -59,6 +59,8 @@ pub const Messages = struct {
     // The info line under the picture, in lower case. {0} and {1} are the width and height in
     // pixels.
     info_scan: [:0]const u8 = "scan {0} × {1} px, 48-bit linear",
+    // The same, for a scan with an infrared plane (IR).
+    info_scan_infrared: [:0]const u8 = "scan {0} × {1} px, 48-bit linear + IR",
     // {2} is info_turned or nothing, and {3} is info_mirrored or nothing.
     info_crop: [:0]const u8 = "crop {0} × {1} px{2}{3}",
     // {0} is an angle in degrees, like 90.
@@ -172,6 +174,20 @@ pub const Messages = struct {
     max_size_help: [:0]const u8 = "Larger specks are kept · percent of the frame's long side",
     max_density: [:0]const u8 = "Max density",
     max_density_help: [:0]const u8 = "Stronger specks are kept · lower to protect lights and stars",
+    // The button that tints what dust removal takes out, on the picture.
+    show_removed: [:0]const u8 = "Show what's removed",
+    // The row choosing how dust is found, for a frame whose scan has an infrared plane.
+    find_with: [:0]const u8 = "Find with",
+    // Infrared's sliders. Threshold is the same word as above; grow is how far round each
+    // defect the fill reaches.
+    infrared_threshold_help: [:0]const u8 = "Lower removes fainter dust · higher only dense specks",
+    grow: [:0]const u8 = "Grow",
+    grow_help: [:0]const u8 = "How far round each speck it fills · percent of the frame's long side",
+    // Warnings under the finder. Silver black and white film blocks infrared; Kodachrome's dye
+    // shows in it; and a plane can turn out not to be a map of dust at all.
+    silver_blocks_infrared: [:0]const u8 = "Silver film blocks infrared",
+    infrared_softens_kodachrome: [:0]const u8 = "May soften Kodachrome's detail",
+    infrared_not_usable: [:0]const u8 = "Infrared not usable on this film",
     // Max density at its highest: specks of any density are removed.
     any_density: [:0]const u8 = "Any",
 

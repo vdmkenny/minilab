@@ -34,6 +34,8 @@ const icc = @import("../io/codecs/icc.zig");
 const formats = @import("../frames/formats.zig");
 const framing = @import("framing.zig");
 const infrared = @import("infrared.zig");
+const dust = @import("dust.zig");
+const stocks = @import("../presets/stocks.zig");
 const file_input = @import("input.zig");
 const FlatField = @import("flat_field.zig").FlatField;
 pub const Field = @import("export_metadata.zig").Field;
@@ -508,7 +510,7 @@ pub const Roll = struct {
             .height = scan.height,
             .dpi = dpi,
             .infrared = plane_name,
-            .settings = .{ .kind = roll.info.kind, .slide_colour = extras.slide },
+            .settings = .{ .kind = roll.info.kind, .slide_colour = extras.slide, .dust = .{ .finder = roll.dustFinder(plane_name != null) } },
         };
         if (found.len == 0) try roll.appendFrame(frame);
         for (found) |f| {
@@ -519,6 +521,14 @@ pub const Roll = struct {
         }
         for (first..roll.frames.items.len) |index| try roll.saveFrame(io, index);
         return .{ .first = first, .count = roll.frames.items.len - first };
+    }
+
+    /// How a new frame's dust is found: with infrared when its scan has a plane and the roll's
+    /// stock isn't one infrared fails on, and by its shape otherwise.
+    fn dustFinder(roll: *const Roll, has_plane: bool) dust.Finder {
+        if (!has_plane) return .shape;
+        const stock = stocks.named(roll.info.stock orelse "") orelse return .infrared;
+        return if (stock.infraredFit() == .unsuitable) .shape else .infrared;
     }
 
     /// Picks a name for the next scan file, with `extension`: numbered like the next frame, unless

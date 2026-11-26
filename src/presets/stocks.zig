@@ -12,6 +12,7 @@ const std = @import("std");
 
 /// The kinds of film, as Develop has them.
 pub const Kind = @import("../core/develop.zig").FilmKind;
+const infrared = @import("../core/infrared.zig");
 
 /// One sample of a characteristic curve.
 pub const Point = struct { log_exposure: f32, density: f32 };
@@ -36,7 +37,42 @@ pub const Stock = struct {
     curves: ?[3][]const Point,
     /// Where the numbers come from.
     source: []const u8,
+    /// What the picture is made of, when the kind doesn't say (`materialOf`): chromogenic
+    /// black and white, like XP2, is dye.
+    material: ?Material = null,
+    /// How well the film suits infrared dust removal, when its material doesn't say
+    /// (`infraredFit`): Kodachrome's cyan dye absorbs infrared.
+    infrared: ?infrared.Fit = null,
+
+    /// What the picture is made of: colour film is dye, and black and white is silver unless the
+    /// stock says otherwise.
+    pub fn materialOf(stock: Stock) Material {
+        return stock.material orelse if (stock.kind.isMonochrome()) .silver else .dye;
+    }
+
+    /// How well the film suits infrared dust removal: dyes let infrared through, and silver
+    /// blocks it.
+    pub fn infraredFit(stock: Stock) infrared.Fit {
+        return stock.infrared orelse switch (stock.materialOf()) {
+            .dye => .suits,
+            .silver => .unsuitable,
+        };
+    }
 };
+
+/// What a film's picture is made of.
+pub const Material = enum {
+    /// Dyes, formed in colour development: colour film and chromogenic black and white.
+    dye,
+    /// Silver grains: traditional black and white film.
+    silver,
+};
+
+/// The stock called `name`, if there's one.
+pub fn named(name: []const u8) ?*const Stock {
+    for (&stocks) |*stock| if (std.mem.eql(u8, stock.name, name)) return stock;
+    return null;
+}
 
 pub const stocks = [_]Stock{
     // Colour negative: Status M densities.
@@ -326,6 +362,7 @@ pub const stocks = [_]Stock{
         .density_range = null,
         .curves = curve_data.kodak_kodachrome_64,
         .source = "Kodak E-88 (June 2009), Status A, daylight 1/50 s, K-14; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds. The plotted curves level off at neither end, so D-min and D-max are unknown",
+        .infrared = .poor,
     },
     .{
         .name = "Fujifilm Provia 100F",
@@ -503,6 +540,7 @@ pub const stocks = [_]Stock{
         .density_range = .{ 1.630, 1.630, 1.630 },
         .curves = curve_data.ilford_xp2_super,
         .source = "Ilford XP2 Super datasheet (June 2010 edition), chromogenic, standard C-41 chemicals; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF; log H relative (\"relative log exposure\")",
+        .material = .dye,
     },
     .{
         .name = "Ilford SFX 200",
@@ -1866,4 +1904,14 @@ fn same(values: [3]f32) bool {
 
 fn fail(comptime stock: Stock, comptime problem: []const u8) noreturn {
     @compileError(stock.name ++ " " ++ problem);
+}
+
+test "a film's material and infrared fit come from its kind, unless the stock says" {
+    try std.testing.expectEqual(Material.dye, named("Ilford XP2 Super").?.materialOf());
+    try std.testing.expectEqual(infrared.Fit.suits, named("Ilford XP2 Super").?.infraredFit());
+    try std.testing.expectEqual(infrared.Fit.poor, named("Kodak Kodachrome 64").?.infraredFit());
+    try std.testing.expectEqual(infrared.Fit.suits, named("Kodak Portra 400").?.infraredFit());
+    for (stocks) |stock| if (stock.kind.isMonochrome() and stock.material == null) {
+        try std.testing.expectEqual(infrared.Fit.unsuitable, stock.infraredFit());
+    };
 }

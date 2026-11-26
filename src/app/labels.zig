@@ -196,6 +196,19 @@ pub fn findStock(name: []const u8) ?StockChoice {
     return null;
 }
 
+/// How well the stock called `name` suits infrared dust removal, or null when it's not a preset
+/// and there's no telling.
+pub fn infraredFit(name: ?[]const u8) ?minilab.infrared.Fit {
+    const choice = findStock(name orelse return null) orelse return null;
+    const preset = choice.preset orelse return null;
+    return preset.infraredFit();
+}
+
+/// How dust is found, as the dust section's choice names it.
+pub fn dustFinder(finder: minilab.dust.Finder) [:0]const u8 {
+    return i18n.label(i18n.t.labels.dust_finder, finder);
+}
+
 /// The datasheet gammas of the stock called `name`, when its preset has them.
 pub fn stockGamma(name: ?[]const u8) ?[3]f32 {
     const choice = findStock(name orelse return null) orelse return null;

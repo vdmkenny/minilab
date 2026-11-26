@@ -492,6 +492,19 @@ const reset_icon_size = 12;
 
 /// Starts a row of a settings grid: draws `label` in the label column, then moves the cursor to
 /// where the control goes.
+/// The gap after a warning's icon, in the design's pixels.
+const warning_gap = 6;
+
+/// A warning under a row's control, lined up with it: an amber triangle and a short message.
+pub fn warning(message: [:0]const u8) void {
+    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + px(label_column + label_gap));
+    const at = c.ImGui_GetCursorScreenPos();
+    const icon = px(icon_size);
+    drawIcon(.triangle_alert, vec2(at.x + icon / 2, at.y + c.ImGui_GetTextLineHeight() / 2), theme.colors.accent);
+    c.ImGui_SetCursorScreenPos(vec2(at.x + icon + px(warning_gap), at.y));
+    textColored(theme.colors.accent, message);
+}
+
 pub fn rowLabel(label: []const u8) void {
     const x = c.ImGui_GetCursorPosX();
     c.ImGui_AlignTextToFramePadding();
