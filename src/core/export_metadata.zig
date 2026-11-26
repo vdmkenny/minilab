@@ -184,6 +184,8 @@ fn writeDevelop(w: *std.Io.Writer, d: Develop) std.Io.Writer.Error!void {
         .shape => try w.print("    minilab:DustRemoval=\"{d:.1} {d:.1} {d:.2}\"\n", .{ s.dust.threshold, s.dust.max_size, s.dust.max_density }),
         .infrared => try w.print("    minilab:DustRemoval=\"infrared {d:.2} {d:.2}\"\n", .{ s.dust.infrared.threshold, s.dust.infrared.grow }),
     };
+    // Sharpening, only when it's on: its amount, radius in pixels and threshold in L*.
+    if (s.sharpen.on) try w.print("    minilab:Sharpening=\"{d:.2} {d:.1} {d:.1}\"\n", .{ s.sharpen.amount, s.sharpen.radius, s.sharpen.threshold });
 }
 
 fn attribute(w: *std.Io.Writer, name: []const u8, value: []const u8) std.Io.Writer.Error!void {
@@ -602,6 +604,11 @@ test "XMP escapes what the roll says and gives dates as dates" {
     const by_infrared = try xmp(gpa, dusted);
     defer gpa.free(by_infrared);
     try std.testing.expect(std.mem.indexOf(u8, by_infrared, "minilab:DustRemoval=\"infrared 0.05 0.05\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, packet, "Sharpening") == null);
+    dusted.develop.?.settings.?.sharpen.on = true;
+    const sharpened = try xmp(gpa, dusted);
+    defer gpa.free(sharpened);
+    try std.testing.expect(std.mem.indexOf(u8, sharpened, "minilab:Sharpening=\"0.50 0.9 0.5\"") != null);
 
     var vague = example;
     vague.shot = "summer";

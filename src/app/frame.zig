@@ -321,6 +321,8 @@ pub const Frame = struct {
         const shown = try frame.withoutDust(gpa);
         var linear = try look.render(gpa, shown, frame.settings, try catalog.resolve(gpa, io, frame.look));
         defer linear.deinit(gpa);
+        // The viewer's copy is smaller than the scan, so the sharpening's radius is too.
+        try minilab.sharpen.apply(gpa, linear, frame.settings.sharpen, 1 / frame.scale());
         var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
         frame.store(encoded);
@@ -413,6 +415,9 @@ pub const Frame = struct {
         } else {
             var linear = try look.render(gpa, turned, frame.settings, try catalog.resolve(gpa, io, frame.look));
             defer linear.deinit(gpa);
+            // At full size. The loupe is round, so the square's edges, where the blur runs out of
+            // picture, don't show.
+            try minilab.sharpen.apply(gpa, linear, frame.settings.sharpen, 1);
             minilab.encode.toRgba8(linear, pixels);
             if (frame.removed_tint) |tint| for (pixels, turned_changed.pixels) |*p, c| {
                 if (c) p.* = tinted(p.*, tint);
@@ -447,6 +452,7 @@ fn keepUserChoices(settings: *develop.Settings, keep: develop.Settings) void {
     settings.slide_colour = keep.slide_colour;
     settings.finished = keep.finished;
     settings.dust = keep.dust;
+    settings.sharpen = keep.sharpen;
 }
 
 /// Where a run `length` long, centred on `centre`, starts so that it stays inside the run from

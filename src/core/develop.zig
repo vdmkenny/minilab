@@ -23,6 +23,7 @@ const encode = @import("encode.zig");
 const statistics = @import("stats.zig");
 const stock_curves = @import("stock_curves.zig");
 const dust = @import("dust.zig");
+const sharpen = @import("sharpen.zig");
 const infrared = @import("infrared.zig");
 
 pub const FilmKind = enum {
@@ -205,6 +206,8 @@ pub const Settings = struct {
     finished: bool = false,
     /// Dust removal, which works on the scan before any of the above (`dust`).
     dust: dust.Settings = .{},
+    /// Sharpening, which works on the developed picture after all of the above (`sharpen`).
+    sharpen: sharpen.Settings = .{},
 
     /// The settings for a finished picture: a positive at an exposure of 1, so the picture comes
     /// out just as it went in. The look and saturation can still change it.

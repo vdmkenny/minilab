@@ -13,6 +13,7 @@ const image = @import("image.zig");
 const develop = @import("develop.zig");
 const encode = @import("encode.zig");
 const look = @import("look.zig");
+const sharpen = @import("sharpen.zig");
 const roll = @import("roll.zig");
 const stock_curves = @import("stock_curves.zig");
 /// Reduces pictures by area, to any size.
@@ -158,6 +159,7 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Pl
     else
         try look.developFrame(gpa, current, .whole(current.width, current.height), frame.settings.kind, frame_look, frame.film_base, .{ .curves = frame.settings.curves(), .slide = frame.settings.slide_colour });
     defer developed.deinit(gpa);
+    if (frame.developed) try sharpen.apply(gpa, developed, frame.settings.sharpen, scale);
     try check(cancel);
     return .{ .pixels = try convert(gpa, &developed, options, cancel), .scale = scale };
 }

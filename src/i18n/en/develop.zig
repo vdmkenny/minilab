@@ -188,6 +188,14 @@ pub const Messages = struct {
     silver_blocks_infrared: [:0]const u8 = "Silver film blocks infrared",
     infrared_softens_kodachrome: [:0]const u8 = "May soften Kodachrome's detail",
     infrared_not_usable: [:0]const u8 = "Infrared not usable on this film",
+
+    // The sharpening section. Its heading is a check box.
+    sharpen_heading: [:0]const u8 = "SHARPEN",
+    amount: [:0]const u8 = "Amount",
+    sharpen_amount_help: [:0]const u8 = "How much crisper edges get · 0.5 is mild",
+    radius: [:0]const u8 = "Radius",
+    sharpen_radius_help: [:0]const u8 = "How fine the detail it sharpens · pixels of the full scan",
+    sharpen_threshold_help: [:0]const u8 = "Finer contrast than this is grain, and left alone",
     // Max density at its highest: specks of any density are removed.
     any_density: [:0]const u8 = "Any",
 
@@ -202,6 +210,7 @@ pub const Messages = struct {
     sync_look: [:0]const u8 = "Look, tone and saturation",
     sync_density: [:0]const u8 = "Density: D max and offset",
     sync_dust: [:0]const u8 = "Dust removal",
+    sync_sharpen: [:0]const u8 = "Sharpening",
     sync_geometry: [:0]const u8 = "Crop, turns and mirror",
     // A verb, on the button that syncs.
     sync: [:0]const u8 = "Sync",

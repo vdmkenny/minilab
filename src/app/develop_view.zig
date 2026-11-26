@@ -1739,6 +1739,7 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
 
     const stock = if (roll_index) |r| library.rolls.items[r].info.stock else null;
     drawDust(state, labels.infraredFit(stock));
+    drawSharpen(state);
 }
 
 /// Draws the dust section: its heading is the check box that turns dust removal on, with the
@@ -1792,6 +1793,37 @@ fn drawDust(state: *State, fit: ?minilab.infrared.Fit) void {
             }
         }
         if (by_infrared) drawInfraredSliders(state) else drawShapeSliders(state);
+    }
+    gui.endSection(true);
+}
+
+/// Draws the sharpening section: its heading is the check box that turns it on, then how much,
+/// how wide and how fine the detail it sharpens is.
+fn drawSharpen(state: *State) void {
+    const s = &state.frame.?.settings.sharpen;
+    const Sharpen = minilab.sharpen.Settings;
+    gui.beginSection("sharpen");
+    fonts.pushSized(.semibold, fonts.small_size);
+    const toggled = gui.checkbox(i18n.t.develop.sharpen_heading, &s.on);
+    fonts.pop();
+    if (toggled) state.changed();
+    {
+        c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
+        defer c.ImGui_PopStyleVar();
+        c.ImGui_BeginDisabled(!s.on);
+        defer c.ImGui_EndDisabled();
+        if (gui.sliderRow(i18n.t.develop.amount, &s.amount, Sharpen.min_amount, Sharpen.max_amount, "{d:.2}", .{
+            .default = Sharpen.default_amount,
+            .help = i18n.t.develop.sharpen_amount_help,
+        })) state.changed();
+        if (gui.sliderRow(i18n.t.develop.radius, &s.radius, Sharpen.min_radius, Sharpen.max_radius, "{d:.1} px", .{
+            .default = Sharpen.default_radius,
+            .help = i18n.t.develop.sharpen_radius_help,
+        })) state.changed();
+        if (gui.sliderRow(i18n.t.develop.threshold, &s.threshold, Sharpen.min_threshold, Sharpen.max_threshold, "{d:.1}", .{
+            .default = Sharpen.default_threshold,
+            .help = i18n.t.develop.sharpen_threshold_help,
+        })) state.changed();
     }
     gui.endSection(false);
 }
@@ -2062,6 +2094,7 @@ fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         .{ &state.sync.density, i18n.t.develop.sync_density },
         .{ &state.sync.base, i18n.t.develop.film_base },
         .{ &state.sync.dust, i18n.t.develop.sync_dust },
+        .{ &state.sync.sharpen, i18n.t.develop.sync_sharpen },
         .{ &state.sync.geometry, i18n.t.develop.sync_geometry },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
@@ -2080,6 +2113,7 @@ const SyncGroups = struct {
     density: bool = false,
     base: bool = false,
     dust: bool = true,
+    sharpen: bool = true,
     geometry: bool = false,
 };
 
@@ -2130,6 +2164,7 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
         own.base_source = s.base_source;
     }
     if (groups.dust) own.dust = s.dust;
+    if (groups.sharpen) own.sharpen = s.sharpen;
     if (groups.balance) {
         own.white_balance = s.white_balance;
         own.temperature = s.temperature;
