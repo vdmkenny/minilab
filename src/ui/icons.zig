@@ -1,7 +1,8 @@
 //! The interface's icons, from Lucide (lucide.dev): one consistent set of outline icons, drawn
 //! from its icon font. Only clear-cut icons stand in for words: crop, turn, mirror, pick a
 //! colour, copy, delete, edit, zoom, settings, close, the appearances, the pages of Settings, the
-//! links to minilab's website and its source code, and the calendar.
+//! links to minilab's website and its source code, and the calendar. Two more mark things rather
+//! than stand for words: a spool over an empty page, and a funnel before a filter.
 
 const std = @import("std");
 const c = @import("c");
@@ -35,6 +36,8 @@ pub const Icon = enum(u21) {
     pencil = lucide.pencil,
     languages = lucide.languages,
     scan_line = lucide.@"scan-line",
+    spool = lucide.spool,
+    funnel = lucide.funnel,
 };
 
 /// Draws `icon` `size` screen pixels square, centred on `centre`.

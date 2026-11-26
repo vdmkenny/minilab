@@ -187,16 +187,19 @@ fn repeats(command: Command) bool {
 const mods_mask = c.ImGuiMod_Ctrl | c.ImGuiMod_Shift | c.ImGuiMod_Alt | c.ImGuiMod_Super;
 
 /// Returns the commands whose keys were pressed this frame. While a text field has the keyboard,
-/// only Escape and shortcuts with the Command key count, so typing never triggers a tool.
+/// only Escape and shortcuts with the Command key count, so typing never triggers a tool. While
+/// something is being dragged, Escape belongs to the drag: it cancels a slider's (`gui.slider`).
 pub fn poll() std.EnumSet(Command) {
     var pressed: std.EnumSet(Command) = .empty;
     const io = c.ImGui_GetIO();
     const typing = io.*.WantTextInput;
+    const dragging = !typing and c.ImGui_IsAnyItemActive() and c.ImGui_IsMouseDown(c.ImGuiMouseButton_Left);
     const mods = io.*.KeyMods & mods_mask;
     for (bindings) |b| {
         const wanted = b.chord & mods_mask;
         const key: c.ImGuiKey = @intCast(b.chord & ~@as(c_int, mods_mask));
         if (typing and wanted & command_key == 0 and key != c.ImGuiKey_Escape) continue;
+        if (dragging and key == c.ImGuiKey_Escape) continue;
         // In a text field, ⌘C, ⌘V, ⌘A and ⌘Z belong to the field.
         if (typing and wanted == command_key) continue;
         if (mods != wanted) continue;

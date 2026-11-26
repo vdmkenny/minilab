@@ -251,6 +251,8 @@ pub fn draw(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
         c.ImGui_Dummy(gui.vec2(0, gui.px(row_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
     }
     if (library.rolls.items.len == 0) {
+        const at = c.ImGui_GetCursorScreenPos();
+        c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + gui.emptySpool(c.ImGui_GetWindowDrawList(), at)));
         gui.paragraph(theme.colors.text_tertiary, i18n.t.rolls.no_rolls);
     } else if (shown == 0) {
         gui.paragraph(theme.colors.text_tertiary, i18n.t.rolls.no_matching_rolls);
@@ -298,7 +300,7 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     fonts.push(.semibold);
     const new_width = c.ImGui_CalcTextSize(new_label).x + gui.px(2 * gui.button_padding + new_icon + new_icon_gap);
     fonts.pop();
-    const controls = gui.px(search_width + filter_width + 2 * title_row_gap) + new_width;
+    const controls = gui.px(search_width + gui.filter_icon_space + filter_width + 2 * title_row_gap) + new_width;
 
     fonts.pushSized(.semibold, fonts.page_title_size);
     const title_height = c.ImGui_GetFontSize();
@@ -324,6 +326,7 @@ fn drawTitleRow(state: *State, library: *Library, gpa: std.mem.Allocator) void {
     filter_names[0] = i18n.t.rolls.all_film_sizes;
     for (filter_names[1..], film_sizes) |*name, size| name.* = labels.filmSizeName(size);
     const filter_index = if (state.size_filter) |size| gui.indexIn(formats.FilmSize, film_sizes, size) + 1 else 0;
+    gui.filterIcon(height);
     if (gui.combo("film size", &filter_names, filter_index, filter_width)) |picked| {
         state.size_filter = if (picked == 0) null else film_sizes[picked - 1];
     }

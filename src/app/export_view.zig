@@ -503,7 +503,8 @@ fn drawTitleRow(state: *State, r: *const roll.Roll, left: f32, right: f32, top: 
     const none_width = gui.fittedWidth(select_none, gui.button_padding);
     const all_width = gui.fittedWidth(select_all, gui.button_padding);
     const all_x = right - none_width - gui.px(toolbar_gap) - all_width;
-    c.ImGui_SetCursorScreenPos(gui.vec2(all_x - gui.px(toolbar_gap + star_filter_width), top));
+    c.ImGui_SetCursorScreenPos(gui.vec2(all_x - gui.px(toolbar_gap + star_filter_width + gui.filter_icon_space), top));
+    gui.filterIcon(height);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(combo_padding), (height - c.ImGui_GetFontSize()) / 2));
     const star_filters = starFilters();
     if (gui.combo("stars", &star_filters, state.min_stars, star_filter_width)) |picked| {
