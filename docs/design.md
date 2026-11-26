@@ -297,7 +297,11 @@ pipeline works in linear light. Each frame is saved as developed, with `finished
 positive at an exposure of 1, which gives back the picture as it was. Automatic settings and Reset
 leave a finished frame that way, and the look, saturation and exposure still work on top. A roll
 that starts with JPEGs has Finished scans as its input; its film type and stock stay what the film
-was, as metadata. A JPEG's embedded ICC profile isn't used yet: lab scans are almost always sRGB.
+was, as metadata. Lab scans are almost always sRGB, but a camera or a lab's software can tag a JPEG
+with another space, like Adobe RGB or Display P3. Then it's converted from its embedded ICC profile
+to linear sRGB as it's read, relative colorimetric, as GIMP and darktable import. Colours outside
+sRGB clip there. A JPEG with no profile, or one that can't be used, is taken as sRGB, which is
+what the ICC and browsers assume.
 
 **Folders and the library on disk.** `minilab import` and a drop on a roll's row take folders: a
 folder stands for the scans directly in it, in natural order (2 before 10). The app looks at the
@@ -475,7 +479,11 @@ Each stage has its own settings. Dust removal, when it's on, works on the frame'
    take as having Rec. 709's primaries. The viewer shows it sRGB-encoded, in the display's own
    colours: macOS converts the window to each display itself, and on Windows and Linux pictures
    are converted to the display's ICC profile as they go to the GPU (`platform/display_colour.zig`),
-   so a wide-gamut display doesn't show them oversaturated. Export converts it to
+   so a wide-gamut display doesn't show them oversaturated. The viewer and the loupe go straight
+   from Develop's floats to the display at 16 bits and dither down to 8 with a 4 × 4 ordered
+   pattern, so they're rounded once, as GIMP and darktable do it, and smooth gradients don't band.
+   The histogram and the clipping marks still count the sRGB values, which is what an export to
+   sRGB would hold. Thumbnails and the Scan preview are converted from 8-bit sRGB. Export converts it to
    linear Rec. 2020 (with ITU-R BT.2087's matrix), and Little CMS then converts that to the export
    space: sRGB, Display P3, Adobe RGB or ProPhoto RGB. The space's ICC profile is embedded in the
    file.
@@ -727,7 +735,10 @@ once it's released. If a look can't be read, the frame develops as Neutral, with
 **Tone:** Standard is darktable's curve as set. Soft and Hard use 0.8 and 1.25 times its
 contrast. Linear has no contrast curve and no roll-off, so it's linear in the film's exposure, and
 Log stores the density itself, from 0 to 1. Linear and Log are flat starting points for grading in
-other software.
+other software. A Log file holds the density in any colour space chosen: export writes it as it is,
+with no colour profile, as density formats like Cineon and DPX are (their headers say what they
+hold; ICC has no say). A profile would invite other apps to convert the numbers, and an untagged
+file is taken as sRGB, which passes them through.
 
 **White balance:** the modes from section 7.
 

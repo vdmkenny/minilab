@@ -97,6 +97,10 @@ pub const Picture = struct {
     pixels: Pixels,
     /// Output pixels per scan pixel: 1 at full resolution, less once reduced.
     scale: f64,
+    /// Whether the pixels are the film's density, from the Log tone, rather than colours. Then
+    /// they're written as they are, with no colour profile, as density formats like Cineon and
+    /// DPX are: a profile would invite other apps to convert the numbers.
+    density: bool = false,
 
     pub const Pixels = union(enum) {
         eight: image.Encoded8,
@@ -161,6 +165,9 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Pl
     defer developed.deinit(gpa);
     if (frame.developed) try sharpen.apply(gpa, developed, frame.settings.sharpen, scale);
     try check(cancel);
+    // Log holds density, which Develop has run through sRGB's curve backwards, so encoding it
+    // with that curve, and nothing else, gives the density back.
+    if (frame.developed and frame.settings.tone == .log) return .{ .pixels = try encodeDensity(gpa, developed, options), .scale = scale, .density = true };
     return .{ .pixels = try convert(gpa, &developed, options, cancel), .scale = scale };
 }
 
@@ -214,6 +221,14 @@ fn convert(gpa: std.mem.Allocator, linear: *image.Rendered, options: Options, ca
     };
 }
 
+/// Encodes Log's `developed` with sRGB's curve alone, at the file's depth (`developPicture`).
+fn encodeDensity(gpa: std.mem.Allocator, developed: image.Rendered, options: Options) !Picture.Pixels {
+    return switch (options.bits()) {
+        .eight => .{ .eight = try encode.toSrgb8(gpa, developed) },
+        .sixteen => .{ .sixteen = try encode.toSrgb16(gpa, developed) },
+    };
+}
+
 /// ITU-R BT.2087's matrix from Rec. 709's primaries to Rec. 2020's, both linear with a D65 white.
 pub const rec709_to_rec2020 = [3][3]f32{
     .{ 0.6274040, 0.3292820, 0.0433136 },
@@ -257,11 +272,11 @@ pub const EncodeError = tiff.WriteError || jpeg.WriteError || icc.Error || error
     JpegIsEightBit,
 };
 
-/// Encodes `picture` as a file of `options.format`, with its space's ICC profile, and `embedded`
-/// as EXIF and XMP if given. The caller owns the bytes.
+/// Encodes `picture` as a file of `options.format`, with its space's ICC profile (none for
+/// density), and `embedded` as EXIF and XMP if given. The caller owns the bytes.
 pub fn encodeFile(gpa: std.mem.Allocator, picture: Picture, options: Options, embedded: ?Embedded) EncodeError![]u8 {
-    const profile = try icc.profileBytes(gpa, options.space);
-    defer gpa.free(profile);
+    const profile: ?[]u8 = if (picture.density) null else try icc.profileBytes(gpa, options.space);
+    defer if (profile) |p| gpa.free(p);
     const plain = switch (options.format) {
         .tiff => switch (picture.pixels) {
             .eight => |p| try tiff.write(gpa, u8, p, .{ .icc_profile = profile }),
@@ -314,7 +329,7 @@ pub fn describe(info: roll.Info, frame: roll.FrameSettings, include: Include, op
             .quarter_turns = frame.quarter_turns,
         } else null,
         .dpi = if (dpi) |d| @floatCast(@as(f64, d) * picture.scale) else null,
-        .space = options.space,
+        .space = if (picture.density) null else options.space,
         .width = picture.width(),
         .height = picture.height(),
         .rating = if (include.rating and (frame.rating.rejected or frame.rating.stars > 0)) frame.rating.xmp() else null,
@@ -792,6 +807,27 @@ test "infrared dust removal takes out what the plane shows, cropped and turned w
     var dusty = try developPicture(gpa, scan, plane, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
     defer dusty.deinit(gpa);
     try std.testing.expect(!std.meta.eql(dusty.pixels.sixteen.pixels[50 * pixels.width + 50], dusty.pixels.sixteen.pixels[speck]));
+}
+
+test "Log's density goes into the file as it is, in any space, with no profile" {
+    const gpa = std.testing.allocator;
+    var scan = try testScan(gpa, 40, 30);
+    defer scan.deinit(gpa);
+    var frame: roll.FrameSettings = .{ .scan = "01.ppm", .developed = true, .settings = .{ .base = .{ 0.6, 0.4, 0.25 } } };
+    frame.settings.tone = .log;
+    var as_srgb = try developPicture(gpa, scan, null, frame, .neutral, .{ .format = .tiff, .space = .srgb }, null);
+    defer as_srgb.deinit(gpa);
+    var as_prophoto = try developPicture(gpa, scan, null, frame, .neutral, .{ .format = .tiff, .space = .prophoto }, null);
+    defer as_prophoto.deinit(gpa);
+    try std.testing.expect(as_prophoto.density);
+    try std.testing.expectEqualSlices([3]u16, as_srgb.pixels.sixteen.pixels, as_prophoto.pixels.sixteen.pixels);
+    const file = try encodeFile(gpa, as_prophoto, .{ .format = .tiff, .space = .prophoto }, null);
+    defer gpa.free(file);
+    var back = try tiff.read(gpa, file);
+    defer back.deinit(gpa);
+    try std.testing.expect(back.icc_profile == null);
+    const described = describe(.{ .name = "Roll" }, frame, .{}, .{ .format = .tiff, .space = .prophoto }, as_prophoto);
+    try std.testing.expectEqual(@as(?icc.Space, null), described.space);
 }
 
 test "a frame is cropped, turned, then reduced, and its TIFF holds its profile" {

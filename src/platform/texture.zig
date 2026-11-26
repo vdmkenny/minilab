@@ -11,13 +11,21 @@ const fail = sdl.fail;
 pub const Pixel = [4]u8;
 const pixel_bytes = @sizeOf(Pixel);
 
+/// What colours a texture's pixels are in.
+pub const Colours = enum {
+    /// sRGB: they're converted to the display's colours on the way (`display_colour.convert`).
+    srgb,
+    /// The display's already (`display_colour.fromLinear`): they go up as they are.
+    display,
+};
+
 pub const Texture = struct {
     handle: *c.SDL_GPUTexture,
     width: u32,
     height: u32,
 
     /// Uploads `pixels` (`width` × `height`, row by row) into a new texture.
-    pub fn upload(gpu: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const Pixel) Error!Texture {
+    pub fn upload(gpu: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const Pixel, colours: Colours) Error!Texture {
         std.debug.assert(pixels.len == @as(usize, width) * height);
         const handle = c.SDL_CreateGPUTexture(gpu, &.{
             .type = c.SDL_GPU_TEXTURETYPE_2D,
@@ -30,19 +38,23 @@ pub const Texture = struct {
         }) orelse return fail("SDL_CreateGPUTexture");
         errdefer c.SDL_ReleaseGPUTexture(gpu, handle);
         var texture: Texture = .{ .handle = handle, .width = width, .height = height };
-        try texture.replace(gpu, pixels);
+        try texture.replace(gpu, pixels, colours);
         return texture;
     }
 
-    /// Replaces the texture's pixels with `pixels`, of the same size, in sRGB. They go up in the
-    /// display's colours (`display_colour`).
-    pub fn replace(texture: *Texture, gpu: *c.SDL_GPUDevice, pixels: []const Pixel) Error!void {
+    /// Replaces the texture's pixels with `pixels`, of the same size, in `colours`. They go up in
+    /// the display's colours (`display_colour`).
+    pub fn replace(texture: *Texture, gpu: *c.SDL_GPUDevice, pixels: []const Pixel, colours: Colours) Error!void {
         std.debug.assert(pixels.len == @as(usize, texture.width) * texture.height);
         const size: u32 = @intCast(pixels.len * pixel_bytes);
         const transfer = c.SDL_CreateGPUTransferBuffer(gpu, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = size }) orelse return fail("SDL_CreateGPUTransferBuffer");
         defer c.SDL_ReleaseGPUTransferBuffer(gpu, transfer);
         const mapped = c.SDL_MapGPUTransferBuffer(gpu, transfer, false) orelse return fail("SDL_MapGPUTransferBuffer");
-        display_colour.convert(pixels, @as([*]Pixel, @ptrCast(@alignCast(mapped)))[0..pixels.len]);
+        const target = @as([*]Pixel, @ptrCast(@alignCast(mapped)))[0..pixels.len];
+        switch (colours) {
+            .srgb => display_colour.convert(pixels, target),
+            .display => @memcpy(target, pixels),
+        }
         c.SDL_UnmapGPUTransferBuffer(gpu, transfer);
 
         const commands = c.SDL_AcquireGPUCommandBuffer(gpu) orelse return fail("SDL_AcquireGPUCommandBuffer");

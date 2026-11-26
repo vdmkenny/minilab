@@ -28,8 +28,9 @@ pub const Metadata = struct {
     develop: ?Develop = null,
     /// Pixels per inch of film in the file, when the scan's resolution is known.
     dpi: ?f32 = null,
-    /// The colour space of the pixels, which the embedded ICC profile describes too.
-    space: icc.Space = .srgb,
+    /// The colour space of the pixels, which the embedded ICC profile describes too, or null for
+    /// pixels that aren't colours, like Log's density, which have no profile.
+    space: ?icc.Space = .srgb,
     /// The file's size in pixels.
     width: usize = 0,
     height: usize = 0,
@@ -94,7 +95,7 @@ fn writeXmp(w: *std.Io.Writer, m: Metadata) std.Io.Writer.Error!void {
     try w.writeAll("    xmlns:photoshop=\"http://ns.adobe.com/photoshop/1.0/\"\n");
     try w.writeAll("    xmlns:minilab=\"" ++ namespace ++ "\"\n");
     try w.writeAll("    xmp:CreatorTool=\"minilab\"\n");
-    try w.print("    photoshop:ICCProfile=\"{s}\"\n", .{spaceName(m.space)});
+    if (m.space) |space| try w.print("    photoshop:ICCProfile=\"{s}\"\n", .{spaceName(space)});
     if (m.width > 0) try w.print("    tiff:ImageWidth=\"{d}\"\n    tiff:ImageLength=\"{d}\"\n", .{ m.width, m.height });
     if (m.dpi) |dpi| {
         const r = rational(dpi);

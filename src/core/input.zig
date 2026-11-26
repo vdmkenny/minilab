@@ -19,6 +19,8 @@ const tiff = @import("../io/codecs/tiff.zig");
 const raw = @import("../io/codecs/raw.zig");
 const develop = @import("develop.zig");
 const jpeg = @import("../io/codecs/jpeg.zig");
+const icc = @import("../io/codecs/icc.zig");
+const parallel = @import("parallel.zig");
 const encode = @import("encode.zig");
 
 const log = std.log.scoped(.input);
@@ -294,7 +296,7 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8, options: Op
         .jpeg => {
             var decoded = try jpeg.read(gpa, bytes);
             defer decoded.deinit(gpa);
-            return .{ .scan = try linearFromSrgb8(gpa, decoded.image), .kind = kind, .depth = .eight };
+            return .{ .scan = try linearFromJpeg(gpa, decoded), .kind = kind, .depth = .eight };
         },
         .camera_raw => {
             const decoded = try raw.read(gpa, bytes, .{});
@@ -309,6 +311,41 @@ pub fn decode(gpa: std.mem.Allocator, kind: Kind, bytes: []const u8, options: Op
         },
     }
 }
+
+/// A JPEG's pixels as linear 16-bit values in sRGB's primaries. A camera or a scanner's software
+/// may tag them with another space, like Adobe RGB or Display P3, and then they're converted from
+/// it. One with no profile is taken as sRGB, as the ICC and browsers do, and so is one whose
+/// profile can't be used.
+fn linearFromJpeg(gpa: std.mem.Allocator, decoded: jpeg.Decoded) !image.Scan {
+    const profile = decoded.icc_profile orelse return linearFromSrgb8(gpa, decoded.image);
+    var transform = icc.ImportTransform.init(profile) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.ColourManagementFailed => {
+            std.log.warn("the JPEG's colour profile can't be used, so it's taken as sRGB", .{});
+            return linearFromSrgb8(gpa, decoded.image);
+        },
+    };
+    defer transform.deinit();
+    const scan: image.Scan = try .init(gpa, decoded.image.width, decoded.image.height);
+    // Converting colour by colour is exact but slow, about 2 s for 24 megapixels on one core.
+    parallel.inBands(scan.height, parallel.bandCount(scan.height, min_rows_per_band), Convert{ .transform = transform, .from = decoded.image, .to = scan });
+    return scan;
+}
+
+/// Rows a thread converts at a time, at the least.
+const min_rows_per_band = 64;
+
+/// `linearFromJpeg`'s conversion of a band of rows.
+const Convert = struct {
+    transform: icc.ImportTransform,
+    from: image.Encoded8,
+    to: image.Scan,
+
+    pub fn run(job: Convert, _: usize, first: usize, end: usize) void {
+        const w = job.to.width;
+        job.transform.apply(job.from.pixels[first * w .. end * w], job.to.pixels[first * w .. end * w]);
+    }
+};
 
 /// `picture`, encoded in sRGB, as linear 16-bit values.
 fn linearFromSrgb8(gpa: std.mem.Allocator, picture: image.Encoded8) !image.Scan {
@@ -479,4 +516,29 @@ test "a camera RAW file reads as a linear scan up to full scale" {
 
 test "the file dialogs get every extension we read" {
     try std.testing.expect(std.mem.startsWith(u8, extensions, "ppm;pnm;pgm;tif;tiff;jpg;jpeg;dng;"));
+}
+
+test "a JPEG tagged with another space is converted from it, and an untagged one is taken as sRGB" {
+    const gpa = std.testing.allocator;
+    var picture: image.Encoded8 = try .init(gpa, 2, 1);
+    defer picture.deinit(gpa);
+    picture.pixels[0] = .{ 255, 0, 0 };
+    picture.pixels[1] = .{ 128, 128, 128 };
+    const adobe = try icc.profileBytes(gpa, .adobe_rgb);
+    defer gpa.free(adobe);
+    inline for (.{ @as(?[]const u8, null), @as(?[]const u8, adobe) }) |profile| {
+        const file = try jpeg.write(gpa, picture, .{ .quality = 100, .subsampling = .@"4:4:4", .icc_profile = profile });
+        defer gpa.free(file);
+        var read_back = try decode(gpa, .jpeg, file, .{});
+        defer read_back.deinit(gpa);
+        const red = read_back.scan.pixels[0];
+        if (profile == null) {
+            // sRGB's red, give or take JPEG's rounding.
+            try std.testing.expect(red[1] < image.full_scale / 100);
+        } else {
+            // Adobe RGB's red is redder than sRGB's: it clips red, and its green goes below 0 too.
+            try std.testing.expectEqual(@as(u16, image.full_scale), red[0]);
+            try std.testing.expectEqual(@as(u16, 0), red[1]);
+        }
+    }
 }
