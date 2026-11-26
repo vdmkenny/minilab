@@ -369,14 +369,15 @@ pub const Roll = struct {
     /// Adds the scan in `bytes` (a binary PNM) the way `addImage` does, and returns the index of
     /// its first frame.
     pub fn addScan(roll: *Roll, gpa: std.mem.Allocator, io: Io, bytes: []const u8) !usize {
-        return roll.addScanAt(gpa, io, bytes, null);
+        return roll.addScanAt(gpa, io, bytes, null, null);
     }
 
-    /// Like `addScan`, for a scan made at `dpi` pixels per inch, which frame detection needs.
-    pub fn addScanAt(roll: *Roll, gpa: std.mem.Allocator, io: Io, bytes: []const u8, dpi: ?f32) !usize {
+    /// Like `addScan`, for a scan made at `dpi` pixels per inch, which frame detection needs, and
+    /// with its infrared pass, if the scanner made one.
+    pub fn addScanAt(roll: *Roll, gpa: std.mem.Allocator, io: Io, bytes: []const u8, dpi: ?f32, infrared_plane: ?image.Plane) !usize {
         var scan = try pnm.read(gpa, bytes);
         defer scan.deinit(gpa);
-        return (try roll.addImage(gpa, io, scan, dpi)).first;
+        return (try roll.addImageWith(gpa, io, scan, .{ .dpi = dpi, .infrared = infrared_plane })).first;
     }
 
     /// What a new scan brings besides its pixels.

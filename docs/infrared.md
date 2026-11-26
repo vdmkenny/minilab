@@ -49,7 +49,24 @@ It doesn't suit every film:
 - **Export.** With dust removal on and its finder set to infrared, export cleans with the plane,
   cropped, turned and reduced the same way as the scan.
 
-Still to come: scanners.
+- **Scanning.** A scanner whose SANE driver offers infrared gets an Infrared pass check box on
+  Scan, off to begin with. With it on, each frame is scanned with its infrared, which goes into
+  the roll with the frame. SANE has no standard for infrared yet, so minilab looks for it in each
+  of the ways drivers offer it, by their options rather than by their names, so any driver that
+  does it one of these ways works:
+
+  | The driver offers | Like | The infrared comes |
+  | --- | --- | --- |
+  | a scan mode named infrared | epson2 (with our patch), pixma for the CanoScan 9000F | as a second scan of the same area, in grey |
+  | a light source named infrared | genesys for the Plustek OpticFilm 7200i to 8200i and Canon 8400F/8600F | as a second scan, from that light |
+  | an `RGBI` mode | pieusb for Reflecta and PIE | as a fourth sample with each pixel |
+  | an `infrared` or `infra-red` switch | coolscan2 for Nikon, avision | as a fourth sample, or a grey frame after the colour |
+
+  A second scan that comes out another size than the colour one is left out, with a note in the
+  log. epson2 had its infrared code switched off; `scripts/sane-patches` turns it on, in the
+  macOS download's SANE and, once it's taken, upstream. None of these has been tried on a real
+  scanner yet, so each needs checking. TWAIN's infrared pixel type isn't used yet: no film
+  scanner's TWAIN driver was found that offers it.
 
 Which films suit infrared comes from the stock presets: each says what its picture is made of
 (`material`: dye, or silver for black and white unless it says otherwise, as XP2 does), and

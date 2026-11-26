@@ -1,0 +1,47 @@
+diff --git a/backend/epson2-ops.c b/backend/epson2-ops.c
+index 61930f6..9be1212 100644
+--- a/backend/epson2-ops.c
++++ b/backend/epson2-ops.c
+@@ -1371,13 +1371,15 @@ e2_init_parameters(Epson_Scanner * s)
+ 		s->params.bytes_per_line =
+ 			3 * s->params.pixels_per_line * bytes_per_pixel;
+ 		break;
+-#ifdef SANE_FRAME_IR
+ 	case MODE_INFRARED:
+-		s->params.format = SANE_FRAME_IR;
++		/* SANE has no infrared frame type yet (SANE_FRAME_IR is
++		 * reserved in sane.h but not defined), so the infrared pass
++		 * comes as a gray frame, as pixma's does (changed for
++		 * minilab, November 2026). */
++		s->params.format = SANE_FRAME_GRAY;
+ 		s->params.bytes_per_line =
+ 			s->params.pixels_per_line * s->params.depth / 8;
+ 		break;
+-#endif
+ 	}
+ 
+ 	if (s->params.bytes_per_line == 0)
+diff --git a/backend/epson2.c b/backend/epson2.c
+index cfc2aca..b4b3ade 100644
+--- a/backend/epson2.c
++++ b/backend/epson2.c
+@@ -87,16 +87,16 @@ struct mode_param mode_params[] = {
+ 	{0, 0x00, 0x30, 1},
+ 	{0, 0x00, 0x30, 8},
+ 	{1, 0x02, 0x00, 8},
+-	{0, 0x00, 0x30, 1}
++	/* infrared: one channel, like gray, so its bit depth can be set
++	 * (changed for minilab, November 2026) */
++	{0, 0x00, 0x30, 8}
+ };
+ 
+ static SANE_String_Const mode_list[] = {
+ 	SANE_VALUE_SCAN_MODE_LINEART,
+ 	SANE_VALUE_SCAN_MODE_GRAY,
+ 	SANE_VALUE_SCAN_MODE_COLOR,
+-#ifdef SANE_FRAME_IR
+ 	SANE_I18N("Infrared"),
+-#endif
+ 	NULL
+ };
+ 

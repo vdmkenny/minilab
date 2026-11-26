@@ -151,6 +151,8 @@
         .scanner_mode = "Scannermodus: {0} · {1}",
         .positive_film = "Positive Film",
         .resolution = "Resolutie",
+        .infrared_pass = "Infraroodscan",
+        .infrared_pass_help = "Voor stofverwijdering met infrarood · elk beeld duurt ongeveer twee keer zo lang",
         .size_about = "Ca. {0} × {1} px per beeld",
         .size_about_mb = "Ca. {0} × {1} px · {2} MB per beeld",
         .size = "{0} × {1} px per beeld",

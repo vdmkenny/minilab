@@ -151,6 +151,8 @@
         .scanner_mode = "スキャナーモード：{0} · {1}",
         .positive_film = "Positive Film",
         .resolution = "解像度",
+        .infrared_pass = "赤外線スキャン",
+        .infrared_pass_help = "赤外線によるゴミ除去用 · 1コマあたり約2倍の時間がかかります",
         .size_about = "1コマ約{0} × {1} px",
         .size_about_mb = "1コマ約{0} × {1} px · {2} MB",
         .size = "1コマ{0} × {1} px",

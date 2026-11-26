@@ -151,6 +151,8 @@
         .scanner_mode = "Mode du scanner : {0} · {1}",
         .positive_film = "Positive Film",
         .resolution = "Résolution",
+        .infrared_pass = "Passe infrarouge",
+        .infrared_pass_help = "Pour le dépoussiérage infrarouge · chaque vue prend environ deux fois plus de temps",
         .size_about = "Env. {0} × {1} px par vue",
         .size_about_mb = "Env. {0} × {1} px · {2} Mo par vue",
         .size = "{0} × {1} px par vue",
