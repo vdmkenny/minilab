@@ -204,6 +204,52 @@ VECTOR += [
     },
 ]
 
+VECTOR += [
+    # Kodak AS-2652 (October 2009): AEROCOLOR IV 2460, an aerial colour negative film with no
+    # integral mask. The page prints three charts; this is "Developed for Low Contrast": C-41,
+    # 3'15" (the standard C-41 developer time), Status M, daylight. The labels B, G and R at the
+    # left-hand end are stacked in that order, top to bottom.
+    {
+        "id": "kodak_aerocolor_iv_2460",
+        "pdf": "kodak_aerocolor_2460.pdf",
+        "page": 6,
+        "frame": (81.52, 336.88, 265.99, 521.32),
+        "x_ticks": _grid([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0], [81.52, 118.43, 155.30, 192.21, 229.08, 265.99]),
+        "y_ticks": _grid([0.0, 1.0, 2.0, 3.0, 4.0], [521.32, 475.21, 429.10, 382.99, 336.88]),
+        "curves": {"b": {"rank": 0}, "g": {"rank": 1}, "r": {"rank": 2}},
+        "kind": "negative",
+    },
+]
+
+# InovisCoat WOLFEN datasheets (Word documents with an embedded chart): C-41, Status M,
+# daylight, log H in lux-seconds. Each curve is a 30-point polyline, and the gridlines every
+# 1.0 on both axes are drawn as vectors. Labelled blue above green above red.
+VECTOR += [
+    # WOLFEN NC400 data sheet (undated; the PDF was made in November 2022).
+    {
+        "id": "orwo_wolfen_nc400",
+        "pdf": "orwo_nc400.pdf",
+        "page": 2,
+        "frame": (90.36, 147.60, 286.80, 322.56),
+        "x_ticks": _grid([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0], [90.36, 129.60, 168.96, 208.20, 247.44, 286.80]),
+        "y_ticks": _grid([0.0, 1.0, 2.0, 3.0, 4.0], [322.56, 278.76, 234.96, 191.28, 147.60]),
+        "curves": {"b": {"rank": 0}, "g": {"rank": 1}, "r": {"rank": 2}},
+        "kind": "negative",
+    },
+    # WOLFEN NC500 Datenblatt (German, undated; the PDF was made in October 2022). Its curves bend
+    # into a long shoulder, so its straight part is short.
+    {
+        "id": "orwo_wolfen_nc500",
+        "pdf": "orwo_nc500.pdf",
+        "page": 2,
+        "frame": (87.24, 163.44, 283.68, 339.60),
+        "x_ticks": _grid([-4.0, -3.0, -2.0, -1.0, 0.0, 1.0], [87.24, 126.48, 165.84, 205.08, 244.32, 283.68]),
+        "y_ticks": _grid([0.0, 1.0, 2.0, 3.0, 4.0], [339.60, 295.44, 251.40, 207.48, 163.44]),
+        "curves": {"b": {"rank": 0}, "g": {"rank": 1}, "r": {"rank": 2}},
+        "kind": "negative",
+    },
+]
+
 RASTER = [
     # Fujicolor C200, AF3-0249E (May 2017): Status M, CN-16, daylight 1/125 s. Black curves,
     # blue above green above red; the chart image is 600 ppi.

@@ -162,20 +162,18 @@ const Options = struct {
 /// line has no scanner calibration. A stock of another kind of film is refused, as in the app:
 /// a B&W stock's curves would be wrong on a colour negative.
 fn stockNamed(name: []const u8, kind: minilab.develop.FilmKind) minilab.stock_curves.Curves {
-    for (minilab.stocks.stocks) |stock| {
-        if (!std.ascii.eqlIgnoreCase(stock.name, name)) continue;
-        if (stock.kind != kind) {
-            std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock.kind, kind });
-            std.process.exit(usage_status);
-        }
-        const curves = minilab.stock_curves.of(stock, @splat(1)) orelse {
-            std.log.err("{s} has no curves for {t}", .{ stock.name, kind });
-            std.process.exit(usage_status);
-        };
-        return curves;
+    const stock = minilab.stocks.named(name) orelse {
+        std.log.err("no stock preset is called {s}", .{name});
+        std.process.exit(usage_status);
+    };
+    if (stock.kind != kind) {
+        std.log.err("{s} is {t} film, not {t}: give --film to match", .{ stock.name, stock.kind, kind });
+        std.process.exit(usage_status);
     }
-    std.log.err("no stock preset is called {s}", .{name});
-    std.process.exit(usage_status);
+    return minilab.stock_curves.of(stock.*, @splat(1)) orelse {
+        std.log.err("{s} has no curves for {t}", .{ stock.name, kind });
+        std.process.exit(usage_status);
+    };
 }
 
 /// Resolves the look a command names: "neutral", "frontier", a film look's id, or the path to a

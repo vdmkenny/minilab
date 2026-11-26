@@ -666,7 +666,9 @@ white balance. The stock presets are built into the program (`src/presets/stocks
   log exposure, then on to the density the curve's straight line would give at that exposure,
   measured from the base. So the base stays at 0, the toe opens up, and the straight part keeps
   its contrast. The straight line is fitted to the middle of the curve's density range (25 to 85
-  percent), so it straightens the actual curve it comes from. Right at the base the toe is nearly
+  percent), so it straightens the actual curve it comes from. Within that, it only takes the part
+  at least half as steep as the curve's steepest, the rule data/stocks/README.md finds gamma by,
+  so a long shoulder like ORWO Wolfen NC500's doesn't flatten the line. Right at the base the toe is nearly
   flat: Superia X-TRA 400's would need stretching 15 to 35 times there, which would only blow up
   the grain, so the stretch stops at 3 times. Each layer becomes a 33-point table. It's applied
   after the density matrix, and the automatic settings use it too.

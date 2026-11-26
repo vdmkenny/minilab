@@ -157,14 +157,19 @@ const unmeasured = [_]StockChoice{
     .{ .name = "Fujichrome Velvia 50", .kind = .colour_positive },
 };
 
-/// Every stock you can pick: the presets first, then the rest. A name that has a preset now is
-/// left out of the rest.
+/// Every stock you can pick: the presets, the other names they're sold under, then the rest. A
+/// name that has a preset now is left out of the rest.
 pub const stock_choices = blk: {
     @setEvalBranchQuota(1_000_000);
     const presets = minilab.stocks.stocks;
-    var all: [presets.len + unmeasured.len]StockChoice = undefined;
+    const aliases = minilab.stocks.aliases;
+    var all: [presets.len + aliases.len + unmeasured.len]StockChoice = undefined;
     for (&presets, 0..) |*preset, i| all[i] = .{ .name = preset.name, .kind = preset.kind, .preset = preset };
-    var n = presets.len;
+    for (aliases, presets.len..) |alias, i| {
+        const preset = minilab.stocks.named(alias.of).?;
+        all[i] = .{ .name = alias.name, .kind = preset.kind, .preset = preset };
+    }
+    var n = presets.len + aliases.len;
     for (unmeasured) |choice| {
         const has_preset = for (presets) |preset| {
             if (std.mem.eql(u8, preset.name, choice.name)) break true;
@@ -334,6 +339,7 @@ test "stocks are listed by film type, with the last choice after them" {
     try std.testing.expectEqualStrings("Other", names[names.len - 1]);
     for (names[0 .. names.len - 1]) |name| try std.testing.expectEqual(develop.FilmKind.colour_negative, findStock(name).?.kind);
     try std.testing.expect(findStock("Kodak Portra 400").?.preset != null);
+    try std.testing.expectEqualStrings("Kodak Portra 400", findStock("Kodak Ektacolor Pro 400").?.preset.?.name);
     try std.testing.expectEqual(@as(?StockChoice, null), findStock("Not a stock"));
     try std.testing.expectEqual(@as(?[3]f32, null), stockGamma(null));
 }

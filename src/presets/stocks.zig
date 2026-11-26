@@ -68,11 +68,35 @@ pub const Material = enum {
     silver,
 };
 
-/// The stock called `name`, if there's one.
+/// The stock called `name`, in any case, if there's one, by its own name or another it's sold
+/// under (`aliases`).
 pub fn named(name: []const u8) ?*const Stock {
-    for (&stocks) |*stock| if (std.mem.eql(u8, stock.name, name)) return stock;
+    for (&stocks) |*stock| if (std.ascii.eqlIgnoreCase(stock.name, name)) return stock;
+    for (aliases) |alias| if (std.ascii.eqlIgnoreCase(alias.name, name)) return named(alias.of);
     return null;
 }
+
+/// Another name a stock is sold under: the same film, renamed or rebranded, so it takes that
+/// stock's preset.
+pub const Alias = struct {
+    name: []const u8,
+    /// The preset's name.
+    of: []const u8,
+    /// Who says it's the same film.
+    source: []const u8,
+};
+
+pub const aliases = [_]Alias{
+    .{ .name = "Kodak Ektacolor Pro 160", .of = "Kodak Portra 160", .source = ektacolor_source },
+    .{ .name = "Kodak Ektacolor Pro 400", .of = "Kodak Portra 400", .source = ektacolor_source },
+    .{ .name = "Kodak Ektacolor Pro 800", .of = "Kodak Portra 800", .source = ektacolor_source },
+    .{ .name = "Kodak Ektapan 100", .of = "Kodak T-Max 100", .source = ektapan_source },
+    .{ .name = "Kodak Ektapan 400", .of = "Kodak T-Max 400", .source = ektapan_source },
+    .{ .name = "Kodak Ektapan P3200", .of = "Kodak T-Max P3200", .source = ektapan_source },
+};
+
+const ektacolor_source = "PENDING";
+const ektapan_source = "PENDING";
 
 pub const stocks = [_]Stock{
     // Colour negative: Status M densities.
@@ -176,6 +200,17 @@ pub const stocks = [_]Stock{
         .source = "Kodak E-4L (July 1997), Status M, C-41, daylight; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds",
     },
     .{
+        .name = "Kodak Aerocolor IV 2460",
+        .maker = "Kodak",
+        .kind = .colour_negative,
+        .iso = 100,
+        .base_density = .{ 0.134, 0.245, 0.270 },
+        .gamma = .{ 0.473, 0.529, 0.571 },
+        .density_range = .{ 1.590, 1.675, 1.854 },
+        .curves = curve_data.kodak_aerocolor_iv_2460,
+        .source = "Kodak AS-2652 (October 2009), aerial colour negative film without an integral mask, sold respooled as SantaColor 100, Reflx Lab Pro 100 and others; Status M, daylight, C-41 3'15\" (the chart \"Developed for Low Contrast\"; Kodak's table gives this development approximate contrast 0.63 and ISO A equivalent 80, an aerial film speed; ISO 100 is the speed the respoolers sell it at); curves read for minilab from the vector drawing in the PDF; log H in lux-seconds",
+    },
+    .{
         .name = "Kodak Vision3 50D 5203",
         .maker = "Kodak",
         .kind = .colour_negative,
@@ -240,6 +275,17 @@ pub const stocks = [_]Stock{
         .density_range = .{ 1.673, 1.978, 1.905 },
         .curves = curve_data.kodak_vision3_500t,
         .source = "Kodak Vision3 500T 5219 reading (H-1-5219, July 2015 edition, Status M, ECN-2), as in that entry. CineStill publishes no curves; its FAQ names \"Vision 3 5219\" as the stock behind 800Tungsten. CineStill film is processed in C-41, not ECN-2, so contrast and base density differ: an approximation. Log H relative to normal exposure (camera stops × 0.30103)",
+    },
+    .{
+        .name = "CineStill 50D",
+        .maker = "CineStill",
+        .kind = .colour_negative,
+        .iso = 50,
+        .base_density = .{ 0.170, 0.575, 0.846 },
+        .gamma = .{ 0.484, 0.570, 0.549 },
+        .density_range = .{ 1.708, 2.027, 1.955 },
+        .curves = curve_data.kodak_vision3_50d,
+        .source = "Kodak Vision3 50D 5203 reading (H-1-5203, July 2015 edition, Status M, ECN-2), as in that entry. CineStill publishes no curves; its 50D product page (archived 26 February 2018) says \"Original fresh stock from Kodak 50D\", and Kodak's only 50D camera film is Vision3 50D 5203/7203. CineStill film is processed in C-41, not ECN-2, so contrast and base density differ: an approximation. Log H relative to normal exposure (camera stops × 0.30103)",
     },
     .{
         .name = "Fujifilm 200",
@@ -339,6 +385,28 @@ pub const stocks = [_]Stock{
         .density_range = .{ 1.741, 1.922, 2.098 },
         .curves = curve_data.harman_phoenix_200,
         .source = "HARMAN Phoenix 200 datasheet (September 2024), standard C-41 chemicals; the densitometry is not stated; curves read for minilab from the 216 ppi chart image in the PDF (reads at 600 and 300 dpi agree within 0.002 D). Blue and red are drawn over each other up to relative log H 0.9 and share one reading there; log H relative (\"relative log exposure\")",
+    },
+    .{
+        .name = "ORWO Wolfen NC400",
+        .maker = "ORWO",
+        .kind = .colour_negative,
+        .iso = 400,
+        .base_density = null,
+        .gamma = .{ 0.628, 0.642, 0.669 },
+        .density_range = null,
+        .curves = curve_data.orwo_wolfen_nc400,
+        .source = "InovisCoat WOLFEN NC400 data sheet (undated; the PDF was made in November 2022), Status M, C-41, daylight; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds. The blue and green curves still rise at 0.166 and 0.101 per log H where they start, so base density is unknown",
+    },
+    .{
+        .name = "ORWO Wolfen NC500",
+        .maker = "ORWO",
+        .kind = .colour_negative,
+        .iso = 400,
+        .base_density = .{ 0.328, 0.560, 0.980 },
+        .gamma = .{ 0.535, 0.550, 0.614 },
+        .density_range = .{ 1.300, 1.338, 1.270 },
+        .curves = curve_data.orwo_wolfen_nc500,
+        .source = "InovisCoat WOLFEN NC500 Datenblatt (German, undated; the PDF was made in October 2022), ISO 400/27°, Status M, C-41, daylight; curves read for minilab from the vector drawing in the PDF; log H in lux-seconds. The curves bend into a long shoulder and end 1.3 above base",
     },
     // Colour positive (slide): Status A densities.
     .{
@@ -484,7 +552,7 @@ pub const stocks = [_]Stock{
         .gamma = .{ 0.641, 0.641, 0.641 },
         .density_range = .{ 1.966, 1.966, 1.966 },
         .curves = curve_data.ilford_hp5_plus,
-        .source = "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.005 D); log H relative (\"relative log exposure\")",
+        .source = "Ilford HP5 Plus datasheet (April 2010 edition), 35 mm, ILFOTEC HC 1+31, 6.5 min, 20 °C, intermittent agitation; Ilford does not say how density was measured; curve read for minilab from the vector drawing in the PDF. The November 2018 edition prints the same curve as an image (a raster reading agrees within 0.007 D); log H relative (\"relative log exposure\")",
     },
     .{
         .name = "Ilford FP4 Plus",
@@ -1831,6 +1899,99 @@ const curve_data = struct {
         1.061, 1.131, 1.201, 1.274, 1.321, 1.365, 1.401, 1.432, 1.462,
     });
     const ilford_ortho_plus: [3][]const Point = .{ ilford_ortho_plus_curve, ilford_ortho_plus_curve, ilford_ortho_plus_curve };
+    const kodak_aerocolor_iv_2460: [3][]const Point = .{
+        sampled(&.{
+            -3.100, -3.000, -2.900, -2.800, -2.700, -2.600, -2.500, -2.400, -2.300, -2.200,
+            -2.100, -2.000, -1.900, -1.800, -1.700, -1.600, -1.500, -1.400, -1.300, -1.200,
+            -1.100, -1.000, -0.900, -0.800, -0.700, -0.600, -0.500, -0.400, -0.300, -0.200,
+            -0.100, 0.000,  0.100,  0.200,  0.300,  0.400,  0.500,  0.600,  0.700,  0.800,
+        }, &.{
+            0.137, 0.142, 0.146, 0.148, 0.153, 0.162, 0.175, 0.191, 0.218, 0.255,
+            0.297, 0.345, 0.395, 0.445, 0.495, 0.543, 0.588, 0.631, 0.672, 0.714,
+            0.757, 0.802, 0.853, 0.909, 0.960, 1.008, 1.059, 1.112, 1.167, 1.221,
+            1.279, 1.342, 1.404, 1.462, 1.512, 1.556, 1.598, 1.639, 1.674, 1.706,
+        }),
+        sampled(&.{
+            -3.100, -3.000, -2.900, -2.800, -2.700, -2.600, -2.500, -2.400, -2.300, -2.200,
+            -2.100, -2.000, -1.900, -1.800, -1.700, -1.600, -1.500, -1.400, -1.300, -1.200,
+            -1.100, -1.000, -0.900, -0.800, -0.700, -0.600, -0.500, -0.400, -0.300, -0.200,
+            -0.100, 0.000,  0.100,  0.200,  0.300,  0.400,  0.500,  0.600,  0.700,  0.800,
+        }, &.{
+            0.246, 0.249, 0.249, 0.247, 0.253, 0.267, 0.290, 0.323, 0.361, 0.407,
+            0.453, 0.497, 0.543, 0.591, 0.639, 0.687, 0.735, 0.782, 0.827, 0.872,
+            0.920, 0.975, 1.029, 1.081, 1.133, 1.187, 1.240, 1.294, 1.350, 1.413,
+            1.475, 1.536, 1.592, 1.644, 1.694, 1.743, 1.789, 1.832, 1.869, 1.902,
+        }),
+        sampled(&.{
+            -3.100, -3.000, -2.900, -2.800, -2.700, -2.600, -2.500, -2.400, -2.300, -2.200,
+            -2.100, -2.000, -1.900, -1.800, -1.700, -1.600, -1.500, -1.400, -1.300, -1.200,
+            -1.100, -1.000, -0.900, -0.800, -0.700, -0.600, -0.500, -0.400, -0.300, -0.200,
+            -0.100, 0.000,  0.100,  0.200,  0.300,  0.400,  0.500,  0.600,  0.700,  0.800,
+        }, &.{
+            0.269, 0.265, 0.266, 0.273, 0.284, 0.297, 0.322, 0.360, 0.402, 0.446,
+            0.497, 0.555, 0.614, 0.674, 0.732, 0.787, 0.844, 0.905, 0.963, 1.021,
+            1.079, 1.139, 1.197, 1.252, 1.309, 1.369, 1.427, 1.482, 1.538, 1.599,
+            1.658, 1.713, 1.768, 1.827, 1.881, 1.934, 1.981, 2.025, 2.066, 2.102,
+        }),
+    };
+    const orwo_wolfen_nc400: [3][]const Point = .{
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            0.399, 0.410, 0.432, 0.452, 0.501, 0.562, 0.653, 0.757, 0.841, 0.940,
+            1.036, 1.157, 1.261, 1.363, 1.451, 1.547, 1.638, 1.727, 1.812, 1.892,
+            1.971, 2.062, 2.156, 2.232, 2.301, 2.373, 2.440, 2.520, 2.558,
+        }),
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            0.641, 0.660, 0.682, 0.732, 0.800, 0.872, 0.971, 1.073, 1.170, 1.266,
+            1.376, 1.491, 1.596, 1.681, 1.772, 1.868, 1.962, 2.056, 2.147, 2.235,
+            2.317, 2.402, 2.488, 2.567, 2.622, 2.691, 2.750, 2.811, 2.849,
+        }),
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            1.017, 1.061, 1.132, 1.223, 1.333, 1.426, 1.542, 1.632, 1.727, 1.842,
+            1.952, 2.059, 2.153, 2.255, 2.353, 2.452, 2.554, 2.646, 2.728, 2.819,
+            2.904, 2.959, 3.025, 3.080, 3.110, 3.146, 3.170, 3.189, 3.203,
+        }),
+    };
+    const orwo_wolfen_nc500: [3][]const Point = .{
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            0.328, 0.328, 0.342, 0.372, 0.410, 0.451, 0.529, 0.600, 0.696, 0.786,
+            0.870, 0.950, 1.021, 1.097, 1.152, 1.206, 1.254, 1.306, 1.350, 1.396,
+            1.435, 1.481, 1.517, 1.552, 1.571, 1.582, 1.601, 1.620, 1.628,
+        }),
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            0.571, 0.571, 0.582, 0.612, 0.661, 0.732, 0.829, 0.916, 1.009, 1.099,
+            1.187, 1.255, 1.320, 1.391, 1.451, 1.501, 1.560, 1.614, 1.661, 1.696,
+            1.735, 1.775, 1.811, 1.835, 1.841, 1.860, 1.882, 1.890, 1.898,
+        }),
+        sampled(&.{
+            -3.600, -3.450, -3.300, -3.150, -3.000, -2.850, -2.700, -2.550, -2.400, -2.250,
+            -2.100, -1.950, -1.800, -1.650, -1.500, -1.350, -1.200, -1.050, -0.900, -0.750,
+            -0.600, -0.450, -0.300, -0.150, 0.000,  0.150,  0.300,  0.450,  0.600,
+        }, &.{
+            0.990, 1.001, 1.031, 1.081, 1.171, 1.261, 1.379, 1.469, 1.570, 1.655,
+            1.732, 1.800, 1.865, 1.920, 1.966, 2.002, 2.039, 2.091, 2.121, 2.141,
+            2.171, 2.201, 2.214, 2.220, 2.231, 2.241, 2.250, 2.260, 2.250,
+        }),
+    };
 };
 
 /// Zips a log exposure grid and the densities on it into curve points, at compile time.
@@ -1856,6 +2017,14 @@ const curve_points_max = 41;
 comptime {
     @setEvalBranchQuota(1_000_000);
     for (stocks, 0..) |stock, i| check(stock, stocks[i + 1 ..]);
+    for (aliases, 0..) |alias, i| {
+        if (alias.source.len == 0) @compileError(alias.name ++ " has no source");
+        for (stocks) |stock| if (std.mem.eql(u8, stock.name, alias.name)) @compileError(alias.name ++ " is a stock and another's name too");
+        for (aliases[i + 1 ..]) |other| if (std.mem.eql(u8, other.name, alias.name)) @compileError(alias.name ++ " is in the list twice");
+        for (stocks) |stock| {
+            if (std.mem.eql(u8, stock.name, alias.of)) break;
+        } else @compileError(alias.name ++ " names " ++ alias.of ++ ", which isn't a stock");
+    }
 }
 
 /// Stops the build if `stock` breaks a rule. `later` are the stocks after it in the list.
@@ -1914,4 +2083,10 @@ test "a film's material and infrared fit come from its kind, unless the stock sa
     for (stocks) |stock| if (stock.kind.isMonochrome() and stock.material == null) {
         try std.testing.expectEqual(infrared.Fit.unsuitable, stock.infraredFit());
     };
+}
+
+test "a stock is found by another name it's sold under" {
+    try std.testing.expectEqual(named("Kodak Portra 400").?, named("Kodak Ektacolor Pro 400").?);
+    try std.testing.expectEqual(named("Kodak Portra 400").?, named("kodak portra 400").?);
+    try std.testing.expectEqual(@as(?*const Stock, null), named("Not a stock"));
 }

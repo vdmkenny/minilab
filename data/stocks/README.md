@@ -69,6 +69,8 @@ for:
 
 - Fujifilm 400: the blue curve is still rising at 0.12 per log H where it starts.
 - Fujifilm Superia 200: the green curve is still rising at 0.105 per log H where it starts.
+- ORWO Wolfen NC400: the blue and green curves are still rising at 0.166 and 0.101 per log H
+  where they start.
 - Ektachrome E100: D-min is still falling at the right-hand end.
 - Kodachrome 64: neither end is flat.
 - All three Fomapan negatives and Fomapan R.
@@ -122,8 +124,8 @@ index of 0.56 for Tri-X's starting-point development, while the slope we get fro
 - We sample them every 0.1 log H, at multiples of 0.1, across the drawn range.
 - If that would give more than 41 points (the most the tests in `stocks.zig` allow), the step goes
   up to 0.15 log H (half a stop), at multiples of 0.15. That's the case for Vision3, Verita, HP5
-  Plus, Pan F Plus, XP2 Super, Delta 3200, SFX 200, Pro 400H, Provia 100F and Velvia 100, whose
-  curves span more than 4.0 log H.
+  Plus, Pan F Plus, XP2 Super, Delta 3200, SFX 200, Pro 400H, Provia 100F, Velvia 100 and ORWO
+  Wolfen NC400, whose curves span more than 4.0 log H.
 - Curves traced from images are only smoothed at the grid points: each stored value comes from a
   least-squares line through the traced samples within ±0.025 log H of that point.
 
@@ -161,6 +163,8 @@ Tick residuals are below 0.001, except for these:
 - Ilford 2010 editions (HP5 Plus, FP4 Plus, Pan F Plus, XP2 Super, Delta 3200): the gridlines every
   0.5 are uneven by up to 0.011 D and 0.013 log H.
 - Fujifilm Pro 400H: up to 0.013 log H and 0.006 D. Velvia 100: up to 0.008 log H and 0.008 D.
+- ORWO Wolfen NC400 and NC500: the gridlines are placed to about a tenth of a point, so up to
+  0.0012 log H and 0.0016 D.
 
 We drew every reading back onto a render of its page (`tools/overlay.py`), and the points sit on
 the printed lines. For Superia X-TRA 400, the Japanese and English sheets give the same curves to
@@ -236,7 +240,7 @@ readings with them.
   itself labels G-bar 0.62 gives 0.584. Ilford doesn't define G-bar in these sheets, so this is a
   rough check of the scale, not of the third decimal.
 - **Speed placement.** On the charts in lux-seconds, the ISO 5800 speed point (0.15 above minimum
-  density, S = √2 / H_M) comes out 1.2 to 1.3 stops faster than box speed for Pro Image 100, C200
+  density, S = √2 / H_M) comes out 1.15 to 1.35 stops faster than box speed for Pro Image 100, C200
   and Superia 200, and 0.95 stop slower for Pro 400H. This ignores ISO 5800's contrast
   conditions, so it tells you where the charts put the curves, not what the film's speed is. The
   Pro 400H chart sits about two stops to the right of the other three. We checked its axis labels
@@ -259,7 +263,8 @@ numbers we read from them are our own measurements of published data.
 | Gold 200 | Kodak E-7022, June 2023 | vector | https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/E7022%20Gold%20tech%20sheet.pdf |
 | UltraMax 400 | Kodak E-7023, February 2016 | vector | https://www.kodakprofessional.com/sites/default/files/wysiwyg/KodakUltraMax400TechSheet-1.pdf |
 | Pro Image 100 | Kodak E-4L, July 1997 | vector | https://web.archive.org/web/20160508203549id_/http://www.kodak.com:80/global/en/professional/support/techPubs/e4L/e4L.pdf |
-| Vision3 50D 5203 | Kodak H-1-5203, July 2015 | vector | https://www.kodak.com/content/products-brochures/Film/VISION3-50D-Color-Negative-Film-7203-TECHNICAL-DATA.pdf |
+| Aerocolor IV 2460 | Kodak AS-2652, October 2009 | vector | https://web.archive.org/web/20260107194118id_/https://www.kodak.com/content/pdfs/KODAK-AEROCOLOR-IV-Negative-Film-2460-datasheet-en.pdf (the live URL now returns 404; the Aerocolor III URL served the same file) |
+| Vision3 50D 5203, CineStill 50D | Kodak H-1-5203, July 2015 | vector | https://www.kodak.com/content/products-brochures/Film/VISION3-50D-Color-Negative-Film-7203-TECHNICAL-DATA.pdf |
 | Vision3 250D 5207 | Kodak H-1-5207, July 2015 | vector | https://web.archive.org/web/20200326032933id_/https://www.kodak.com/uploadedFiles/Motion/Products/Camera_Films/5207/Resources/5207_ti2650.pdf |
 | Vision3 200T 5213 | Kodak H-1-5213, July 2015 | vector | https://www.kodak.com/content/products-brochures/Film/VISION3-200T-Color-Negative-Film-7213-TECHNICAL-DATA.pdf |
 | Vision3 500T 5219, CineStill 800T | Kodak H-1-5219, July 2015 | vector | https://www.kodak.com/content/products-brochures/Film/VISION3-500T-Color-Negative-Film-7219-TECHNICAL-DATA.pdf |
@@ -292,7 +297,9 @@ numbers we read from them are our own measurements of published data.
 | Delta 100 Professional | Ilford datasheet, April 2023 | image | ilfordphoto.com; the download URL wasn't recorded |
 | SFX 200 | Ilford datasheet, November 2018 | image | ilfordphoto.com; the download URL wasn't recorded |
 | Ortho Plus | Harman datasheet, October 2019 | image | https://ilfordphoto.com/amfile/file/download/file/1948/product/698 |
-| Phoenix 200 | HARMAN datasheet, September 2024 | image | ilfordphoto.com; the download URL wasn't recorded |
+| Phoenix 200 | HARMAN datasheet, September 2024 | image | https://web.archive.org/web/20260902152549id_/https://harmanphoto.co.uk/amfile/file/download/file/1963/product/2143/ |
+| ORWO Wolfen NC400 | InovisCoat data sheet, undated (the PDF was made in November 2022) | vector | https://cdn.shopify.com/s/files/1/0549/7205/5650/files/Data_sheet_Wolfen_NC400.pdf |
+| ORWO Wolfen NC500 | InovisCoat Datenblatt (German), undated (the PDF was made in October 2022) | vector | https://filmotec.de/wp-content/uploads/2023/04/Datenblatt-Wolfen-NC500.pdf |
 | Fomapan 100 Classic | Foma datasheet, 05/22 | vector | https://www.foma.cz/en/fomapan-100 |
 | Fomapan 200 Creative | Foma datasheet, 05/22 | vector | https://www.foma.cz/en/fomapan-200 |
 | Fomapan 400 Action | Foma datasheet, 04/23 | vector | https://www.foma.cz/en/fomapan-400 |
@@ -337,6 +344,23 @@ each entry uses, and why.
   shares its curves. It's only an approximation: CineStill film goes through C-41, not ECN-2, which
   changes the contrast and base density, and CineStill says its current films combine specs from
   several films.
+- **CineStill 50D**: CineStill doesn't publish curves either. Its 50D product page (archived 26
+  February 2018,
+  https://web.archive.org/web/20180226220131id_/https://cinestillfilm.com/products/50daylight-36exp-135-fine-grain-color-film-35mm-roll)
+  says "Original fresh stock from Kodak 50D, prepped and rolled for clean safe C-41 standard
+  development as an ISO 50 film." It says Kodak 50D, not Vision3 50D or 5203, but Kodak's only 50D
+  camera film is Vision3 50D 5203/7203, so the entry uses the 5203 reading and shares its curves,
+  the way 800T uses 5219. The same caveat applies: C-41 instead of ECN-2.
+- **Kodak Aerocolor IV 2460**: AS-2652 prints three charts: "Developed for Low Contrast" (C-41,
+  3'15"), "Medium Contrast" (C-41, 4'15") and "Maximum Contrast" (C-41, 5'15"). We use the low
+  contrast one, since 3'15" is the standard C-41 developer time, and that's how the film is
+  developed when it's sold respooled under other names (SantaColor 100, Reflx Lab Pro 100 and
+  others). Kodak's development table gives this development an "approx. contrast" of 0.63, while
+  the straight-line slopes we get from the curve are 0.47 to 0.57; Kodak doesn't say how it
+  measured its figure. The table's speed for it is ISO A equivalent 80, an aerial film speed that
+  Kodak says isn't a conventional film speed, so the entry uses ISO 100, the speed the respooled
+  film is sold at. This film has no orange mask, so its base density is low (0.13 to 0.27).
+- **ORWO Wolfen NC400**: the sheet prints one chart, for C-41.
 - **Fomapan 100, 200 and 400**: see the Fomapan section below.
 
 ## Stocks with only the maker's contrast figure
@@ -412,7 +436,6 @@ for a characteristic curve. Here's what turned up for the ones still without a p
 | Kentmere Pan 100, Pan 400 | Nothing usable. No edition prints a characteristic curve, a contrast-time graph or a contrast figure: January 2009 (kentmere.co.uk, archived), January 2019 and the current sheets only have reciprocity, temperature and time tables. Tried: https://web.archive.org/web/20121116050051id_/http://www.kentmere.co.uk/Webfiles/20091291713401332.pdf, https://web.archive.org/web/20121120120022id_/http://www.kentmere.co.uk/Webfiles/20091291714152280.pdf, https://web.archive.org/web/20220709053530id_/https://www.ilfordphoto.com/amfile/file/download/file/1921/product/696/, https://web.archive.org/web/20201112030440id_/https://www.ilfordphoto.com/amfile/file/download/file/1922/product/697/; kentmerephoto.com and kentmere.com didn't connect and have no archived captures. |
 | Kodak ColorPlus 200 | Nothing found from Kodak or Kodak Alaris. None of the archived PDF folders on Kodak Alaris's domains has a ColorPlus sheet, the current "everyday film" pages only list Gold 200 and UltraMax 400, the Kodak Alaris site search finds nothing for "colorplus" or "kodacolor", and the imaging.kodakalaris.com product page returns 404. |
 | CineStill 400D | Nothing. CineStill doesn't name a base stock for 400D and hosts no datasheet for it; its only 400D PDF is a 4x5 handling sheet with no data (https://cdn.shopify.com/s/files/1/0339/5113/files/CineStill_400D_4x5_Handling_Tips.pdf). https://cinestillfilm.com/pages/datasheets returns 404. |
-| CineStill 50D | Left out. CineStill's 50D product page (archived 26 February 2018, https://web.archive.org/web/20180226220131id_/https://cinestillfilm.com/products/50daylight-36exp-135-fine-grain-color-film-35mm-roll) says "Original fresh stock from Kodak 50D, prepped and rolled for clean safe C-41 standard development as an ISO 50 film." It says Kodak 50D but not Vision3 50D or 5203, and the current page only says "Based on the original motion picture emulsion". Kodak's only 50D camera film is Vision3 50D 5203/7203, so if you accept that reading of CineStill's wording, the entry could use the Vision3 50D reading, the way 800T uses 5219. |
 | Lomography Color Negative 100, 400, 800 | Nothing usable. Lomography's film guides (https://cdn.downloads.lomography.com/downloads/color-negative-100-film-guide.pdf, and the same with -400- and -800-) only give ISO and C-41 and show sample photos. We didn't find a datasheet: lomography.com and shop.lomography.com returned 403, guessed datasheet names on cdn.downloads.lomography.com returned 404, and the web.archive.org index searches were offline. |
 
 ## Stocks left out
@@ -421,15 +444,16 @@ for a characteristic curve. Here's what turned up for the ones still without a p
 |---|---|
 | Kentmere Pan 100, Pan 400 | No figures and no curves (see above). |
 | Kodak ColorPlus 200 | No Kodak datasheet found. |
-| CineStill 50D, 400D | See above. |
+| CineStill 400D | See above. |
 | Lomography Color Negative 100/400/800, Lomochrome Purple, Lady Grey, Berlin Kino, Earl Grey | No datasheet found. |
 | Fujifilm Neopan 400 Presto | Discontinued. Its Japanese sheet has stated G-bar values and a vector curve, so it could be added. |
 | Harman Phoenix 125 | Not added yet. Its sheet has a raster curve and no figures; it could be read like Phoenix 200. |
 | CineStill BwXX | CineStill calls it "Double-X" but gives no data. Kodak Double-X is included. |
-| ADOX Silvermax, HR-50 / Scala 50 | The contrast column (0,65) has no heading, so it isn't clear what it measures. |
+| ADOX Silvermax, Scala 50 | The contrast column (0,65) has no heading, so it isn't clear what it measures. |
+| ADOX HR-50 | Same unheaded 0,65 column (datasheet of 20 November 2018, https://www.macodirect.de/media/pdf/c2/97/cf/ASC5011_Datenblatt_e.pdf). Its "Characteristic Curve ADOX HR-50 in ADOX FX-39" has no development time and no numbers on the log E axis, so no slope can be read from it, and its density labels (0, 0.1, 0.2, 0.3, 0.5, then every 0.2) are unevenly spaced. The 6 September 2018 sheet on adox.de (https://web.archive.org/web/20251015072916id_/https://www.adox.de/Technical_Informations/TA_HR-50_EN.pdf) prints the same chart. |
 | ADOX CMS 20 II, Color Mission | No contrast figure, or no datasheet. |
 | Agfa APX 100, 400 | The sheets the distributor hosts don't state any numbers. |
-| Foma Retropan 320 | No γ, and the curve's axis labels don't agree with each other. |
+| Foma Retropan 320 soft | No γ, and the curve's axis labels don't agree with each other. The datasheet (FOMA 09/19, https://www.foma.cz/en/retropan320) draws Retro Special Developer curves at 3, 5 and 8 min, a vector drawing. On the log exposure axis the -3 label sits at the frame's left edge, 66.3 pt from the -2 gridline, but -2 to -1 is 55.2 pt, so the slope you read depends on which labels you trust (20 % apart). The density gridlines are 2 % uneven too. Neither the sheet nor Foma's products catalogue (2020) states a γ for this film. |
 
 ## Redoing the readings
 
@@ -463,6 +487,6 @@ Run them with `python -I`, since the PDFs are third-party files.
 minilab is MPL-2.0. The makers' datasheets are their copyright, and they aren't stored in this
 repository. The numbers in `stocks.zig` are our own readings of the charts and figures the makers
 publish, made with the scripts in `tools/`. Those scripts are part of minilab and MPL-2.0 like the
-rest of it. Kodak, Eastman, Vision3, Kodachrome, Ektachrome, Fujifilm, Fujicolor, Fujichrome,
-Ilford, Harman, Kentmere, Foma, Fomapan, Rollei, ADOX, CineStill, Lomography and the product names
-are trademarks of their owners.
+rest of it. Kodak, Eastman, Vision3, Kodachrome, Ektachrome, Aerocolor, Fujifilm, Fujicolor,
+Fujichrome, Ilford, Harman, Kentmere, Foma, Fomapan, Retropan, Rollei, ADOX, CineStill, ORWO,
+Wolfen, InovisCoat, Lomography and the product names are trademarks of their owners.
