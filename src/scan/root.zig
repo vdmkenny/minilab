@@ -449,6 +449,8 @@ pub const RawValue = union(enum) {
 /// An option and what raw setup sets it to. The scanner settings keep the user's changes in
 /// the same form.
 pub const RawSetting = struct {
+    pub const json_identity = .{"name"};
+
     name: []const u8,
     value: RawValue,
 };

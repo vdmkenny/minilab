@@ -17,6 +17,9 @@ pub const unreadable_suffix = json_file.unreadable_suffix;
 const max_bytes = json_file.max_bytes;
 
 pub const Scanner = struct {
+    /// A scanner is its name and driver (`json_file.write` matches entries by them).
+    pub const json_identity = .{ "name", "driver" };
+
     /// The scanner's vendor and model, as rolls record it.
     name: []const u8,
     /// The driver: a SANE backend such as "epson2".

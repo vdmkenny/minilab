@@ -31,6 +31,9 @@ pub const min_frames = 4;
 
 /// What one roll measured.
 pub const Measurement = struct {
+    /// A roll is measured once per scanner (`json_file.write` matches entries by it).
+    pub const json_identity = .{"roll"};
+
     roll: []const u8,
     stock: []const u8,
     frames: u32,
@@ -39,6 +42,8 @@ pub const Measurement = struct {
 };
 
 pub const Scanner = struct {
+    pub const json_identity = .{"name"};
+
     name: []const u8,
     rolls: []const Measurement,
 };
