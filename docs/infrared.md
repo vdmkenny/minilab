@@ -32,11 +32,23 @@ It doesn't suit every film:
     fourth sample, so a missing or "unspecified" one counts as infrared;
   - as a later page of the same size, flagged as a mask, as SilverFast's HDRi files have it.
 - **The cleaning** (`core/infrared.zig`), below.
+- **Develop.** A frame whose scan has a plane gets a choice under Remove dust: Find with Infrared
+  or Shape. It starts on Infrared, unless the roll's stock is silver black and white. Infrared has
+  two sliders, Threshold and Grow. The viewer and the loupe clean with the plane too, and the info
+  line says "+ IR". Frames without a plane look as they always did.
+- **Show what's removed.** The eye on Remove dust's heading tints everything dust removal
+  changes in amber, in the viewer and the loupe, with either finder.
+- **Warnings.** On silver black and white the choice is greyed out and says why; on Kodachrome it
+  warns that fine detail may soften; and a plane that turns out not to be a map of dust says so,
+  and the frame is left as it is.
 - **Export.** With dust removal on and its finder set to infrared, export cleans with the plane,
   cropped, turned and reduced the same way as the scan.
 
-Still to come: the controls in Develop, the loupe and the viewer, and scanners. Until then the
-finder can only be set in a frame's file (`"dust": {"remove": true, "finder": "infrared"}`).
+Still to come: separate IR files, and scanners.
+
+Which films suit infrared comes from the stock presets: each says what its picture is made of
+(`material`: dye, or silver for black and white unless it says otherwise, as XP2 does), and
+Kodachrome says it's poor for infrared (`presets/stocks.zig`).
 
 ## How it works
 

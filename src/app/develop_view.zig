@@ -283,6 +283,8 @@ pub const State = struct {
     ask_sync: bool = false,
     /// What Sync copies.
     sync: SyncGroups = .{},
+    /// Whether the viewer and the loupe show what dust removal takes out.
+    show_removed: bool = false,
     /// Whether the crop tool starts once the selected frame has loaded.
     crop_on_open: bool = false,
     /// Whether the settings had a scrollbar last time, so the histogram above them can match their
@@ -630,6 +632,11 @@ pub const State = struct {
             const scan_path = try rl.scanPath(gpa, index);
             defer gpa.free(scan_path);
             var frame: Frame = try .load(gpa, io, scan_path, gui.say(i18n.t.develop.frame_name, .{index + 1}), saved.crop, saved.quarter_turns, saved.mirrored);
+            errdefer frame.close(gpa);
+            if (try rl.infraredPath(gpa, index)) |plane_path| {
+                defer gpa.free(plane_path);
+                try frame.loadInfrared(gpa, io, plane_path);
+            }
             if (saved.width == 0) {
                 // Rolls made before we recorded the scan size: the thumbnails need it for crops.
                 rl.frames.items[index].width = frame.scan_width;
@@ -656,6 +663,8 @@ pub const State = struct {
                 frame.stock_slopes = library.stockSlopes(rl);
             } else {
                 frame.settings.slide_colour = saved.settings.slide_colour;
+                // Its dust finder was set when it came in, from whether its scan has a plane.
+                frame.settings.dust = saved.settings.dust;
                 prepareStock(library, rl, &frame, saved.settings.kind);
                 frame.measure(saved.settings.kind);
             }
@@ -676,6 +685,12 @@ pub const State = struct {
     /// Re-renders the frame if its settings changed, and puts what the viewer shows on the GPU.
     fn refresh(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, gpu: *c.SDL_GPUDevice) !void {
         const frame = if (state.frame) |*f| f else return;
+        // What dust removal takes out shows in amber while its button is on.
+        const tint: ?[4]u8 = if (state.show_removed and frame.settings.dust.remove) theme.rgba8(theme.colors.accent) else null;
+        if (!std.meta.eql(tint, frame.removed_tint)) {
+            frame.removed_tint = tint;
+            frame.stale = true;
+        }
         if (frame.stale) {
             try frame.render(gpa, io, &library.looks);
             state.renders +%= 1;
@@ -1252,7 +1267,7 @@ fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize
             items[n] = labels.sizeAndRatio(library.rolls.items[r].info.format);
             n += 1;
         }
-        items[n] = gui.say(i18n.t.develop.info_scan, .{ frame.scan_width, frame.scan_height });
+        items[n] = gui.say(if (frame.hasInfrared()) i18n.t.develop.info_scan_infrared else i18n.t.develop.info_scan, .{ frame.scan_width, frame.scan_height });
         n += 1;
         if (frame.crop) |area| {
             const turned = if (frame.quarter_turns == 0) "" else gui.say(i18n.t.develop.info_turned, .{degrees(frame.quarter_turns)});
@@ -1718,39 +1733,101 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     }
     gui.endSection(true);
 
-    drawDust(state);
+    const stock = if (roll_index) |r| library.rolls.items[r].info.stock else null;
+    drawDust(state, labels.infraredFit(stock));
 }
 
-/// Draws the dust section: its heading is the check box that turns dust removal on, then how far
-/// above the grain a speck stands, and the limits that keep the picture's own small highlights.
-fn drawDust(state: *State) void {
-    const d = &state.frame.?.settings.dust;
-    const Dust = minilab.dust.Settings;
+/// Draws the dust section: its heading is the check box that turns dust removal on, with the
+/// button that shows what it removes. A frame whose scan has an infrared plane can find the dust
+/// with it, unless the film is one infrared fails on (`fit`); then come the finder's sliders.
+fn drawDust(state: *State, fit: ?minilab.infrared.Fit) void {
+    const frame = &state.frame.?;
+    const d = &frame.settings.dust;
     gui.beginSection("dust");
+    const heading_y = c.ImGui_GetCursorPosY();
     fonts.pushSized(.semibold, fonts.small_size);
     const toggled = gui.checkbox(i18n.t.develop.remove_dust_heading, &d.remove);
     fonts.pop();
     if (toggled) state.changed();
+    // The button that shows what's removed sits on the heading's line, at the right.
+    const side = c.ImGui_GetFrameHeight();
+    const below = c.ImGui_GetCursorPosY();
+    c.ImGui_SetCursorPos(gui.vec2(c.ImGui_GetCursorPosX() + c.ImGui_GetContentRegionAvail().x - side, heading_y + (below - heading_y - c.ImGui_GetStyle().*.ItemSpacing.y - side) / 2));
+    c.ImGui_BeginDisabled(!d.remove);
+    if (gui.iconButton(i18n.t.develop.show_removed, if (state.show_removed) .selected else .outline, .eye)) state.show_removed = !state.show_removed;
+    c.ImGui_EndDisabled();
+    gui.tooltip(i18n.t.develop.show_removed);
+    c.ImGui_SetCursorPosY(below);
+
+    const unsuitable = fit == .unsuitable;
+    // A film infrared fails on finds its dust by its shape.
+    if (frame.hasInfrared() and unsuitable and d.finder == .infrared) {
+        d.finder = .shape;
+        state.changed();
+    }
+    const by_infrared = frame.hasInfrared() and d.finder == .infrared;
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
         defer c.ImGui_PopStyleVar();
         c.ImGui_BeginDisabled(!d.remove);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow(i18n.t.develop.threshold, &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{
-            .default = Dust.default_threshold,
-            .help = i18n.t.develop.threshold_help,
-        })) state.changed();
-        if (gui.sliderRow(i18n.t.develop.max_size, &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{
-            .default = Dust.default_max_size,
-            .help = i18n.t.develop.max_size_help,
-        })) state.changed();
-        if (gui.sliderRow(i18n.t.develop.max_density, &d.max_density, Dust.min_max_density, Dust.max_max_density, "{d:.2} D", .{
-            .default = Dust.default_max_density,
-            .help = i18n.t.develop.max_density_help,
-            .at_max = i18n.t.develop.any_density,
-        })) state.changed();
+        if (frame.hasInfrared()) {
+            gui.rowLabel(i18n.t.develop.find_with);
+            c.ImGui_BeginDisabled(unsuitable);
+            if (gui.segmentedOf(minilab.dust.Finder, "finder", &finders, d.finder, labels.dustFinder)) |picked| {
+                d.finder = picked;
+                state.changed();
+            }
+            c.ImGui_EndDisabled();
+            if (unsuitable) {
+                gui.warning(i18n.t.develop.silver_blocks_infrared);
+            } else if (by_infrared and fit == .poor) {
+                gui.warning(i18n.t.develop.infrared_softens_kodachrome);
+            } else if (by_infrared and frame.infraredNotUsable()) {
+                gui.warning(i18n.t.develop.infrared_not_usable);
+            }
+        }
+        if (by_infrared) drawInfraredSliders(state) else drawShapeSliders(state);
     }
     gui.endSection(false);
+}
+
+/// The finders, in the order the dust section offers them.
+const finders = [_]minilab.dust.Finder{ .infrared, .shape };
+
+/// The sliders for finding dust by its shape: how far above the grain a speck stands, and the
+/// limits that keep the picture's own small highlights.
+fn drawShapeSliders(state: *State) void {
+    const d = &state.frame.?.settings.dust;
+    const Dust = minilab.dust.Settings;
+    if (gui.sliderRow(i18n.t.develop.threshold, &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{
+        .default = Dust.default_threshold,
+        .help = i18n.t.develop.threshold_help,
+    })) state.changed();
+    if (gui.sliderRow(i18n.t.develop.max_size, &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{
+        .default = Dust.default_max_size,
+        .help = i18n.t.develop.max_size_help,
+    })) state.changed();
+    if (gui.sliderRow(i18n.t.develop.max_density, &d.max_density, Dust.min_max_density, Dust.max_max_density, "{d:.2} D", .{
+        .default = Dust.default_max_density,
+        .help = i18n.t.develop.max_density_help,
+        .at_max = i18n.t.develop.any_density,
+    })) state.changed();
+}
+
+/// The sliders for finding dust with infrared: how much infrared a defect blocks, and how far
+/// round it the fill reaches.
+fn drawInfraredSliders(state: *State) void {
+    const ir = &state.frame.?.settings.dust.infrared;
+    const Infrared = minilab.infrared.Settings;
+    if (gui.sliderRow(i18n.t.develop.threshold, &ir.threshold, Infrared.min_threshold, Infrared.max_threshold, "{d:.2} D", .{
+        .default = Infrared.default_threshold,
+        .help = i18n.t.develop.infrared_threshold_help,
+    })) state.changed();
+    if (gui.sliderRow(i18n.t.develop.grow, &ir.grow, Infrared.min_grow, Infrared.max_grow, "{d:.2}%", .{
+        .default = Infrared.default_grow,
+        .help = i18n.t.develop.grow_help,
+    })) state.changed();
 }
 
 /// Draws the Preset section: the film type, stock, look, tone and white balance.

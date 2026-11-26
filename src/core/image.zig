@@ -168,19 +168,20 @@ pub fn reductionFactor(width: usize, height: usize, longest: usize) usize {
     return @max(1, (@max(width, height) + longest - 1) / longest);
 }
 
-/// Reduces `scan` by a whole-number factor so that its longer side is at most `longest`. Each
-/// pixel is the mean of the block it covers. A side shorter than the factor, on a very long thin
-/// scan, still gets one pixel, the mean of what's there.
-pub fn downscale(gpa: std.mem.Allocator, scan: Scan, longest: usize) !Scan {
+/// Reduces `scan`, a scan or a plane, by a whole-number factor so that its longer side is at most
+/// `longest`. Each pixel is the mean of the block it covers. A side shorter than the factor, on a
+/// very long thin scan, still gets one pixel, the mean of what's there.
+pub fn downscale(gpa: std.mem.Allocator, scan: anytype, longest: usize) !@TypeOf(scan) {
+    const Pixel = @typeInfo(@TypeOf(scan.pixels)).pointer.child;
     const factor = reductionFactor(scan.width, scan.height, longest);
-    var result: Scan = try .init(gpa, @max(1, scan.width / factor), @max(1, scan.height / factor));
+    var result: @TypeOf(scan) = try .init(gpa, @max(1, scan.width / factor), @max(1, scan.height / factor));
     for (0..result.height) |y| {
         const top = y * factor;
         const bottom = @min(top + factor, scan.height);
         for (result.row(y), 0..) |*p, x| {
             const left = x * factor;
             const right = @min(left + factor, scan.width);
-            var sum: [channel_count]u64 = @splat(0);
+            var sum: [@typeInfo(Pixel).array.len]u64 = @splat(0);
             for (top..bottom) |row| {
                 for (scan.row(row)[left..right]) |s| {
                     for (&sum, s) |*total, v| total.* += v;

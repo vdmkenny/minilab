@@ -15,6 +15,12 @@ pub const Messages = struct {
         @"export": [:0]const u8 = "Export",
         looks: [:0]const u8 = "Looks",
     } = .{},
+    // How dust is found: by its shape on the scan, or with the scan's infrared plane. They sit
+    // side by side in a small box, so keep them short.
+    dust_finder: struct {
+        shape: [:0]const u8 = "Shape",
+        infrared: [:0]const u8 = "Infrared",
+    } = .{},
     // A roll's details, as the boxes for them are labelled. They sit in a column 96 pixels wide.
     detail: struct {
         camera: [:0]const u8 = "Camera",

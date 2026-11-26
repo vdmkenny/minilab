@@ -217,23 +217,29 @@ pub const Settings = struct {
     /// resolution. `plane` is the scan's infrared plane, lined up and the same size, if it has one.
     ///
     /// With the infrared finder and a plane, the plane finds the dust (`infrared.cleaned`). A
-    /// plane that isn't usable leaves the scan as it is. Without a plane, as on a frame the
+    /// plane that isn't usable leaves the scan as it is, and says so. Without a plane, as on a frame the
     /// settings were copied to, the dust is found by its shape (`dust.cleaned`). A raw scan of
     /// film shows dust denser than around it; a finished picture is already a positive, usually of
     /// a negative, so there it's lighter.
-    pub fn withoutDust(settings: *const Settings, gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Plane, frame_longest: usize) !?image.Scan {
-        if (!settings.dust.remove) return null;
+    pub fn withoutDust(settings: *const Settings, gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Plane, frame_longest: usize) !Dustless {
+        if (!settings.dust.remove) return .{};
         if (settings.dust.finder == .infrared) if (plane) |p| {
-            return infrared.cleaned(gpa, scan, p, settings.dust.infrared, frame_longest) catch |err| switch (err) {
-                error.InfraredNotUsable => {
-                    std.log.warn("the infrared plane isn't usable on this film, so dust is left as it is", .{});
-                    return null;
-                },
+            const cleaned = infrared.cleaned(gpa, scan, p, settings.dust.infrared, frame_longest) catch |err| switch (err) {
+                error.InfraredNotUsable => return .{ .infrared_not_usable = true },
                 else => |e| return e,
             };
+            return .{ .scan = cleaned };
         };
-        return dust.cleaned(gpa, scan, settings.dust, if (settings.finished) .light else .dense, frame_longest);
+        return .{ .scan = try dust.cleaned(gpa, scan, settings.dust, if (settings.finished) .light else .dense, frame_longest) };
     }
+
+    /// What `withoutDust` did.
+    pub const Dustless = struct {
+        /// The scan without its dust, a copy the caller frees, or null when it's left as it is.
+        scan: ?image.Scan = null,
+        /// Whether infrared was asked for and its plane isn't a map of dust on this film.
+        infrared_not_usable: bool = false,
+    };
 
     /// Returns the curves, in the form `automatic` takes them.
     pub fn curves(settings: *const Settings) ?*const stock_curves.Curves {

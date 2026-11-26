@@ -289,11 +289,8 @@ fn drawLanguage(values: *preferences.Preferences, system: ?Language) void {
         values.language = if (picked == 0) null else languages[picked - 1];
     }
     const wanted = values.language orelse system orelse .en;
-    if (language(values.*, system) != wanted) drawWarning(i18n.t.settings.no_japanese_font);
+    if (language(values.*, system) != wanted) gui.warning(i18n.t.settings.no_japanese_font);
 }
-
-/// The gap after the warning's icon, in the design's pixels.
-const warning_gap = 6;
 
 fn drawAppearance(values: *preferences.Preferences) void {
     gui.rowLabel(i18n.t.settings.interface);
@@ -303,7 +300,7 @@ fn drawAppearance(values: *preferences.Preferences) void {
         if (a[0] == values.appearance) break i;
     } else unreachable;
     if (gui.iconSegmented("appearance", &choices, chosen)) |picked| values.appearance = appearances[picked][0];
-    if (values.appearance != .dark) drawWarning(i18n.t.settings.light_warning);
+    if (values.appearance != .dark) gui.warning(i18n.t.settings.light_warning);
 
     gui.rowLabel(i18n.t.settings.viewer);
     _ = gui.checkboxWith(i18n.t.settings.always_dark, &values.always_dark_viewer, .{ .label_color = theme.colors.text });
@@ -343,16 +340,6 @@ fn drawAbout() void {
     c.ImGui_Dummy(gui.vec2(0, gui.px(about_gap) - c.ImGui_GetStyle().*.ItemSpacing.y));
     gui.heading(i18n.t.settings.ai_disclosure);
     for ([_][]const u8{ i18n.t.settings.ai_written, i18n.t.settings.ai_not_inside }) |line| gui.textColored(theme.colors.text_tertiary, line);
-}
-
-/// A warning under a row's control, lined up with it.
-fn drawWarning(message: [:0]const u8) void {
-    c.ImGui_SetCursorPosX(c.ImGui_GetCursorPosX() + gui.px(gui.label_column + gui.label_gap));
-    const at = c.ImGui_GetCursorScreenPos();
-    const icon = gui.px(gui.icon_size);
-    gui.drawIcon(.triangle_alert, gui.vec2(at.x + icon / 2, at.y + c.ImGui_GetTextLineHeight() / 2), theme.colors.accent);
-    c.ImGui_SetCursorScreenPos(gui.vec2(at.x + icon + gui.px(warning_gap), at.y));
-    gui.textColored(theme.colors.accent, message);
 }
 
 test "the language is the one picked, or the system's, or English" {

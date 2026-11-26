@@ -146,7 +146,9 @@ pub fn developPicture(gpa: std.mem.Allocator, scan: image.Scan, plane: ?image.Pl
         // The infrared plane is only needed for dust removal, and goes through the same steps.
         var framed_plane: ?Framed([1]u16) = if (plane != null and frame.settings.dust.remove) try .of(gpa, plane.?, frame, options.long_edge) else null;
         defer if (framed_plane) |*p| p.deinit(gpa);
-        cleaned = try frame.settings.withoutDust(gpa, current, if (framed_plane) |p| p.image else null, @max(current.width, current.height));
+        const dustless = try frame.settings.withoutDust(gpa, current, if (framed_plane) |p| p.image else null, @max(current.width, current.height));
+        if (dustless.infrared_not_usable) std.log.warn("frame {s}'s infrared plane isn't usable on this film, so its dust is left as it is", .{frame.scan orelse "?"});
+        cleaned = dustless.scan;
         if (cleaned) |s| current = s;
         try check(cancel);
     }
