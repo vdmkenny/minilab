@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("c");
 const sdl = @import("sdl.zig");
+const display_colour = @import("display_colour.zig");
 
 pub const Error = sdl.Error;
 const fail = sdl.fail;
@@ -33,14 +34,15 @@ pub const Texture = struct {
         return texture;
     }
 
-    /// Replaces the texture's pixels with `pixels`, of the same size.
+    /// Replaces the texture's pixels with `pixels`, of the same size, in sRGB. They go up in the
+    /// display's colours (`display_colour`).
     pub fn replace(texture: *Texture, gpu: *c.SDL_GPUDevice, pixels: []const Pixel) Error!void {
         std.debug.assert(pixels.len == @as(usize, texture.width) * texture.height);
         const size: u32 = @intCast(pixels.len * pixel_bytes);
         const transfer = c.SDL_CreateGPUTransferBuffer(gpu, &.{ .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, .size = size }) orelse return fail("SDL_CreateGPUTransferBuffer");
         defer c.SDL_ReleaseGPUTransferBuffer(gpu, transfer);
         const mapped = c.SDL_MapGPUTransferBuffer(gpu, transfer, false) orelse return fail("SDL_MapGPUTransferBuffer");
-        @memcpy(@as([*]u8, @ptrCast(mapped))[0..size], std.mem.sliceAsBytes(pixels));
+        display_colour.convert(pixels, @as([*]Pixel, @ptrCast(@alignCast(mapped)))[0..pixels.len]);
         c.SDL_UnmapGPUTransferBuffer(gpu, transfer);
 
         const commands = c.SDL_AcquireGPUCommandBuffer(gpu) orelse return fail("SDL_AcquireGPUCommandBuffer");

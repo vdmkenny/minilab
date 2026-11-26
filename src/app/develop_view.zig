@@ -11,6 +11,7 @@ const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
 const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
+const display_colour = @import("../platform/display_colour.zig");
 const Frame = @import("frame.zig").Frame;
 const Library = @import("library.zig").Library;
 const shortcuts = @import("shortcuts.zig");
@@ -285,6 +286,8 @@ pub const State = struct {
     sync: SyncGroups = .{},
     /// Whether the viewer and the loupe show what dust removal takes out.
     show_removed: bool = false,
+    /// When the display's colours change, the viewer and the loupe are drawn again in them.
+    display: display_colour.Watch = .{},
     /// Whether the crop tool starts once the selected frame has loaded.
     crop_on_open: bool = false,
     /// Whether the settings had a scrollbar last time, so the histogram above them can match their
@@ -691,6 +694,7 @@ pub const State = struct {
             frame.removed_tint = tint;
             frame.stale = true;
         }
+        if (state.display.changed()) frame.stale = true;
         if (frame.stale) {
             try frame.render(gpa, io, &library.looks);
             state.renders +%= 1;
