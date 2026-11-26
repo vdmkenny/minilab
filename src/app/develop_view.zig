@@ -12,6 +12,7 @@ const labels = @import("labels.zig");
 const Icon = @import("../ui/icons.zig").Icon;
 const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
+const Colours = @import("../platform/texture.zig").Colours;
 const display_colour = @import("../platform/display_colour.zig");
 const Frame = @import("frame.zig").Frame;
 const Library = @import("library.zig").Library;
@@ -715,17 +716,20 @@ pub const State = struct {
         const height: u32 = @intCast(frame.preview.height);
         if (state.shown_stale) {
             // The crop tool shows the whole scan, so the rendering changes size with it.
+            // Clipping is judged on the sRGB rendering, which the histogram counts too.
+            const converted = frame.displayed.items.len == frame.rendered.len;
+            const shows = if (converted) frame.displayed.items else frame.rendered;
             try state.shown.resize(gpa, frame.rendered.len);
-            for (state.shown.items, frame.rendered) |*out, p| {
-                out.* = p;
+            for (state.shown.items, frame.rendered, shows) |*out, p, s| {
+                out.* = s;
                 if (!state.clipping) continue;
                 if (@max(p[0], p[1], p[2]) == 255) out.* = theme.rgba8(theme.red) else if (@min(p[0], p[1], p[2]) == 0) out.* = theme.rgba8(theme.blue);
             }
-            try upload(&state.positive, gpu, width, height, state.shown.items);
+            try upload(&state.positive, gpu, width, height, state.shown.items, if (converted) .display else .srgb);
             state.shown_stale = false;
         }
         if (state.negative_stale) {
-            try upload(&state.negative, gpu, width, height, frame.negative);
+            try upload(&state.negative, gpu, width, height, frame.negative, .srgb);
             state.negative_stale = false;
         }
     }
@@ -1009,13 +1013,13 @@ fn fallbackCrop(w: usize, h: usize, format: minilab.formats.Format) minilab.imag
     return .{ .x = 0, .y = (h - height) / 2, .width = w, .height = height };
 }
 
-fn upload(texture: *?Texture, gpu: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const [4]u8) !void {
+fn upload(texture: *?Texture, gpu: *c.SDL_GPUDevice, width: u32, height: u32, pixels: []const [4]u8, colours: Colours) !void {
     if (texture.*) |*t| {
-        if (t.width == width and t.height == height) return t.replace(gpu, pixels);
+        if (t.width == width and t.height == height) return t.replace(gpu, pixels, colours);
         t.release(gpu);
         texture.* = null;
     }
-    texture.* = try .upload(gpu, width, height, pixels);
+    texture.* = try .upload(gpu, width, height, pixels, colours);
 }
 
 /// Draws the workspace. Without `sides`, it draws just the viewer.
@@ -1515,15 +1519,7 @@ fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
             return;
         };
         defer gpa.free(patch.pixels);
-        const width: u32 = @intCast(patch.width);
-        const height: u32 = @intCast(patch.height);
-        const same_size = if (state.loupe_texture) |t| t.width == width and t.height == height else false;
-        if (same_size) {
-            state.loupe_texture.?.replace(gpu, patch.pixels) catch return;
-        } else {
-            if (state.loupe_texture) |*t| t.release(gpu);
-            state.loupe_texture = Texture.upload(gpu, width, height, patch.pixels) catch null;
-        }
+        upload(&state.loupe_texture, gpu, @intCast(patch.width), @intCast(patch.height), patch.pixels, patch.colours) catch return;
         state.loupe_shows = key;
     }
     const texture = state.loupe_texture orelse return;

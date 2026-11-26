@@ -2619,7 +2619,7 @@ fn uploadPreview(state: *State, ctx: context.Context) void {
     const measured = film orelse preview.scan;
     const gain = minilab.light_table.gainForScan(measured);
     minilab.light_table.toScreen(preview.scan.pixels, gain, pixels);
-    preview.texture = Texture.upload(ctx.gpu, @intCast(preview.scan.width), @intCast(preview.scan.height), pixels) catch null;
+    preview.texture = Texture.upload(ctx.gpu, @intCast(preview.scan.width), @intCast(preview.scan.height), pixels, .srgb) catch null;
     preview.base_colour = if (minilab.light_table.baseOfScan(measured)) |base| colour: {
         var raw: [1][3]u16 = undefined;
         for (&raw[0], base) |*r, b| r.* = @intFromFloat(@round(b * image.full_scale));

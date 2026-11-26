@@ -165,6 +165,15 @@ pub const Profile = struct {
         if (c.cmsMLUsetASCII(description, "en", "US", space_definition.description) == 0) return error.ColourManagementFailed;
         if (c.cmsWriteTag(handle, c.cmsSigProfileDescriptionTag, description) == 0) return error.ColourManagementFailed;
         c.cmsSetProfileVersion(handle, icc_version);
+        // LittleCMS builds a v4 profile: D50 as the media white, and the real white in a chromatic
+        // adaptation tag. v2 left the media white open, and the v2 profiles in wide use (HP's
+        // and Apple's sRGB, Adobe's Adobe RGB) give the real white there, with no adaptation tag,
+        // so v2 readers take it that way. The colorants stay adapted to D50 with Bradford, as
+        // theirs are. (ICC White Paper 6; Adobe RGB (1998) spec, annex A.)
+        var white: c.cmsCIEXYZ = undefined;
+        c.cmsxyY2XYZ(&white, &space_definition.white);
+        if (c.cmsWriteTag(handle, c.cmsSigMediaWhitePointTag, &white) == 0) return error.ColourManagementFailed;
+        if (c.cmsWriteTag(handle, c.cmsSigChromaticAdaptationTag, null) == 0) return error.ColourManagementFailed;
         return .{ .handle = handle };
     }
 
@@ -262,30 +271,95 @@ pub fn Transform(comptime Sample: type) type {
 /// out, the alpha kept. Relative colorimetric with black point compensation, as screens are
 /// usually matched: colours inside the display's gamut stay as they are, and black is the
 /// display's black.
-pub const DisplayTransform = struct {
+/// From 8-bit RGB in the colours of a picture's own profile (an ICC file, like a JPEG's embedded
+/// one) to linear light in sRGB's primaries, 0 to `image.full_scale`. Colours outside sRGB clip.
+/// It's relative colorimetric, with black point compensation, as GIMP and darktable import by
+/// default, and isn't squeezed into a precomputed table, which would posterise the linear output
+/// (LittleCMS's tutorial, "linear spaces"). It keeps no cache, so threads can share it.
+pub const ImportTransform = struct {
     handle: *anyopaque,
 
-    /// Builds the transform to `display_profile`, an ICC file. A profile that isn't RGB, or that
-    /// LittleCMS can't read, gives `error.ColourManagementFailed`.
-    pub fn init(display_profile: []const u8) Error!DisplayTransform {
-        var source: Profile = try .init(.srgb);
-        defer source.deinit();
-        const display = c.cmsOpenProfileFromMem(display_profile.ptr, @intCast(display_profile.len)) orelse return error.ColourManagementFailed;
-        defer _ = c.cmsCloseProfile(display);
+    /// A profile that isn't RGB, or that LittleCMS can't read, gives
+    /// `error.ColourManagementFailed`.
+    pub fn init(profile: []const u8) Error!ImportTransform {
+        const source = c.cmsOpenProfileFromMem(profile.ptr, @intCast(profile.len)) orelse return error.ColourManagementFailed;
+        defer _ = c.cmsCloseProfile(source);
+        if (c.cmsGetColorSpace(source) != c.cmsSigRgbData) return error.ColourManagementFailed;
+        var linear: Profile = try .init(.srgb_linear);
+        defer linear.deinit();
         const handle = c.cmsCreateTransform(
-            source.handle,
-            c.TYPE_RGBA_8,
-            display,
-            c.TYPE_RGBA_8,
+            source,
+            c.TYPE_RGB_8,
+            linear.handle,
+            c.TYPE_RGB_16,
             @backingInt(Intent.relative_colorimetric),
-            c.cmsFLAGS_BLACKPOINTCOMPENSATION | c.cmsFLAGS_COPY_ALPHA,
+            c.cmsFLAGS_BLACKPOINTCOMPENSATION | c.cmsFLAGS_NOOPTIMIZE | c.cmsFLAGS_NOCACHE,
         ) orelse return error.ColourManagementFailed;
         return .{ .handle = handle };
     }
 
-    pub fn deinit(transform: *DisplayTransform) void {
+    pub fn deinit(transform: *ImportTransform) void {
         c.cmsDeleteTransform(transform.handle);
         transform.* = undefined;
+    }
+
+    /// Converts `input` into `output`, which should be the same length.
+    pub fn apply(transform: ImportTransform, input: []const [image.channel_count]u8, output: [][image.channel_count]u16) void {
+        std.debug.assert(input.len == output.len);
+        const total = @min(input.len, output.len);
+        var done: usize = 0;
+        while (done < total) {
+            const count = @min(total - done, max_pixels_per_call);
+            c.cmsDoTransform(transform.handle, input[done..].ptr, output[done..].ptr, @intCast(count));
+            done += count;
+        }
+    }
+};
+
+pub const DisplayTransform = struct {
+    /// From 8-bit sRGB RGBA, for pictures that only come that way.
+    handle: *anyopaque,
+    /// From linear sRGB in floats to 16-bit RGB, for rendered pictures (`applyLinear`): rounding
+    /// once rather than twice, as GIMP and darktable convert to the display from float.
+    linear: *anyopaque,
+
+    /// Builds the transforms to `display_profile`, an ICC file. A profile that isn't RGB, or that
+    /// LittleCMS can't read, gives `error.ColourManagementFailed`.
+    pub fn init(display_profile: []const u8) Error!DisplayTransform {
+        var source: Profile = try .init(.srgb);
+        defer source.deinit();
+        var linear_source: Profile = try .init(.srgb_linear);
+        defer linear_source.deinit();
+        const display = c.cmsOpenProfileFromMem(display_profile.ptr, @intCast(display_profile.len)) orelse return error.ColourManagementFailed;
+        defer _ = c.cmsCloseProfile(display);
+        const intent = @backingInt(Intent.relative_colorimetric);
+        const handle = c.cmsCreateTransform(source.handle, c.TYPE_RGBA_8, display, c.TYPE_RGBA_8, intent, c.cmsFLAGS_BLACKPOINTCOMPENSATION | c.cmsFLAGS_COPY_ALPHA) orelse
+            return error.ColourManagementFailed;
+        errdefer c.cmsDeleteTransform(handle);
+        // A float transform isn't squeezed into a precomputed table, which would posterise linear
+        // input (LittleCMS's tutorial, "linear spaces").
+        const linear = c.cmsCreateTransform(linear_source.handle, c.TYPE_RGB_FLT, display, c.TYPE_RGB_16, intent, c.cmsFLAGS_BLACKPOINTCOMPENSATION | c.cmsFLAGS_NOOPTIMIZE) orelse
+            return error.ColourManagementFailed;
+        return .{ .handle = handle, .linear = linear };
+    }
+
+    pub fn deinit(transform: *DisplayTransform) void {
+        c.cmsDeleteTransform(transform.handle);
+        c.cmsDeleteTransform(transform.linear);
+        transform.* = undefined;
+    }
+
+    /// Converts `input`, linear light in sRGB's primaries, into `output` in the display's
+    /// colours at 16 bits, which should be the same length.
+    pub fn applyLinear(transform: DisplayTransform, input: []const [image.channel_count]f32, output: [][image.channel_count]u16) void {
+        std.debug.assert(input.len == output.len);
+        const total = @min(input.len, output.len);
+        var done: usize = 0;
+        while (done < total) {
+            const count = @min(total - done, max_pixels_per_call);
+            c.cmsDoTransform(transform.linear, input[done..].ptr, output[done..].ptr, @intCast(count));
+            done += count;
+        }
     }
 
     /// Converts `input` into `output`, which should be the same length (`Transform.apply`).
@@ -320,8 +394,28 @@ test "every space's profile is a whole ICC file, version 2.4, that LittleCMS rea
         try std.testing.expectEqual(encoded_version_2_4, std.mem.readInt(u32, file[header_version_offset..][0..4], .big));
         try std.testing.expectEqualStrings(header_signature, file[header_signature_offset..][0..header_signature.len]);
         const reopened = c.cmsOpenProfileFromMem(file.ptr, @intCast(file.len)) orelse return error.TestUnexpectedResult;
-        _ = c.cmsCloseProfile(reopened);
+        defer _ = c.cmsCloseProfile(reopened);
+        // A v2 profile: the media white is the space's own, and there's no adaptation tag.
+        const white: *const c.cmsCIEXYZ = @ptrCast(@alignCast(c.cmsReadTag(reopened, c.cmsSigMediaWhitePointTag) orelse return error.TestUnexpectedResult));
+        var expected: c.cmsCIEXYZ = undefined;
+        c.cmsxyY2XYZ(&expected, &definition(space).white);
+        try std.testing.expectApproxEqAbs(expected.X, white.X, 1e-3);
+        try std.testing.expectApproxEqAbs(@as(f64, 1), white.Y, 1e-3);
+        try std.testing.expectApproxEqAbs(expected.Z, white.Z, 1e-3);
+        try std.testing.expectEqual(@as(c.cmsBool, 0), c.cmsIsTag(reopened, c.cmsSigChromaticAdaptationTag));
     }
+}
+
+test "sRGB's profile gives D65 as its white, as HP's and Apple's v2 sRGB profiles do" {
+    const gpa = std.testing.allocator;
+    const file = try profileBytes(gpa, .srgb);
+    defer gpa.free(file);
+    const reopened = c.cmsOpenProfileFromMem(file.ptr, @intCast(file.len)) orelse return error.TestUnexpectedResult;
+    defer _ = c.cmsCloseProfile(reopened);
+    const white: *const c.cmsCIEXYZ = @ptrCast(@alignCast(c.cmsReadTag(reopened, c.cmsSigMediaWhitePointTag) orelse return error.TestUnexpectedResult));
+    // HP's sRGB IEC61966-2.1 has 0.9505, 1, 1.0891.
+    try std.testing.expectApproxEqAbs(@as(f64, 0.9505), white.X, 1e-3);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0891), white.Z, 1e-3);
 }
 
 test "linear Rec. 2020 middle grey and white become sRGB's" {
@@ -410,4 +504,63 @@ test "a display transform to sRGB leaves pictures as they are, and one to a wide
     try std.testing.expectEqual(@as(u8, 40), out[1][3]);
 
     try std.testing.expectError(error.ColourManagementFailed, DisplayTransform.init("not a profile"));
+}
+
+test "from linear floats to the display, a dark gradient keeps every 16-bit step an 8-bit one would lose" {
+    const gpa = std.testing.allocator;
+    const p3 = try profileBytes(gpa, .display_p3);
+    defer gpa.free(p3);
+    var wide = try DisplayTransform.init(p3);
+    defer wide.deinit();
+    // Display P3 has sRGB's tone curve, so linear grey 0.214 (sRGB 128) comes out at 128 there too.
+    var grey = [_][3]f32{.{ 0.2140, 0.2140, 0.2140 }};
+    var out: [1][3]u16 = undefined;
+    wide.applyLinear(&grey, &out);
+    for (out[0]) |v| try std.testing.expectApproxEqAbs(@as(f32, 128 * 257), @as(f32, @floatFromInt(v)), 257);
+    // A smooth ramp in the shadows: 64 levels a little apart give more distinct 16-bit values than
+    // 8 bits have room for there.
+    var ramp: [64][3]f32 = undefined;
+    for (&ramp, 0..) |*p, i| p.* = @splat(0.002 + 0.00005 * @as(f32, @floatFromInt(i)));
+    var ramp_out: [ramp.len][3]u16 = undefined;
+    wide.applyLinear(&ramp, &ramp_out);
+    var distinct: usize = 1;
+    for (ramp_out[1..], ramp_out[0 .. ramp.len - 1]) |a, b| {
+        try std.testing.expect(a[1] >= b[1]);
+        if (a[1] != b[1]) distinct += 1;
+    }
+    const first_8: u16 = ramp_out[0][1] / 257;
+    const last_8: u16 = ramp_out[ramp.len - 1][1] / 257;
+    try std.testing.expect(distinct > last_8 - first_8 + 1);
+}
+
+/// How far a 16-bit value can land from the formula after going through a profile's curve table.
+const table_rounding = 4;
+
+test "a picture in its own profile comes in as linear sRGB: sRGB's own as the curve says, Adobe RGB's red toned down" {
+    const gpa = std.testing.allocator;
+    const pixels = [_][3]u8{ .{ 128, 128, 128 }, .{ 255, 0, 0 }, .{ 0, 0, 0 } };
+    var out: [pixels.len][3]u16 = undefined;
+
+    const srgb = try profileBytes(gpa, .srgb);
+    defer gpa.free(srgb);
+    var from_srgb: ImportTransform = try .init(srgb);
+    defer from_srgb.deinit();
+    from_srgb.apply(&pixels, &out);
+    const grey: f32 = encode.linearFromSrgb(128.0 / 255.0) * image.full_scale;
+    for (out[0]) |v| try std.testing.expectApproxEqAbs(grey, @as(f32, @floatFromInt(v)), 0.002 * image.full_scale);
+    // sRGB's curve is a table in a version 2 profile, so allow a step or two.
+    for ([_][3]u16{ .{ image.full_scale, 0, 0 }, .{ 0, 0, 0 } }, out[1..]) |expected, got| {
+        for (expected, got) |e, g| try std.testing.expect(@abs(@as(i32, e) - g) <= table_rounding);
+    }
+
+    // Adobe RGB's red is more saturated than sRGB's: it clips at full red, and grey stays grey.
+    const adobe = try profileBytes(gpa, .adobe_rgb);
+    defer gpa.free(adobe);
+    var from_adobe: ImportTransform = try .init(adobe);
+    defer from_adobe.deinit();
+    from_adobe.apply(&pixels, &out);
+    try std.testing.expectEqual(@as(u16, image.full_scale), out[1][0]);
+    try std.testing.expect(@abs(@as(i32, out[0][0]) - out[0][2]) <= 2);
+
+    try std.testing.expectError(error.ColourManagementFailed, ImportTransform.init("not a profile"));
 }

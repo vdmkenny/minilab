@@ -3,6 +3,8 @@
 
 const std = @import("std");
 const minilab = @import("minilab");
+const display_colour = @import("../platform/display_colour.zig");
+const Colours = @import("../platform/texture.zig").Colours;
 
 const image = minilab.image;
 const develop = minilab.develop;
@@ -67,8 +69,12 @@ pub const Frame = struct {
     gap_base: ?[3]f32 = null,
     /// Whether `gap_base` is the roll's rather than the frame's own.
     base_from_roll: bool = false,
-    /// The viewer's rendering, in RGBA, the same size as `preview`.
+    /// The viewer's rendering, in sRGB RGBA, the same size as `preview`. The histogram and the
+    /// clipping are measured on it.
     rendered: [][4]u8,
+    /// The same rendering in the display's colours, made from the float rendering in one step
+    /// (`display_colour.fromLinear`). Empty when the display shows sRGB as it is.
+    displayed: std.ArrayList([4]u8) = .empty,
     /// The scan as it is, like a negative on a light table, in RGBA. The viewer shows it for
     /// comparison.
     negative: [][4]u8,
@@ -163,6 +169,7 @@ pub const Frame = struct {
         if (frame.full_scan) |*s| s.deinit(gpa);
         frame.full.deinit(gpa);
         frame.dropPreview(gpa);
+        frame.displayed.deinit(gpa);
         frame.* = undefined;
     }
 
@@ -326,8 +333,15 @@ pub const Frame = struct {
         var encoded = try minilab.encode.toSrgb8(gpa, linear);
         defer encoded.deinit(gpa);
         frame.store(encoded);
-        if (frame.removed_tint) |tint| for (frame.rendered, shown.pixels, frame.preview.pixels) |*out, after, before| {
-            if (!std.meta.eql(after, before)) out.* = tinted(out.*, tint);
+        frame.displayed.clearRetainingCapacity();
+        if (display_colour.active()) {
+            try frame.displayed.resize(gpa, frame.rendered.len);
+            display_colour.fromLinear(linear, frame.displayed.items);
+        }
+        if (frame.removed_tint) |tint| for (frame.rendered, 0.., shown.pixels, frame.preview.pixels) |*out, i, after, before| {
+            if (std.meta.eql(after, before)) continue;
+            out.* = tinted(out.*, tint);
+            if (frame.displayed.items.len > 0) frame.displayed.items[i] = tinted(frame.displayed.items[i], tint);
         };
         frame.stale = false;
     }
@@ -357,6 +371,7 @@ pub const Frame = struct {
         pixels: [][4]u8,
         width: usize,
         height: usize,
+        colours: Colours,
     };
 
     /// Renders the square of the scan at full resolution, `side` pixels a side, around the point
@@ -418,12 +433,12 @@ pub const Frame = struct {
             // At full size. The loupe is round, so the square's edges, where the blur runs out of
             // picture, don't show.
             try minilab.sharpen.apply(gpa, linear, frame.settings.sharpen, 1);
-            minilab.encode.toRgba8(linear, pixels);
+            display_colour.fromLinear(linear, pixels);
             if (frame.removed_tint) |tint| for (pixels, turned_changed.pixels) |*p, c| {
                 if (c) p.* = tinted(p.*, tint);
             };
         }
-        return .{ .pixels = pixels, .width = turned.width, .height = turned.height };
+        return .{ .pixels = pixels, .width = turned.width, .height = turned.height, .colours = if (negative) .srgb else .display };
     }
 
     fn store(frame: *Frame, encoded: image.Encoded8) void {

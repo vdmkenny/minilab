@@ -413,7 +413,7 @@ fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: mini
     const rgba = try gpa.alloc([4]u8, linear.pixels.len);
     defer gpa.free(rgba);
     minilab.encode.toRgba8(linear, rgba);
-    return .upload(ctx.gpu, @intCast(small.width), @intCast(small.height), rgba);
+    return .upload(ctx.gpu, @intCast(small.width), @intCast(small.height), rgba, .srgb);
 }
 
 const file_dialog = @import("../platform/file_dialog.zig");
@@ -943,8 +943,8 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
     defer v.deinit(gpa);
     const w: u32 = @intCast(v.width);
     const h: u32 = @intCast(v.height);
-    state.figures.neutral = try .upload(ctx.gpu, w, h, v.neutral);
-    state.figures.reference = try .upload(ctx.gpu, w, h, v.reference);
+    state.figures.neutral = try .upload(ctx.gpu, w, h, v.neutral, .srgb);
+    state.figures.reference = try .upload(ctx.gpu, w, h, v.reference, .srgb);
     const result = own.result orelse return;
     if (alignment == null) return;
     const errors = try gpa.alloc(f32, v.width * v.height);
@@ -955,7 +955,7 @@ fn makeFigures(state: *State, ctx: context.Context, own: *const Own, prepared: *
     const colours = try gpa.alloc([4]u8, errors.len);
     defer gpa.free(colours);
     for (colours, errors, v.reference) |*out, e, r| out.* = if (r[3] == 0) .{ 0, 0, 0, 0 } else ramp(e);
-    state.figures.difference = try .upload(ctx.gpu, w, h, colours);
+    state.figures.difference = try .upload(ctx.gpu, w, h, colours, .srgb);
     // Only count where the reference covers our frame. Elsewhere there's nothing to compare.
     var covered: usize = 0;
     for (errors, v.reference) |e, r| if (r[3] != 0) {

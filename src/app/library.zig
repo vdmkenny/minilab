@@ -299,7 +299,7 @@ fn makeThumbnail(library: *Library, gpa: std.mem.Allocator, io: std.Io, gpu: *c.
         defer rendered.deinit(gpa);
         minilab.encode.toRgba8(rendered, pixels);
     }
-    return Texture.upload(gpu, @intCast(scan.width), @intCast(scan.height), pixels);
+    return Texture.upload(gpu, @intCast(scan.width), @intCast(scan.height), pixels, .srgb);
 }
 
 test "the library's label has ~ for the home folder, and only for it" {
