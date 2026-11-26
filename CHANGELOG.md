@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/vdmkenny/minilab/compare/v0.8.0...v0.9.0) (2026-11-26)
+
+
+### Features
+
+* Import a scan's infrared plane from a file of its own ([#94](https://github.com/vdmkenny/minilab/issues/94)) ([49003ae](https://github.com/vdmkenny/minilab/commit/49003ae87e160d6610c87d233cd9fb84f0f41cdc))
+* Infrared dust removal in Develop, and showing what's removed ([#93](https://github.com/vdmkenny/minilab/issues/93)) ([15b44ba](https://github.com/vdmkenny/minilab/commit/15b44bae3a22106f6d08b13b186dd61375443217))
+* Infrared dust removal, from a scan's infrared plane ([#91](https://github.com/vdmkenny/minilab/issues/91)) ([7731cd2](https://github.com/vdmkenny/minilab/commit/7731cd249b2410a8840c31dff795df4c6eb6a361))
+* Scan an infrared pass with scanners whose driver offers one ([#95](https://github.com/vdmkenny/minilab/issues/95)) ([b81eb89](https://github.com/vdmkenny/minilab/commit/b81eb89561206d247062f2b8a2ee43f4ee35a1dd))
+
 ## [0.8.0](https://github.com/vdmkenny/minilab/compare/v0.7.0...v0.8.0) (2026-11-26)
 
 
