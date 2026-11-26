@@ -36,6 +36,8 @@
         .appearance_heading = "APPARENCE",
         .language = "Langue",
         .language_heading = "LANGUE",
+        .scanner = "Scanner",
+        .scans = "Numérisations",
         .about = "À propos",
         .interface = "Interface",
         .viewer = "Visionneuse",

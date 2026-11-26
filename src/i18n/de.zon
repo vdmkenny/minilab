@@ -36,6 +36,8 @@
         .appearance_heading = "ERSCHEINUNGSBILD",
         .language = "Sprache",
         .language_heading = "SPRACHE",
+        .scanner = "Scanner",
+        .scans = "Scans",
         .about = "Über",
         .interface = "Oberfläche",
         .viewer = "Bildansicht",

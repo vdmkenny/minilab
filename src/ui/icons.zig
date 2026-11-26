@@ -34,6 +34,7 @@ pub const Icon = enum(u21) {
     chevron_right = lucide.@"chevron-right",
     pencil = lucide.pencil,
     languages = lucide.languages,
+    scan_line = lucide.@"scan-line",
 };
 
 /// Draws `icon` `size` screen pixels square, centred on `centre`.

@@ -79,6 +79,8 @@ pub const Context = struct {
     keys: std.EnumSet(shortcuts.Command),
     /// A line in the header that says what just happened.
     notice: *Notice,
+    /// The app's preferences, the same in every library.
+    preferences: *minilab.preferences.Saved,
 
     /// Imports the .cube files at `paths` into the library's Looks folder, with a notice for each
     /// one that can't be. Returns the last one imported.

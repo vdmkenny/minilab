@@ -255,7 +255,7 @@ choice that says so, or the gamma tables filled with a straight line), colour co
 brightness and contrast to 0 where 0 is the middle of their range. An option the scanner won't
 take is skipped and logged. On the V200 this gives the same data as its profile.
 
-The Scanner settings window on Scan sets any of those options another way, per scanner and driver,
+The Scanner page of Settings sets any of those options another way, per scanner and driver,
 for when raw setup guesses wrong. The changes are kept in the library's `scanners.json`.
 
 A scanner that can't give linear data at all could still be used if we undid its curve: a scan of

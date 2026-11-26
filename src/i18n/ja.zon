@@ -36,6 +36,8 @@
         .appearance_heading = "外観",
         .language = "言語",
         .language_heading = "言語",
+        .scanner = "スキャナー",
+        .scans = "スキャン",
         .about = "情報",
         .interface = "インターフェイス",
         .viewer = "ビューア",
