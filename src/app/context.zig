@@ -9,6 +9,7 @@ const Library = @import("library.zig").Library;
 const develop_view = @import("develop_view.zig");
 const shortcuts = @import("shortcuts.zig");
 const labels = @import("labels.zig");
+const i18n = @import("../i18n/i18n.zig");
 
 pub const Workspace = enum {
     rolls,
@@ -18,13 +19,7 @@ pub const Workspace = enum {
     looks,
 
     pub fn label(workspace: Workspace) [:0]const u8 {
-        return switch (workspace) {
-            .rolls => "Rolls",
-            .scan => "Scan",
-            .develop => "Develop",
-            .@"export" => "Export",
-            .looks => "Looks",
-        };
+        return i18n.label(i18n.t.labels.workspace, workspace);
     }
 
     /// The shortcut that opens it.
@@ -43,9 +38,9 @@ pub const Workspace = enum {
 pub fn copyButton(notice: *Notice, command: [:0]const u8) void {
     if (gui.iconButton("copy", .normal, .copy)) {
         _ = c.SDL_SetClipboardText(command);
-        notice.set("Copied", .{});
+        notice.say(i18n.t.common.copied, .{});
     }
-    gui.tooltip("Copy, for Terminal");
+    gui.tooltip(i18n.t.app.copy_for_terminal);
 }
 
 /// How long a notice stays in the header.
@@ -59,6 +54,11 @@ pub const Notice = struct {
     pub fn set(notice: *Notice, comptime format: []const u8, args: anytype) void {
         notice.line.set(format, args);
         notice.until = c.SDL_GetTicks() + notice_ms;
+    }
+
+    /// Sets the notice to the translated message `template`, with `values` in its placeholders.
+    pub fn say(notice: *Notice, template: [:0]const u8, values: anytype) void {
+        notice.set("{s}", .{gui.say(template, values)});
     }
 
     pub fn text(notice: *const Notice) ?[]const u8 {
@@ -86,7 +86,7 @@ pub const Context = struct {
         var last: ?minilab.look.Id = null;
         for (paths) |path| {
             last = ctx.library.looks.import(ctx.gpa, ctx.io, path) catch |err| {
-                ctx.notice.set("Can't import {s} · {s}", .{ std.fs.path.basename(path), labels.importError(err) });
+                ctx.notice.say(i18n.t.app.cant_import, .{ std.fs.path.basename(path), labels.importError(err) });
                 continue;
             };
         }

@@ -5,6 +5,7 @@ const std = @import("std");
 const c = @import("c");
 const theme = @import("theme.zig");
 const icons = @import("icons.zig");
+const i18n = @import("../i18n/i18n.zig");
 const date = @import("minilab").date;
 const Date = date.Date;
 const fonts = @import("fonts.zig");
@@ -67,6 +68,12 @@ pub fn Line(comptime capacity: usize) type {
             return l.buffer[0..l.len];
         }
     };
+}
+
+/// A translated message, `template`, with its `{0}`-style placeholders filled from `values`, for
+/// this frame (see i18n.zig).
+pub fn say(template: [:0]const u8, values: anytype) [:0]const u8 {
+    return i18n.format(frame_arena.allocator(), template, values) catch template;
 }
 
 /// Formats a string that lasts for this frame, ending in a NUL for ImGui.
@@ -328,9 +335,9 @@ pub fn fittedWidth(label: [:0]const u8, padding: f32) f32 {
 /// Draws "No roll open" at `at` with a Go to Rolls button under it, for a page that needs a roll.
 /// Returns true when the button is clicked.
 pub fn noRoll(at: Vec2) bool {
-    const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.colors.text_secondary, "No roll open");
+    const height = lineAt(c.ImGui_GetWindowDrawList(), at.x, at.y, theme.colors.text_secondary, i18n.t.gui.no_roll_open);
     c.ImGui_SetCursorScreenPos(vec2(at.x, at.y + height + px(no_roll_gap)));
-    const label = "Go to Rolls";
+    const label = i18n.t.gui.go_to_rolls;
     return buttonOf(.normal, label, vec2(fittedWidth(label, button_padding) / scale, button_height));
 }
 
@@ -587,7 +594,7 @@ pub fn searchCombo(id: [:0]const u8, items: []const []const u8, chosen: usize, w
         if (c.ImGui_SelectableEx(print("{s}", .{item}).ptr, i == chosen, 0, vec2(0, 0))) picked = i;
         c.ImGui_PopID();
     }
-    if (first == null) textColored(theme.colors.text_tertiary, "No matches");
+    if (first == null) textColored(theme.colors.text_tertiary, i18n.t.gui.no_matches);
     if (entered and picked == null) {
         if (first) |i| {
             picked = i;
@@ -636,8 +643,8 @@ fn chevron(list: *c.ImDrawList, min: Vec2, max: Vec2) void {
     const tip = vec2(max.x - px(chevron_inset), middle + px(chevron_drop));
     const ink = theme.imU32(theme.colors.text_secondary);
     const arm = px(chevron_arm);
-    c.ImDrawList_AddLineEx(list, vec2(tip.x - arm, tip.y - arm), tip, ink, px(chevron_thickness));
-    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + arm, tip.y - arm), ink, px(chevron_thickness));
+    c.ImDrawList_AddLineEx(list, vec2(tip.x - arm, tip.y - arm), tip, ink, px(chevron_thickness), 0);
+    c.ImDrawList_AddLineEx(list, tip, vec2(tip.x + arm, tip.y - arm), ink, px(chevron_thickness), 0);
 }
 
 /// Draws a ticked check box, `size` pixels square, at `min`: amber, with the design's tick.
@@ -848,8 +855,20 @@ const calendar = struct {
     const weeks = 6;
 };
 
-/// The weekdays' initials, Monday first, as ISO 8601 counts the week.
-const weekdays = [date.days_in_week][]const u8{ "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
+/// The months, for their names in `i18n.t.gui.month`.
+const Month = enum { january, february, march, april, may, june, july, august, september, october, november, december };
+/// The days of the week, Monday first as ISO 8601 counts the week, for their initials in
+/// `i18n.t.gui.weekday`.
+const Weekday = enum { monday, tuesday, wednesday, thursday, friday, saturday, sunday };
+comptime {
+    std.debug.assert(std.enums.values(Month).len == date.months_in_year);
+    std.debug.assert(std.enums.values(Weekday).len == date.days_in_week);
+}
+
+/// The name of `month`, 1 to 12, in the interface's language.
+fn monthName(month: u8) [:0]const u8 {
+    return i18n.label(i18n.t.gui.month, @as(Month, @fromBackingInt(@intCast(month - 1))));
+}
 
 /// Draws the month in `calendar_month`, with arrows to the months either side, `selected` filled
 /// and `today` outlined. Returns the day picked, or today when Today is clicked.
@@ -862,7 +881,7 @@ fn drawCalendar(selected: ?Date, today: Date) ?Date {
 
     // The month's name, and the arrows to move a month.
     fonts.push(.semibold);
-    const heading_text = print("{s} {d}", .{ date.monthName(month), year });
+    const heading_text = say(i18n.t.gui.month_heading, .{ monthName(month), year });
     c.ImDrawList_AddText(list, vec2(origin.x + px(calendar.gap), @round(origin.y + (px(calendar.header) - c.ImGui_GetTextLineHeight()) / 2)), theme.imU32(theme.colors.text), heading_text);
     fonts.pop();
     const arrow = c.ImGui_GetFrameHeight();
@@ -873,9 +892,10 @@ fn drawCalendar(selected: ?Date, today: Date) ?Date {
 
     var y = origin.y + px(calendar.header + calendar.gap);
     fonts.pushSized(.regular, fonts.small_size);
-    for (weekdays, 0..) |name, i| {
-        const size = c.ImGui_CalcTextSize(print("{s}", .{name}));
-        c.ImDrawList_AddText(list, vec2(@round(origin.x + cell * @as(f32, @floatFromInt(i)) + (cell - size.x) / 2), y), theme.imU32(theme.colors.text_tertiary), print("{s}", .{name}));
+    for (std.enums.values(Weekday), 0..) |day, i| {
+        const name = i18n.label(i18n.t.gui.weekday, day);
+        const size = c.ImGui_CalcTextSize(name);
+        c.ImDrawList_AddText(list, vec2(@round(origin.x + cell * @as(f32, @floatFromInt(i)) + (cell - size.x) / 2), y), theme.imU32(theme.colors.text_tertiary), name);
     }
     y += c.ImGui_GetTextLineHeight() + px(calendar.gap);
     fonts.pop();
@@ -908,7 +928,7 @@ fn drawCalendar(selected: ?Date, today: Date) ?Date {
     }
     y += cell * calendar.weeks + px(calendar.gap);
     c.ImGui_SetCursorScreenPos(vec2(origin.x, y));
-    if (buttonOf(.normal, "Today", vec2(0, 0))) picked = today;
+    if (buttonOf(.normal, i18n.t.gui.today, vec2(0, 0))) picked = today;
     c.ImGui_SetCursorScreenPos(vec2(origin.x, c.ImGui_GetCursorScreenPos().y));
     c.ImGui_Dummy(vec2(width, 0));
     return picked;
@@ -1061,7 +1081,7 @@ pub fn resetButton(id: [:0]const u8, at: Vec2, shown: []const u8, default_shown:
     const clicked = c.ImGui_InvisibleButton(id, vec2(size, size), 0);
     c.ImGui_EndDisabled();
     const hovered = !disabled and c.ImGui_IsItemHovered(0);
-    if (hovered) showTooltip(print("Reset to {s}", .{default_shown}));
+    if (hovered) showTooltip(say(i18n.t.gui.reset_to, .{default_shown}));
     const ink = if (disabled) theme.colors.text_tertiary else if (hovered) theme.colors.text else theme.colors.text_secondary;
     icons.draw(c.ImGui_GetWindowDrawList(), .rotate_ccw, vec2(at.x + size / 2, at.y + size / 2), px(reset_icon_size), ink);
     return clicked and !at_default;
@@ -1092,15 +1112,15 @@ const star_notch = 0.45;
 /// Draws an x centred on `centre`, its strokes reaching `arm` out along each axis.
 pub fn cross(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
     const ink = theme.imU32(colour);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y - arm), vec2(centre.x + arm, centre.y + arm), ink, thickness, 0);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x + arm, centre.y - arm), vec2(centre.x - arm, centre.y + arm), ink, thickness, 0);
 }
 
 /// Draws a plus sign centred on `centre`, its strokes reaching `arm` out each way.
 pub fn plus(list: *c.ImDrawList, centre: Vec2, arm: f32, thickness: f32, colour: theme.Color) void {
     const ink = theme.imU32(colour);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness);
-    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x - arm, centre.y), vec2(centre.x + arm, centre.y), ink, thickness, 0);
+    c.ImDrawList_AddLineEx(list, vec2(centre.x, centre.y - arm), vec2(centre.x, centre.y + arm), ink, thickness, 0);
 }
 
 /// Draws a progress bar filling `min` to `max`: a grey track, with `fraction` (0 to 1) of it in
@@ -1128,7 +1148,7 @@ pub fn divider() void {
     const origin = c.ImGui_GetCursorScreenPos();
     const window = c.ImGui_GetWindowPos();
     const width = c.ImGui_GetWindowWidth();
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(window.x, origin.y), vec2(window.x + width, origin.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(c.ImGui_GetWindowDrawList(), window.x, window.x + width, origin.y, theme.imU32(theme.colors.divider));
 }
 
 /// The space above and below a section of a side panel, in the design's pixels.
@@ -1180,7 +1200,7 @@ pub fn edge(side: enum { left, right }) void {
     const pos = c.ImGui_GetWindowPos();
     const size = c.ImGui_GetWindowSize();
     const x = if (side == .left) pos.x else pos.x + size.x - 1;
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), vec2(x, pos.y), vec2(x, pos.y + size.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineV(c.ImGui_GetWindowDrawList(), x, pos.y, pos.y + size.y, theme.imU32(theme.colors.divider));
 }
 
 /// Draws a dashed line from `from` to `to`, with dashes `dash` long and `gap` between them, in
@@ -1193,7 +1213,7 @@ pub fn dashedLine(list: *c.ImDrawList, from: Vec2, to: Vec2, colour: u32, thickn
     var at: f32 = 0;
     while (at < length) : (at += dash + gap) {
         const end = @min(at + dash, length);
-        c.ImDrawList_AddLineEx(list, vec2(from.x + dx * at / length, from.y + dy * at / length), vec2(from.x + dx * end / length, from.y + dy * end / length), colour, thickness);
+        c.ImDrawList_AddLineEx(list, vec2(from.x + dx * at / length, from.y + dy * at / length), vec2(from.x + dx * end / length, from.y + dy * end / length), colour, thickness, 0);
     }
 }
 

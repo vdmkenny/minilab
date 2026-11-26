@@ -11,6 +11,7 @@ const c = @import("c");
 const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
+const i18n = @import("../i18n/i18n.zig");
 
 pub const Command = enum {
     rolls,
@@ -65,59 +66,13 @@ pub const Command = enum {
     quit,
     cancel,
 
-    pub fn describe(command: Command) []const u8 {
+    /// What the command does, in the interface's language.
+    pub fn describe(command: Command) [:0]const u8 {
         return switch (command) {
-            .rolls => "Rolls",
-            .scan => "Scan",
-            .develop => "Develop",
-            .@"export" => "Export",
-            .looks => "Looks",
-            .previous => "Previous frame",
-            .next => "Next frame",
-            .first => "First frame",
-            .last => "Last frame",
-            .zoom_toggle => "Fit or 100%",
-            .zoom_in => "Zoom to 100%",
-            .zoom_out => "Zoom to fit",
-            .clipping => "Show clipping",
-            .loupe => "Loupe",
-            .before => "Negative or positive",
-            .split => "Split view",
-            .white_balance => "Pick white balance",
-            .base => "Pick film base",
-            .crop => "Crop",
-            .turn_left => "Turn left",
-            .turn_right => "Turn right",
-            .mirror => "Mirror left to right",
-            .confirm => "Finish the crop",
-            .undo => "Undo",
-            .redo => "Redo",
-            .copy_settings => "Copy settings",
-            .paste_settings => "Paste settings",
-            .paste_previous => "Paste from previous frame",
-            .sync => "Sync settings to roll",
-            .reset => "Reset settings",
-            .automatic => "Automatic settings",
-            .no_stars => "No stars",
-            .one_star => "1 star",
-            .two_stars => "2 stars",
-            .three_stars => "3 stars",
-            .four_stars => "4 stars",
-            .five_stars => "5 stars",
-            .reject => "Reject",
-            .unreject => "Clear reject",
-            .new_roll => "New roll",
-            .find => "Find rolls",
-            .import => "Import (Scan)",
-            .select_all => "Select all frames",
-            .select_none => "Select no frames",
-            .hide_panels => "Hide side panels",
-            .hide_all => "Hide all panels",
-            .full_screen => "Full screen",
-            .settings => "Settings",
-            .help => "Keyboard shortcuts",
-            .quit => "Quit",
-            .cancel => "Cancel a pick, close a panel",
+            inline .rolls, .scan, .develop, .@"export", .looks => |w| @field(i18n.t.labels.workspace, @tagName(w)),
+            .settings => i18n.t.settings.title,
+            .help => i18n.t.shortcuts.title,
+            inline else => |tag| @field(i18n.t.shortcuts.command, @tagName(tag)),
         };
     }
 
@@ -330,16 +285,19 @@ const help = struct {
     const second_column = 4;
 };
 
+/// The help panel's groups of shortcuts, each headed by its message in `i18n.t.shortcuts.heading`.
+const Group = enum { workspaces, frames, viewer, tools, settings, rating, library, window };
+
 /// Every shortcut, in groups, for the help panel.
-const groups = [_]struct { []const u8, []const Command }{
-    .{ "WORKSPACES", &.{ .rolls, .scan, .develop, .@"export", .looks } },
-    .{ "FRAMES", &.{ .previous, .next, .first, .last, .select_all, .select_none } },
-    .{ "VIEWER", &.{ .zoom_toggle, .zoom_in, .zoom_out, .clipping, .loupe, .before, .split } },
-    .{ "TOOLS", &.{ .white_balance, .base, .crop, .turn_left, .turn_right, .mirror, .confirm } },
-    .{ "SETTINGS", &.{ .undo, .redo, .copy_settings, .paste_settings, .paste_previous, .sync, .reset, .automatic } },
-    .{ "RATING", &.{ .no_stars, .one_star, .two_stars, .three_stars, .four_stars, .five_stars, .reject, .unreject } },
-    .{ "LIBRARY", &.{ .new_roll, .find, .import } },
-    .{ "WINDOW", &.{ .hide_panels, .hide_all, .full_screen, .settings, .help, .quit, .cancel } },
+const groups = [_]struct { Group, []const Command }{
+    .{ .workspaces, &.{ .rolls, .scan, .develop, .@"export", .looks } },
+    .{ .frames, &.{ .previous, .next, .first, .last, .select_all, .select_none } },
+    .{ .viewer, &.{ .zoom_toggle, .zoom_in, .zoom_out, .clipping, .loupe, .before, .split } },
+    .{ .tools, &.{ .white_balance, .base, .crop, .turn_left, .turn_right, .mirror, .confirm } },
+    .{ .settings, &.{ .undo, .redo, .copy_settings, .paste_settings, .paste_previous, .sync, .reset, .automatic } },
+    .{ .rating, &.{ .no_stars, .one_star, .two_stars, .three_stars, .four_stars, .five_stars, .reject, .unreject } },
+    .{ .library, &.{ .new_roll, .find, .import } },
+    .{ .window, &.{ .hide_panels, .hide_all, .full_screen, .settings, .help, .quit, .cancel } },
 };
 
 // Every command has keys and a place in the help panel, and no two commands share keys.
@@ -372,9 +330,9 @@ pub fn drawHelp() bool {
     c.ImGui_PushStyleVar(c.ImGuiStyleVar_WindowBorderSize, 1);
     defer c.ImGui_PopStyleVarEx(2);
     defer c.ImGui_PopStyleColor();
-    if (c.ImGui_Begin("Keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
-        gui.title("Keyboard shortcuts", fonts.title_size);
-        gui.textColored(theme.colors.text_tertiary, "As in Lightroom and Bridge");
+    if (c.ImGui_Begin("##keyboard shortcuts", &open, c.ImGuiWindowFlags_NoCollapse | c.ImGuiWindowFlags_NoResize | c.ImGuiWindowFlags_NoMove | c.ImGuiWindowFlags_NoTitleBar)) {
+        gui.title(i18n.t.shortcuts.title, fonts.title_size);
+        gui.textColored(theme.colors.text_tertiary, i18n.t.shortcuts.subtitle);
         c.ImGui_Dummy(gui.vec2(0, gui.px(help.group_gap)));
         const column = (c.ImGui_GetContentRegionAvail().x - gui.px(help.column_gap)) / 2;
         const second_x = gui.px(help.padding_x + help.column_gap) + column;
@@ -385,7 +343,7 @@ pub fn drawHelp() bool {
             const in_second = g >= help.second_column;
             const x = c.ImGui_GetCursorPosX();
             if (in_second) c.ImGui_SetCursorPosX(second_x);
-            gui.heading(group[0]);
+            gui.heading(i18n.label(i18n.t.shortcuts.heading, group[0]));
             for (group[1]) |command| {
                 if (in_second) c.ImGui_SetCursorPosX(second_x);
                 const row_x = c.ImGui_GetCursorPosX();

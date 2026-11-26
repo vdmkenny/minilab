@@ -4,11 +4,12 @@ The gear at the right end of the header opens Settings, and so does ⌘, (Ctrl+,
 Linux). What you set there belongs to your account, not to a library, so it holds whichever
 library you open. Changes apply and save straight away.
 
-Settings has a column of pages on the left: the settings from the top, and About at the foot,
-under a line. About has the version, links to the website and the source code, what minilab
-is built with, and an AI disclosure: minilab is written with the help of AI coding agents (see
-`AGENTS.md`), and no AI runs in the app. A new page is a case in `Page` in `src/app/settings_view.zig` and a function that
-draws it; `atFoot` says whether it goes at the foot with About.
+Settings has a column of pages on the left: the settings from the top (Appearance and Language),
+and About at the foot, under a line. About has the version, links to the website and the source
+code, what minilab is built with, and an AI disclosure: minilab is written with the help of AI
+coding agents (see `AGENTS.md`), and no AI runs in the app. A new page is a case in `Page` in
+`src/app/settings_view.zig` and a function that draws it; `atFoot` says whether it goes at the
+foot with About.
 
 ## Appearance
 
@@ -23,6 +24,14 @@ below says why.
 
 **Viewer: Always dark** keeps the background around the picture dark when the interface is light.
 It's on by default.
+
+## Language
+
+**Language** picks the interface's language: System, which follows the computer's language when
+minilab has it (and English otherwise), or English, Dutch, French, German, Italian, Spanish or
+Japanese by name. Japanese needs a Japanese font on the computer; without one, minilab stays in
+English and the page says so. [translating.md](translating.md) has how the translations work and
+how to add a language.
 
 ## The standards behind the colours
 

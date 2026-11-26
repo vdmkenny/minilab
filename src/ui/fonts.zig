@@ -1,8 +1,9 @@
 //! The fonts built into the app: IBM Plex Sans in two weights for the interface, JetBrains Mono
-//! for values, and Lucide's icon font (see icons.zig).
+//! for values, and Lucide's icon font (see icons.zig). Japanese comes from the system's font.
 
 const std = @import("std");
 const c = @import("c");
+const system_fonts = @import("../platform/system_fonts.zig");
 
 pub const Face = enum { regular, semibold, mono };
 
@@ -23,6 +24,8 @@ pub const page_title_size: f32 = 18;
 
 var faces: std.EnumArray(Face, ?*c.ImFont) = .initFill(null);
 var icon_face: ?*c.ImFont = null;
+/// Whether the system's Japanese font was found and merged into the faces.
+var japanese = false;
 var scale: f32 = 1;
 
 const data: std.EnumArray(Face, []const u8) = .init(.{
@@ -37,8 +40,39 @@ pub fn load(display_scale: f32) void {
     const atlas = c.ImGui_GetIO().*.Fonts;
     for (std.enums.values(Face)) |face| {
         faces.set(face, add(atlas, data.get(face)));
+        // Japanese comes from the system's own font, merged into each face for the glyphs ours
+        // don't have.
+        var path: [japanese_path]u8 = undefined;
+        if (system_fonts.japanese(&path, if (face == .semibold) .bold else .regular)) |found| {
+            japanese = merge(atlas, found) or japanese;
+        }
     }
     icon_face = add(atlas, icon_data);
+}
+
+/// How big Japanese is drawn next to Latin text of the same size. A Japanese font fills its whole
+/// em square, so at full size its characters look a size bigger than IBM Plex's.
+const japanese_scale = 0.9;
+
+/// The longest path to a system font we read.
+const japanese_path = 1024;
+
+/// Merges `face`, a system font, into the face added last. Returns whether it could be read.
+fn merge(atlas: *c.ImFontAtlas, face: system_fonts.Face) bool {
+    var config: c.ImFontConfig = .{
+        .MergeMode = true,
+        .FontNo = face.index,
+        .GlyphMaxAdvanceX = std.math.floatMax(f32),
+        .RasterizerMultiply = 1,
+        .RasterizerDensity = 1,
+        .ExtraSizeScale = japanese_scale,
+    };
+    return c.ImFontAtlas_AddFontFromFileTTF(atlas, face.path.ptr, ui_size * scale, &config, null) != null;
+}
+
+/// Whether the faces have Japanese, from the system's font.
+pub fn hasJapanese() bool {
+    return japanese;
 }
 
 fn add(atlas: *c.ImFontAtlas, bytes: []const u8) ?*c.ImFont {

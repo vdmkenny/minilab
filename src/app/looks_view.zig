@@ -15,6 +15,7 @@ const fonts = @import("../ui/fonts.zig");
 const context = @import("context.zig");
 const shortcuts = @import("shortcuts.zig");
 const labels = @import("labels.zig");
+const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const Library = @import("library.zig").Library;
 const bundled = minilab.bundled_looks;
@@ -37,13 +38,15 @@ const main_padding_y = 16;
 const model_padding = 16;
 const table_min_width = 620;
 
-/// The sizes of the looks' parts, as the page writes them.
+/// The sizes of the looks' LUTs, as the page writes them.
 const frontier_lut = std.fmt.comptimePrint("{d}³", .{minilab.look.Builtin.frontier_size});
 const fitted_lut = std.fmt.comptimePrint("{d}³", .{model.lut_size});
-const curve_points = std.fmt.comptimePrint("{d} points", .{curve.points});
+const bundled_lut = std.fmt.comptimePrint("{d}³", .{bundled.size});
 const figure_gap = 12;
-/// The width of the label column next to a collection's credit and licence.
+/// The width of the label column next to a collection's credit and licence, and the least gap
+/// after a label.
 const pack_label_width = 90;
+const pack_label_gap = 12;
 /// How long the longer side of the Develop frame is in the previews.
 const preview_longest = 360;
 /// The tallest a single look's preview is drawn.
@@ -54,6 +57,8 @@ const previews_per_frame = 3;
 /// The narrowest and the tallest tile in a collection's grid of previews.
 const tile_min_width = 150;
 const tile_max_height = 170;
+/// The width of the rename dialog's name field.
+const rename_width = 240;
 /// The height of the buttons under a look's preview.
 const use_button_height = 30;
 /// The gap between preview tiles.
@@ -281,7 +286,7 @@ const Own = struct {
     fn save(own: *const Own, ctx: context.Context) void {
         draft.save(ctx.gpa, ctx.io, own.path, .{ .references = own.references, .options = own.options, .pairs = own.pairs.items }) catch |err| {
             std.log.err("can't save the look {s}: {t}", .{ own.name, err });
-            ctx.notice.set("{s} not saved · {t}", .{ own.name, err });
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.not_saved, .{ own.name, @errorName(err) })});
         };
     }
 
@@ -300,9 +305,9 @@ const Own = struct {
 
     /// The badge: Saved once look.json holds the current fit, Fitted when there's a fit that isn't
     /// saved yet, and Draft before that (or once the fit is out of date).
-    fn status(own: *const Own) []const u8 {
-        if (own.result != null and !own.kept) return if (own.stale) "Draft" else "Fitted";
-        return if (own.saved) "Saved" else "Draft";
+    fn status(own: *const Own) [:0]const u8 {
+        if (own.result != null and !own.kept) return if (own.stale) i18n.t.looks.status_draft else i18n.t.looks.status_fitted;
+        return if (own.saved) i18n.t.looks.status_saved else i18n.t.looks.status_draft;
     }
 };
 
@@ -413,9 +418,10 @@ fn renderPreview(ctx: context.Context, small: minilab.image.Scan, settings: mini
 const file_dialog = @import("../platform/file_dialog.zig");
 const Dialog = file_dialog.Dialog;
 
-/// The file types "Add pairs" lets you pick.
-const pair_files = [_]c.SDL_DialogFileFilter{
-    .{ .name = "Scans and references (PPM, JPEG, TIFF)", .pattern = "ppm;jpg;jpeg;tif;tiff" },
+/// The file types "Add pairs" lets you pick. The name is set in the current language as the
+/// dialog opens.
+var pair_files = [_]c.SDL_DialogFileFilter{
+    .{ .name = "", .pattern = "ppm;jpg;jpeg;tif;tiff" },
 };
 
 /// A job running in the background, and the look it's for.
@@ -485,12 +491,12 @@ pub const State = struct {
         const index = switch (state.selected) {
             .own => |i| i,
             else => {
-                ctx.notice.set("Not a look of your own", .{});
+                ctx.notice.set("{s}", .{i18n.t.looks.not_own_look});
                 return;
             },
         };
         if (state.running != null) {
-            ctx.notice.set("Busy", .{});
+            ctx.notice.set("{s}", .{i18n.t.looks.busy});
             return;
         }
         var ours: std.ArrayList([]const u8) = .empty;
@@ -505,13 +511,13 @@ pub const State = struct {
             }
         }
         if (theirs.items.len == 0) {
-            ctx.notice.set("No references · JPEG or TIFF", .{});
+            ctx.notice.set("{s}", .{i18n.t.looks.no_references});
             return;
         }
         const own = &state.own.items[index];
         if (ours.items.len > 0) {
             if (ours.items.len != theirs.items.len) {
-                ctx.notice.set("{d} scans, {d} references · counts differ", .{ ours.items.len, theirs.items.len });
+                ctx.notice.set("{s}", .{gui.say(i18n.t.looks.counts_differ, .{ ours.items.len, theirs.items.len })});
                 return;
             }
             // Pair them up in name order.
@@ -528,11 +534,11 @@ pub const State = struct {
                     .held_out = draft.heldOutByDefault(own.pairs.items.len),
                     .placement = if (where) |w| w.placement else null,
                 }) catch |err| {
-                    ctx.notice.set("Added {d} of {d} pairs · {t}", .{ added, ours.items.len, err });
+                    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.added_some_pairs, .{ added, ours.items.len, @errorName(err) })});
                     break;
                 };
                 added += 1;
-            } else ctx.notice.set("Added {d} pairs to {s}", .{ added, own.name });
+            } else ctx.notice.set("{s}", .{gui.say(i18n.t.looks.added_pairs, .{ added, own.name })});
             // Keep what was added, even when the rest wasn't.
             if (added > 0) own.save(ctx);
             return;
@@ -588,18 +594,18 @@ pub const State = struct {
         const id = ctx.importCubes(paths) orelse return;
         state.listImported(ctx);
         for (state.imported.items, 0..) |*i, n| if (i.eql(&id)) select(state, .{ .imported = n });
-        ctx.notice.set("Imported {s}", .{id.label()});
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.imported, .{labels.look(&id)})});
     }
 
     /// Deletes the selected imported LUT from the library.
     fn removeImported(state: *State, ctx: context.Context, index: usize) void {
         const id = state.imported.items[index];
         ctx.library.looks.remove(ctx.gpa, ctx.io, id) catch |err| {
-            ctx.notice.set("Can't remove {s} · {t}", .{ id.label(), err });
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_remove, .{ labels.look(&id), @errorName(err) })});
             return;
         };
         ctx.library.lookChanged(ctx.gpa, id);
-        ctx.notice.set("Removed {s}", .{id.label()});
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.removed, .{labels.look(&id)})});
         state.listImported(ctx);
         state.selected = .neutral;
     }
@@ -685,11 +691,11 @@ pub const State = struct {
                 }
                 if (added > 0) own.save(ctx);
                 if (task.failure) |err| {
-                    ctx.notice.set("Matching stopped · {t}", .{err});
+                    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.matching_stopped, .{@errorName(err)})});
                 } else if (added == task.references.len) {
-                    ctx.notice.set("Found frames for all {d} references", .{added});
+                    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.found_all_frames, .{added})});
                 } else {
-                    ctx.notice.set("Found frames for {d} of {d} references", .{ added, task.references.len });
+                    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.found_some_frames, .{ added, task.references.len })});
                 }
             },
             .fit => |*task| {
@@ -705,7 +711,7 @@ pub const State = struct {
                     own.kept = false;
                     state.generation +%= 1;
                 } else if (task.failure) |err| {
-                    ctx.notice.set("Fit failed · {t}", .{err});
+                    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.fit_failed, .{@errorName(err)})});
                 }
             },
         }
@@ -721,11 +727,11 @@ pub const State = struct {
             if (open == null or open == i) count += r.frames.items.len;
         }
         if (count == 0) {
-            ctx.notice.set("No frames to match", .{});
+            ctx.notice.set("{s}", .{i18n.t.looks.no_frames_to_match});
             return;
         }
         var task = work.Match.init(ctx.gpa, references, count) catch |err| {
-            ctx.notice.set("Can't match · {t}", .{err});
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_match, .{@errorName(err)})});
             return;
         };
         var n: usize = 0;
@@ -797,27 +803,27 @@ pub const State = struct {
     fn newLook(state: *State, ctx: context.Context) void {
         var number: usize = state.own.items.len + 1;
         const name = while (true) : (number += 1) {
-            const candidate = gui.print("Look {d}", .{number});
+            const candidate = gui.say(i18n.t.looks.look_name, .{number});
             for (state.own.items) |o| {
                 if (std.ascii.eqlIgnoreCase(o.name, candidate)) break;
             } else break candidate;
         };
         const own = state.makeLook(ctx, name) catch |err| {
             std.log.err("can't make the look {s}: {t}", .{ name, err });
-            ctx.notice.set("Can't make a look · {t}", .{err});
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_make, .{@errorName(err)})});
             return;
         };
         own.save(ctx);
         state.selected = .{ .own = state.own.items.len - 1 };
         state.pair = 0;
-        ctx.notice.set("Made {s}", .{name});
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.made, .{name})});
     }
 
     fn renameLook(state: *State, ctx: context.Context, index: usize, name: []const u8) void {
         const own = &state.own.items[index];
         if (name.len == 0 or std.mem.eql(u8, name, own.name)) return;
         if (std.mem.indexOfAny(u8, name, "/\\:") != null) {
-            ctx.notice.set("Invalid name", .{});
+            ctx.notice.set("{s}", .{i18n.t.looks.invalid_name});
             return;
         }
         const parent = std.fs.path.dirname(own.path) orelse return;
@@ -825,7 +831,7 @@ pub const State = struct {
         const cwd = std.Io.Dir.cwd();
         cwd.rename(own.path, cwd, path, ctx.io) catch |err| {
             ctx.gpa.free(path);
-            ctx.notice.set("Can't rename the look · {t}", .{err});
+            ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_rename, .{@errorName(err)})});
             return;
         };
         const old_id = minilab.look.Id.ofFitted(std.fs.path.basename(own.path)) catch null;
@@ -999,7 +1005,7 @@ fn byName(_: void, a: []const u8, b: []const u8) bool {
 
 /// What the Use column says for `pair`.
 fn useLabel(pair: draft.Pair) []const u8 {
-    return if (pair.held_out) "Held out" else "Fit";
+    return if (pair.held_out) i18n.t.looks.held_out else i18n.t.looks.fit;
 }
 
 /// Finds the roll frame whose raw scan is at `path`, with the name the table uses for it.
@@ -1084,11 +1090,11 @@ fn drawList(state: *State, ctx: context.Context) void {
     var y = origin.y;
 
     // In groups, the same as Develop's Look menu.
-    y = groupHeading(list, origin.x, y, origin.y, "BUILT IN");
+    y = groupHeading(list, origin.x, y, origin.y, i18n.t.looks.built_in_heading);
     const item_height = gui.px(2 * item_padding_y + item_line_gap) + gui.lineFor(fonts.ui_size) + gui.lineFor(fonts.small_size) + 2 * border;
     const built_in = [_]struct { Selected, []const u8, []const u8 }{
-        .{ .neutral, "Neutral", "Inversion curve" },
-        .{ .frontier, "Frontier emulation", "Color LUT, " ++ frontier_lut },
+        .{ .neutral, i18n.t.looks.neutral, i18n.t.looks.inversion_curve },
+        .{ .frontier, i18n.t.looks.frontier_emulation, gui.say(i18n.t.looks.color_lut, .{frontier_lut}) },
     };
     for (built_in, 0..) |b, i| {
         c.ImGui_PushIDInt(@intCast(i));
@@ -1096,35 +1102,31 @@ fn drawList(state: *State, ctx: context.Context) void {
         c.ImGui_PopID();
         y += item_height + gui.px(item_gap);
     }
-    y = groupHeading(list, origin.x, y, origin.y, "FILM LOOKS");
+    y = groupHeading(list, origin.x, y, origin.y, i18n.t.looks.film_looks_heading);
     const packs = comptime std.enums.values(bundled.Pack);
     for (packs, 0..) |pack, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len));
         const info = pack.info();
-        const source = gui.print("{d} looks · {s}", .{ packLooks(pack), info.licence });
+        const source = gui.say(i18n.t.looks.pack_looks, .{ packLooks(pack), info.licence });
         if (lookItem(list, gui.vec2(origin.x, y), width, item_height, info.name, source, std.meta.eql(state.selected, .{ .pack = pack }))) select(state, .{ .pack = pack });
         c.ImGui_PopID();
         y += item_height + gui.px(item_gap);
     }
-    if (state.imported.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "IMPORTED LUTS");
+    if (state.imported.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, i18n.t.looks.imported_heading);
     for (state.imported.items, 0..) |*id, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len));
         const selected = switch (state.selected) {
             .imported => |s| s == i,
             else => false,
         };
-        // Out of memory shows as a look that can't be read, which is what it is for now.
-        const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, id.*) catch .neutral;
-        var buffer: [64]u8 = undefined;
-        const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "Can't be read";
-        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, id.label(), size, selected)) select(state, .{ .imported = i });
+        if (lookItem(list, gui.vec2(origin.x, y), width, item_height, labels.look(id), importedSize(ctx, id.*), selected)) select(state, .{ .imported = i });
         c.ImGui_PopID();
         y += item_height + gui.px(item_gap);
     }
-    if (state.own.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, "FITTED LOOKS");
+    if (state.own.items.len > 0) y = groupHeading(list, origin.x, y, origin.y, i18n.t.looks.fitted_heading);
     for (state.own.items, 0..) |*own, i| {
         c.ImGui_PushIDInt(@intCast(i + built_in.len + packs.len + state.imported.items.len));
-        const source = gui.print("{s} · {s}", .{ own.status(), own.references.short() });
+        const source = gui.print("{s} · {s}", .{ own.status(), i18n.label(i18n.t.looks.source_short, own.references) });
         const selected = switch (state.selected) {
             .own => |s| s == i,
             else => false,
@@ -1137,17 +1139,27 @@ fn drawList(state: *State, ctx: context.Context) void {
     // New look from references, and Import .cube.
     y += gui.px(item_gap);
     const height = gui.px(add_height);
-    if (addButton(list, gui.vec2(origin.x, y), width, height, "New look from references", "Fitted from pairs")) state.newLook(ctx);
+    if (addButton(list, gui.vec2(origin.x, y), width, height, "new", i18n.t.looks.new_look, i18n.t.looks.new_look_tooltip)) state.newLook(ctx);
     y += height + gui.px(item_gap);
-    if (addButton(list, gui.vec2(origin.x, y), width, height, "Import .cube LUT", "3D or 1D · sRGB or Rec. 709")) state.cube_dialog.show(ctx.gpa, ctx.io);
+    if (addButton(list, gui.vec2(origin.x, y), width, height, "import", i18n.t.looks.import_cube, i18n.t.looks.import_cube_tooltip)) state.cube_dialog.show(ctx.gpa, ctx.io);
+}
+
+/// The size of the imported LUT `id`, as the page writes it.
+fn importedSize(ctx: context.Context, id: minilab.look.Id) [:0]const u8 {
+    // Out of memory shows as a look that can't be read, which is what it is for now.
+    const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, id) catch .neutral;
+    if (resolved != .lut) return i18n.t.looks.cant_be_read;
+    const lut = resolved.lut;
+    if (lut.three) |three| return gui.say(i18n.t.looks.lut_3d, .{three.size});
+    return gui.say(i18n.t.looks.lut_1d, .{lut.one.?.size});
 }
 
 /// Draws a button at `at` for adding to the list: a dashed outline, a plus sign and `label`.
-/// Returns true when it's clicked.
-fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, label: [:0]const u8, tooltip: [:0]const u8) bool {
+/// `id` names it for ImGui, whatever the language. Returns true when it's clicked.
+fn addButton(list: *c.ImDrawList, at: gui.Vec2, width: f32, height: f32, id: [:0]const u8, label: []const u8, tooltip: []const u8) bool {
     const far = gui.vec2(at.x + width, at.y + height);
     c.ImGui_SetCursorScreenPos(at);
-    const clicked = c.ImGui_InvisibleButton(label, gui.vec2(width, height), 0);
+    const clicked = c.ImGui_InvisibleButton(id, gui.vec2(width, height), 0);
     const hovered = c.ImGui_IsItemHovered(0);
     if (hovered) c.ImDrawList_AddRectFilledEx(list, at, far, theme.imU32(theme.colors.control), gui.px(gui.control_rounding), 0);
     gui.dashedRoundedRect(list, at, far, theme.imU32(theme.colors.border), gui.px(gui.control_rounding));
@@ -1208,14 +1220,11 @@ fn drawMain(state: *State, ctx: context.Context) void {
     var y = origin.y;
 
     const title: []const u8, const status: []const u8, const description: []const u8 = switch (state.selected) {
-        .neutral => .{ "Neutral", "Built in", "minilab's inversion · film base, density matrix, inversion curve · no added color" },
-        .frontier => .{ "Frontier emulation", "Built in", "Fujifilm Frontier color, over Neutral" },
-        .pack => |p| .{ p.info().name, "Film looks", p.info().about },
-        .imported => |i| .{ state.imported.items[i].label(), "Imported LUT", "LUT over Neutral's sRGB output" },
-        .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), switch (state.own.items[i].references) {
-            .frontier_software => "Fitted to Frontier software output",
-            .lab_scans => "Fitted to lab scans",
-        } },
+        .neutral => .{ i18n.t.looks.neutral, i18n.t.looks.built_in, i18n.t.looks.neutral_about },
+        .frontier => .{ i18n.t.looks.frontier_emulation, i18n.t.looks.built_in, i18n.t.looks.frontier_about },
+        .pack => |p| .{ p.info().name, i18n.t.looks.film_looks, p.info().about },
+        .imported => |i| .{ state.imported.items[i].label(), i18n.t.looks.imported_lut, i18n.t.looks.imported_about },
+        .own => |i| .{ state.own.items[i].name, state.own.items[i].status(), i18n.label(i18n.t.looks.fitted_to, state.own.items[i].references) },
     };
 
     // The title and its badge, on the same baseline.
@@ -1232,7 +1241,7 @@ fn drawMain(state: *State, ctx: context.Context) void {
             };
             _ = c.ImGui_OpenPopup("rename", 0);
         }
-        gui.tooltip("Click to rename");
+        gui.tooltip(i18n.t.looks.click_to_rename);
         drawRename(state, ctx);
     }
     fonts.pushSized(.regular, fonts.small_size);
@@ -1258,8 +1267,8 @@ fn drawMain(state: *State, ctx: context.Context) void {
             y += gui.px(section_gap);
             y = drawPreviews(state, ctx, gui.vec2(origin.x, y), width);
             _ = drawUseButton(ctx, gui.vec2(origin.x, y), previewedLook(state));
-            if (gui.buttonOf(.normal, "Remove from library", gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
-            gui.tooltip("Removes the library's copy");
+            if (gui.buttonOf(.normal, i18n.t.looks.remove_from_library, gui.vec2(0, use_button_height))) state.removeImported(ctx, i);
+            gui.tooltip(i18n.t.looks.remove_from_library_tooltip);
             return;
         },
         .neutral, .frontier => {
@@ -1294,13 +1303,15 @@ fn packLooks(pack: bundled.Pack) usize {
 fn drawPack(list: *c.ImDrawList, at: gui.Vec2, width: f32, pack: bundled.Pack) f32 {
     const info = pack.info();
     var y = at.y;
-    const label_width = gui.px(pack_label_width);
     const rows = [_][2][]const u8{
-        .{ "Credit", info.credit },
-        .{ "License", info.licence },
-        .{ "Source", info.url },
-        .{ "Changes", info.changes },
+        .{ i18n.t.looks.credit, info.credit },
+        .{ i18n.t.looks.license, info.licence },
+        .{ i18n.t.looks.source, info.url },
+        .{ i18n.t.looks.changes, info.changes },
     };
+    // The design's column, or wider when a label needs it.
+    var label_width: f32 = gui.px(pack_label_width);
+    for (rows) |row| label_width = @max(label_width, textWidth(row[0]) + gui.px(pack_label_gap));
     for (rows) |row| {
         gui.textIn(list, at.x, y, gui.lineFor(fonts.ui_size), theme.colors.text_secondary, row[0]);
         y += @max(gui.lineFor(fonts.ui_size), gui.paragraphAt(list, at.x + label_width, y + (gui.lineFor(fonts.ui_size) - gui.lineHeight()) / 2, width - label_width, theme.colors.text, row[1]));
@@ -1320,7 +1331,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         c.ImGui_Dummy(gui.vec2(0, 0));
     }
     const frame = if (ctx.develop.frame) |*f| f else {
-        y += gui.paragraphAt(list, at.x, y, width, theme.colors.text_tertiary, "No frame open in Develop");
+        y += gui.paragraphAt(list, at.x, y, width, theme.colors.text_tertiary, i18n.t.looks.no_frame);
         return y;
     };
     const previews = &state.previews;
@@ -1331,9 +1342,8 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
     const ids = previews.ids.items;
     const pack = state.selected == .pack;
 
-    const where = if (ctx.develop.rollIndex(ctx.library)) |r| gui.print("{s} of {s}", .{ frame.name, ctx.library.rolls.items[r].info.name }) else frame.name;
-    const intro = if (pack) gui.print("On {s} · Develop's settings", .{where}) else gui.print("On {s} · Develop's settings", .{where});
-    y += gui.paragraphAt(list, at.x, y, width, theme.colors.text_secondary, intro);
+    const where = if (ctx.develop.rollIndex(ctx.library)) |r| gui.say(i18n.t.looks.frame_of_roll, .{ frame.name, ctx.library.rolls.items[r].info.name }) else frame.name;
+    y += gui.paragraphAt(list, at.x, y, width, theme.colors.text_secondary, gui.say(i18n.t.looks.previews_on, .{where}));
     y += gui.px(intro_gap);
 
     const small = previews.small.?;
@@ -1347,7 +1357,7 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         const h = w * aspect;
         for (ids, 0..) |id, i| {
             const min = gui.vec2(at.x + (w + gap) * @as(f32, @floatFromInt(i)), y);
-            _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), id.label(), false, false);
+            _ = previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), labels.look(&id), false, false);
         }
         y += h + caption + gui.px(intro_gap);
         return y;
@@ -1365,17 +1375,17 @@ fn drawPreviews(state: *State, ctx: context.Context, at: gui.Vec2, width: f32) f
         var to = from + 1;
         while (film != null and to < ids.len and bundled.looks[ids[to].kind().bundled].film == film.?) to += 1;
         fonts.pushSized(.semibold, fonts.small_size);
-        gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ f.label(), to - from }) else "Neutral");
+        gui.textIn(list, at.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, if (film) |f| gui.print("{s} · {d}", .{ labels.lookFilm(f), to - from }) else i18n.t.looks.neutral);
         fonts.pop();
         y += gui.lineFor(fonts.small_size) + gui.px(film_heading_gap);
         for (from..to) |i| {
             const column: f32 = @floatFromInt((i - from) % columns);
             const row: f32 = @floatFromInt((i - from) / columns);
             const min = gui.vec2(at.x + (w + gap) * column, y + (h + caption + gap) * row);
-            const name = if (i == 0) "Neutral" else bundled.looks[ids[i].kind().bundled].name;
+            const name = if (i == 0) i18n.t.looks.neutral else bundled.looks[ids[i].kind().bundled].name;
             c.ImGui_PushIDInt(@intCast(i));
             if (previewTile(list, min, gui.vec2(min.x + w, min.y + h), previews.texture(i), name, ids[i].eql(&frame.look), true)) ctx.develop.useLook(ctx.io, ctx.library, ids[i]);
-            gui.tooltip(gui.print("Use on {s}", .{frame.name}));
+            gui.tooltip(gui.say(i18n.t.looks.use_on, .{frame.name}));
             c.ImGui_PopID();
         }
         const rows = (to - from + columns - 1) / columns;
@@ -1402,7 +1412,7 @@ fn drawUseButton(ctx: context.Context, at: gui.Vec2, look_id: ?minilab.look.Id) 
     const in_use = id.eql(&frame.look);
     c.ImGui_SetCursorScreenPos(at);
     c.ImGui_BeginDisabled(in_use);
-    const label = if (in_use) gui.print("In use on {s}", .{frame.name}) else gui.print("Use on {s}", .{frame.name});
+    const label = gui.say(if (in_use) i18n.t.looks.in_use_on else i18n.t.looks.use_on, .{frame.name});
     if (gui.buttonOf(.normal, label, gui.vec2(0, use_button_height))) ctx.develop.useLook(ctx.io, ctx.library, id);
     c.ImGui_EndDisabled();
     c.ImGui_SameLine();
@@ -1437,16 +1447,16 @@ fn drawRename(state: *State, ctx: context.Context) void {
         .own => |i| i,
         else => return,
     };
-    gui.heading("RENAME LOOK");
+    gui.heading(i18n.t.looks.rename_heading);
     if (c.ImGui_IsWindowAppearing()) c.ImGui_SetKeyboardFocusHere();
-    _ = gui.textField("name", &state.rename, "Name", 240);
-    const done = gui.buttonOf(.primary, "Rename", gui.vec2(0, 0)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Enter);
+    _ = gui.textField("name", &state.rename, i18n.t.looks.name_hint, rename_width);
+    const done = gui.buttonOf(.primary, i18n.t.common.rename, gui.vec2(0, 0)) or c.ImGui_IsKeyPressed(c.ImGuiKey_Enter);
     if (done) {
         state.renameLook(ctx, look, std.mem.sliceTo(&state.rename, 0));
         c.ImGui_CloseCurrentPopup();
     }
     c.ImGui_SameLine();
-    if (gui.button("Cancel")) c.ImGui_CloseCurrentPopup();
+    if (gui.button(i18n.t.common.cancel)) c.ImGui_CloseCurrentPopup();
 }
 
 /// Draws the references section: where they come from, Add pairs, and the count. Returns the y
@@ -1455,14 +1465,14 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     const height = gui.px(bar_height);
     const list = c.ImGui_GetWindowDrawList();
     var x = at.x;
-    gui.textIn(list, x, at.y, height, theme.colors.text_secondary, "References");
-    x += textWidth("References") + gui.px(bar_gap);
+    gui.textIn(list, x, at.y, height, theme.colors.text_secondary, i18n.t.looks.references);
+    x += textWidth(i18n.t.looks.references) + gui.px(bar_gap);
 
     const sources = comptime std.enums.values(draft.Source);
     var names: [sources.len][]const u8 = undefined;
     var widest: f32 = 0;
     for (&names, sources) |*n, s| {
-        n.* = s.label();
+        n.* = labels.references(s);
         widest = @max(widest, textWidth(n.*));
     }
     const combo_width = widest + gui.px(combo_padding + combo_arrow_room);
@@ -1478,24 +1488,27 @@ fn drawReferences(state: *State, ctx: context.Context, own: *Own, look: usize, a
     c.ImGui_SetCursorScreenPos(gui.vec2(x, at.y));
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(gui.button_padding), (height - c.ImGui_GetFontSize()) / 2));
     c.ImGui_BeginDisabled(state.running != null);
-    if (gui.buttonOf(.normal, "Add pairs", gui.vec2(0, bar_height))) state.dialog.show(ctx.gpa, ctx.io);
+    if (gui.buttonOf(.normal, i18n.t.looks.add_pairs, gui.vec2(0, bar_height))) {
+        pair_files[0].name = i18n.t.looks.pair_files;
+        state.dialog.show(ctx.gpa, ctx.io);
+    }
     c.ImGui_EndDisabled();
     c.ImGui_PopStyleVar();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        gui.showTooltip("References (JPEG, TIFF) · with our scans (PPM)");
+        gui.showTooltip(i18n.t.looks.add_pairs_tooltip);
     }
     x = c.ImGui_GetItemRectMax().x + gui.px(bar_gap);
 
     const n = own.pairs.items.len;
     const running = if (state.running) |r| (if (r.look == look) r else null) else null;
     const status: []const u8 = if (running) |r| switch (r.job.task) {
-        .prepare => gui.print("Reading and lining up pairs, {d} of {d}…", .{ r.job.progress.load(.acquire), r.job.steps }),
-        .match => "Finding the frames the references show…",
-        .fit => "Fitting…",
+        .prepare => gui.say(i18n.t.looks.reading_pairs, .{ r.job.progress.load(.acquire), r.job.steps }),
+        .match => i18n.t.looks.finding_frames,
+        .fit => i18n.t.looks.fitting,
     } else if (n == 0)
-        "No pairs yet"
+        i18n.t.looks.no_pairs_yet
     else
-        gui.print("{d} {s} · {d} held out to check the fit", .{ n, if (n == 1) "pair" else "pairs", own.heldOut() });
+        gui.say(if (n == 1) i18n.t.looks.pair_count_one else i18n.t.looks.pair_count_many, .{ n, own.heldOut() });
     gui.textIn(list, x, at.y, height, theme.colors.text_tertiary, status);
     return at.y + height;
 }
@@ -1510,11 +1523,11 @@ const Column = enum {
 
     fn header(column: Column, own: *const Own) []const u8 {
         return switch (column) {
-            .ours => "Our raw scan",
-            .theirs => own.references.one(),
-            .stock => "Stock",
-            .registration => "Registration",
-            .use => "Use",
+            .ours => i18n.t.looks.our_raw_scan,
+            .theirs => i18n.label(i18n.t.looks.source_one, own.references),
+            .stock => i18n.t.looks.stock,
+            .registration => i18n.t.looks.registration,
+            .use => i18n.t.looks.use,
         };
     }
 
@@ -1561,7 +1574,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         x += widths.get(column);
     }
     fonts.pop();
-    c.ImDrawList_AddLine(list, gui.vec2(at.x + border, at.y + border + header_height - 0.5), gui.vec2(far.x - border, at.y + border + header_height - 0.5), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, at.x + border, far.x - border, at.y + border + header_height - 0.5, theme.imU32(theme.colors.divider));
 
     var remove: ?usize = null;
     for (0..n) |i| {
@@ -1571,7 +1584,7 @@ fn drawTable(state: *State, ctx: context.Context, own: *Own, at: gui.Vec2, avail
         if (drawPairRow(state, ctx, own, list, i, gui.vec2(at.x + border, top), gui.vec2(far.x - border, top + row_height), widths)) remove = i;
     }
     if (n == 0) {
-        gui.textIn(list, at.x + border + gui.px(cell_padding_x), at.y + border + header_height + gui.px(cell_padding_y), gui.lineFor(fonts.ui_size), theme.colors.text_tertiary, "No pairs");
+        gui.textIn(list, at.x + border + gui.px(cell_padding_x), at.y + border + header_height + gui.px(cell_padding_y), gui.lineFor(fonts.ui_size), theme.colors.text_tertiary, i18n.t.looks.no_pairs);
     }
     c.ImDrawList_AddRectEx(list, at, gui.vec2(far.x, at.y + box_height), theme.imU32(theme.colors.divider), gui.px(table_rounding), 1, 0);
     c.ImGui_SetCursorScreenPos(gui.vec2(at.x, at.y + box_height));
@@ -1623,21 +1636,21 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
     if (c.ImGui_BeginPopupContextItem()) {
         // Not while a fit is running, or the fit would end up shown against a split it wasn't
         // made from.
-        if (c.ImGui_MenuItemEx(if (p.held_out) "Use to fit" else "Hold out to check the fit", null, false, state.running == null)) own.toggleHeldOut(ctx, i);
-        if (c.ImGui_MenuItemEx("Remove pair", null, false, state.running == null)) remove = true;
+        if (c.ImGui_MenuItemEx(if (p.held_out) i18n.t.looks.use_to_fit else i18n.t.looks.hold_out, null, false, state.running == null)) own.toggleHeldOut(ctx, i);
+        if (c.ImGui_MenuItemEx(i18n.t.looks.remove_pair, null, false, state.running == null)) remove = true;
         c.ImGui_EndPopup();
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(use_x, row_min.y));
     if (c.ImGui_InvisibleButton("use", gui.vec2(widths.get(.use), row_height), 0) and state.running == null) own.toggleHeldOut(ctx, i);
     const use_hovered = c.ImGui_IsItemHovered(0);
-    if (use_hovered) gui.showTooltip(if (p.held_out) "Held out to check the fit · click to fit with it" else "Used in the fit · click to hold out");
+    if (use_hovered) gui.showTooltip(if (p.held_out) i18n.t.looks.held_out_tooltip else i18n.t.looks.fit_tooltip);
 
     if (state.pair == i) {
         c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.colors.raised));
     } else if (row_hovered or use_hovered) {
         c.ImDrawList_AddRectFilled(list, row_min, row_max, theme.imU32(theme.withAlpha(theme.colors.raised, hover_shade)));
     }
-    if (i + 1 < own.pairs.items.len) c.ImDrawList_AddLine(list, gui.vec2(row_min.x, row_max.y - 0.5), gui.vec2(row_max.x, row_max.y - 0.5), theme.imU32(theme.colors.raised));
+    if (i + 1 < own.pairs.items.len) c.ImDrawList_AddLineH(list, row_min.x, row_max.x, row_max.y - 0.5, theme.imU32(theme.colors.raised));
 
     const text_top = row_min.y + gui.px(cell_padding_y);
     var x = row_min.x;
@@ -1668,20 +1681,19 @@ fn drawPairRow(state: *State, ctx: context.Context, own: *Own, list: *c.ImDrawLi
 /// The tooltip over a pair: its files, and how well they line up.
 fn pairTooltip(p: draft.Pair) void {
     const a = p.alignment orelse return gui.showTooltip(gui.print("{s}\n{s}", .{ p.ours, p.theirs }));
-    const turned = a.orientation.label();
-    gui.showTooltip(gui.print("{s}\nCorrelation {d:.2} of 1 · good above {d:.1}\nReference {s}{s}covers {d:.0}% of our scan's width", .{
+    const turned = labels.orientation(a.orientation);
+    gui.showTooltip(gui.say(if (turned.len > 0) i18n.t.looks.alignment_turned else i18n.t.looks.alignment, .{
         p.theirs,
-        a.quality,
-        aligned_quality,
+        gui.print("{d:.2}", .{a.quality}),
+        gui.print("{d:.1}", .{aligned_quality}),
+        gui.print("{d:.0}", .{a.scale * 100}),
         turned,
-        if (turned.len > 0) ", " else "",
-        a.scale * 100,
     }));
 }
 
 /// The stock as the table shows it, without the maker.
 fn stockName(stock: ?[]const u8) []const u8 {
-    const s = stock orelse return "None";
+    const s = stock orelse return i18n.t.common.none;
     for ([_][]const u8{ "Kodak ", "Fujifilm ", "Fuji ", "Ilford ", "Agfa ", "Lomography " }) |maker| {
         if (std.mem.startsWith(u8, s, maker)) return s[maker.len..];
     }
@@ -1689,11 +1701,15 @@ fn stockName(stock: ?[]const u8) []const u8 {
 }
 
 fn registrationText(own: *const Own, index: usize) []const u8 {
-    if (own.readings.items[index] == .failed) return "Can't read";
-    const a = own.pairs.items[index].alignment orelse return "Not aligned yet";
-    if (a.quality >= aligned_quality) return gui.print("Aligned · {d:.2}", .{a.quality});
-    if (a.quality >= poor_quality) return gui.print("Check · {d:.2}", .{a.quality});
-    return gui.print("Not aligned · {d:.2}", .{a.quality});
+    if (own.readings.items[index] == .failed) return i18n.t.looks.cant_read;
+    const a = own.pairs.items[index].alignment orelse return i18n.t.looks.not_aligned_yet;
+    const message = if (a.quality >= aligned_quality)
+        i18n.t.looks.aligned
+    else if (a.quality >= poor_quality)
+        i18n.t.looks.check
+    else
+        i18n.t.looks.not_aligned;
+    return gui.say(message, .{gui.print("{d:.2}", .{a.quality})});
 }
 
 /// Draws the selected pair: our scan, the reference lined up with it, and their difference after
@@ -1707,9 +1723,9 @@ fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
     const aligned = if (pair) |p| p.alignment != null else false;
     const f = &state.figures;
     const captions = [_][]const u8{
-        "minilab, Neutral look",
-        gui.print("{s}, {s}", .{ own.references.one(), if (aligned or pair == null) "aligned to ours" else "not aligned yet" }),
-        if (f.median) |m| gui.print("Difference, ΔE2000 · median {d:.1}", .{m}) else "Difference, ΔE2000",
+        i18n.t.looks.neutral_figure,
+        gui.say(if (aligned or pair == null) i18n.t.looks.reference_aligned else i18n.t.looks.reference_not_aligned, .{i18n.label(i18n.t.looks.source_one, own.references)}),
+        if (f.median) |m| gui.say(i18n.t.looks.difference_median, .{gui.print("{d:.1}", .{m})}) else i18n.t.looks.difference,
     };
     const textures = [_]?Texture{ f.neutral, f.reference, f.difference };
     for (captions, textures, 0..) |caption, texture, i| {
@@ -1721,8 +1737,8 @@ fn drawFigures(state: *State, own: *const Own, at: gui.Vec2, width: f32) void {
         } else {
             c.ImDrawList_AddRectFilledEx(list, min, max, theme.imU32(theme.colors.raised), gui.px(gui.box_rounding), 0);
             if (i == 2) {
-                const placeholder = if (own.result != null and !aligned) "[Not aligned yet]" else "[Difference map after fitting]";
-                const size = c.ImGui_CalcTextSize(gui.print("{s}", .{placeholder}));
+                const placeholder = gui.print("[{s}]", .{if (own.result != null and !aligned) i18n.t.looks.not_aligned_yet else i18n.t.looks.difference_after_fit});
+                const size = c.ImGui_CalcTextSize(placeholder);
                 gui.textIn(list, (min.x + max.x - size.x) / 2, (min.y + max.y) / 2 - gui.lineFor(fonts.ui_size) / 2, gui.lineFor(fonts.ui_size), theme.colors.text_tertiary, placeholder);
             }
         }
@@ -1740,7 +1756,7 @@ fn drawModel(state: *State, ctx: context.Context) void {
     const width = c.ImGui_GetContentRegionAvail().x;
     var y = origin.y;
     fonts.pushSized(.semibold, fonts.small_size);
-    gui.textIn(list, origin.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, "MODEL");
+    gui.textIn(list, origin.x, y, gui.lineFor(fonts.small_size), theme.colors.text_secondary, i18n.t.looks.model_heading);
     fonts.pop();
     y += gui.lineFor(fonts.small_size) + gui.px(block_gap);
 
@@ -1774,37 +1790,26 @@ fn drawStagesOf(state: *State, ctx: context.Context, list: *c.ImDrawList, origin
         .own => {},
         .neutral => {
             y = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Film base", "Measured on each frame, or picked" },
-                .{ "Density matrix", "3 × 3, for crosstalk between channels" },
-                .{ "Inversion curve", "Contrast, black and highlight roll-off" },
+                .{ i18n.t.looks.film_base, i18n.t.looks.film_base_note },
+                .{ i18n.t.looks.density_matrix, i18n.t.looks.density_matrix_note },
+                .{ i18n.t.looks.inversion_curve, i18n.t.looks.inversion_curve_note },
             });
             y += gui.px(block_gap);
             y = drawChart(list, gui.vec2(origin.x, y), width, .neutral);
             return;
         },
-        .frontier => {
+        // A LUT over Neutral.
+        .frontier, .pack, .imported => {
+            const name: []const u8, const size: []const u8 = switch (state.selected) {
+                .frontier => .{ i18n.t.looks.frontier_color_lut, frontier_lut },
+                .pack => |p| .{ gui.say(i18n.t.looks.pack_lut, .{p.info().name}), bundled_lut },
+                .imported => |i| .{ i18n.t.looks.lut, importedSize(ctx, state.imported.items[i]) },
+                .neutral, .own => unreachable,
+            };
             _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "As set in Develop" },
-                .{ "Frontier color LUT", frontier_lut ++ ", on Neutral's sRGB output" },
+                .{ i18n.t.looks.neutral, i18n.t.looks.as_set_in_develop },
+                .{ name, gui.say(i18n.t.looks.on_neutral_output, .{size}) },
             });
-            return;
-        },
-        .pack => |p| {
-            _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "As set in Develop" },
-                .{ gui.print("{s} LUT", .{p.info().name}), gui.print("{d}³, on Neutral's sRGB output", .{bundled.size}) },
-            });
-            return;
-        },
-        .imported => |i| {
-            const resolved = ctx.library.looks.resolve(ctx.gpa, ctx.io, state.imported.items[i]) catch .neutral;
-            var buffer: [64]u8 = undefined;
-            const size = if (resolved == .lut) resolved.lut.describe(&buffer) else "can't be read";
-            _ = drawStages(list, gui.vec2(origin.x, y), width, &.{
-                .{ "Neutral", "As set in Develop" },
-                .{ "LUT", gui.print("{s}, on Neutral's sRGB output", .{size}) },
-            });
-            return;
         },
     }
 }
@@ -1813,10 +1818,10 @@ fn drawStagesOf(state: *State, ctx: context.Context, list: *c.ImDrawList, origin
 fn drawOptions(ctx: context.Context, own: *Own, list: *c.ImDrawList, at: gui.Vec2, width: f32, busy: bool) f32 {
     var y = at.y;
     const options = [_]struct { *bool, []const u8, []const u8 }{
-        .{ &own.options.balance, "Per-frame balance", gui.print("3 offsets per frame, for {s} own correction · not part of the look", .{own.references.corrector()}) },
-        .{ &own.options.curves, "Channel curves", "R, G and B, monotone, " ++ curve_points ++ " each" },
-        .{ &own.options.matrix, "Density matrix", "3 × 3, for crosstalk between channels" },
-        .{ &own.options.lut, "3D LUT for what's left", lutNote(own) },
+        .{ &own.options.balance, i18n.t.looks.balance, i18n.label(i18n.t.looks.balance_note, own.references) },
+        .{ &own.options.curves, i18n.t.looks.channel_curves, gui.say(i18n.t.looks.channel_curves_note, .{curve.points}) },
+        .{ &own.options.matrix, i18n.t.looks.density_matrix, i18n.t.looks.density_matrix_note },
+        .{ &own.options.lut, i18n.t.looks.residual_lut, lutNote(own) },
     };
     for (options, 0..) |option, i| {
         if (i > 0) y += gui.px(option_gap);
@@ -1842,39 +1847,45 @@ fn drawModelButtons(state: *State, ctx: context.Context, own: *Own, look: usize,
     for (own.pairs.items, own.readings.items) |p, reading| fitted += @intFromBool(!p.held_out and linedUp(p) and reading == .read);
     c.ImGui_BeginDisabled(busy or fitted == 0);
     const fitting = if (state.running) |r| r.job.task == .fit else false;
-    if (gui.buttonOf(.primary, if (fitting) "Fitting…" else "Fit look", gui.vec2(width / gui.scale, fit_height))) state.startFit(ctx, look);
+    if (gui.buttonOf(.primary, if (fitting) i18n.t.looks.fitting else i18n.t.looks.fit_look, gui.vec2(width / gui.scale, fit_height))) state.startFit(ctx, look);
     c.ImGui_EndDisabled();
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        gui.showTooltip(if (fitted == 0) "No pair to fit" else "Checked on held-out pairs");
+        gui.showTooltip(if (fitted == 0) i18n.t.looks.no_pair_to_fit else i18n.t.looks.checked_on_held_out);
     }
     c.ImGui_SetCursorScreenPos(gui.vec2(x, save_top));
-    if (gui.buttonOf(.outline, "Save as .cube and curves", gui.vec2(width / gui.scale, save_height))) {
-        if (result == null) ctx.notice.set("Nothing to save", .{}) else saveLook(ctx, own);
+    if (gui.buttonOf(.outline, i18n.t.looks.save, gui.vec2(width / gui.scale, save_height))) {
+        if (result == null) ctx.notice.set("{s}", .{i18n.t.looks.nothing_to_save}) else saveLook(ctx, own);
     }
     if (c.ImGui_IsItemHovered(c.ImGuiHoveredFlags_AllowWhenDisabled)) {
-        gui.showTooltip(gui.print("To Looks/{s}", .{own.name}));
+        gui.showTooltip(gui.say(i18n.t.looks.save_to, .{savedFolder(own)}));
     }
 }
 
 fn saveLook(ctx: context.Context, own: *Own) void {
     const result = &(own.result orelse return);
     looks.saved.save(ctx.gpa, ctx.io, own.path, own.name, result) catch |err| {
-        ctx.notice.set("Can't save {s} · {t}", .{ own.name, err });
+        ctx.notice.set("{s}", .{gui.say(i18n.t.looks.cant_save, .{ own.name, @errorName(err) })});
         return;
     };
     own.saved = true;
     own.kept = true;
     if (minilab.look.Id.ofFitted(std.fs.path.basename(own.path))) |id| ctx.library.lookChanged(ctx.gpa, id) else |_| {}
-    ctx.notice.set("Saved {s} · look.json, look.cube{s} in Looks/{s}", .{ own.name, if (result.lut != null) ", residual.cube" else "", own.name });
+    const files = if (result.lut != null) "look.json, look.cube, residual.cube" else "look.json, look.cube";
+    ctx.notice.set("{s}", .{gui.say(i18n.t.looks.saved, .{ own.name, files, savedFolder(own) })});
+}
+
+/// Where a look is saved, as the page writes it: in the library's Looks folder.
+fn savedFolder(own: *const Own) []const u8 {
+    return gui.print("Looks/{s}", .{own.name});
 }
 
 fn lutNote(own: *const Own) []const u8 {
-    const r = own.result orelse return fitted_lut ++ " · only if the residual shows structure";
+    const r = own.result orelse return gui.say(i18n.t.looks.residual_maybe, .{fitted_lut});
     return switch (r.report.lut) {
-        .not_asked => fitted_lut ++ " · only if the residual shows structure",
-        .kept => gui.print("{s} · kept, removed {d:.0}% of the remaining error out of fold", .{ fitted_lut, r.report.lut_gain * 100 }),
-        .no_structure => fitted_lut ++ " · left out, residual is noise",
-        .too_few_pairs => fitted_lut ++ " · left out, needs two fitted pairs",
+        .not_asked => gui.say(i18n.t.looks.residual_maybe, .{fitted_lut}),
+        .kept => gui.say(i18n.t.looks.residual_kept, .{ fitted_lut, gui.print("{d:.0}", .{r.report.lut_gain * 100}) }),
+        .no_structure => gui.say(i18n.t.looks.residual_noise, .{fitted_lut}),
+        .too_few_pairs => gui.say(i18n.t.looks.residual_too_few, .{fitted_lut}),
     };
 }
 
@@ -1927,11 +1938,11 @@ const Chart = union(enum) {
     /// A look not fitted yet: the identity.
     identity,
 
-    fn label(chart: Chart) []const u8 {
+    fn label(chart: Chart) [:0]const u8 {
         return switch (chart) {
-            .neutral => "default settings",
-            .fitted => "fitted, " ++ curve_points ++ " each",
-            .identity => "identity, not fitted",
+            .neutral => i18n.t.looks.chart_default,
+            .fitted => gui.say(i18n.t.looks.chart_fitted, .{curve.points}),
+            .identity => i18n.t.looks.chart_identity,
         };
     }
 };
@@ -1948,8 +1959,8 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     }.at_;
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.colors.histogram_ground), gui.px(gui.choice_rounding), 0);
     const axis = theme.imU32(theme.colors.border);
-    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.top), p(at, k, chart_design.left, chart_design.bottom), axis, k);
-    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.bottom), axis, k);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.top), p(at, k, chart_design.left, chart_design.bottom), axis, k, 0);
+    c.ImDrawList_AddLineEx(list, p(at, k, chart_design.left, chart_design.bottom), p(at, k, chart_design.right, chart_design.bottom), axis, k, 0);
 
     const plot = struct {
         fn point(o: gui.Vec2, scale: f32, x: f32, y: f32) gui.Vec2 {
@@ -1985,21 +1996,22 @@ fn drawChart(list: *c.ImDrawList, at: gui.Vec2, width: f32, chart: Chart) f32 {
     fonts.pushSized(.mono, fonts.tiny_size * k);
     const small = theme.imU32(theme.colors.text_tertiary);
     const baseline = ascent();
-    const density_in = "density in";
+    const density_in = i18n.t.looks.chart_density_in;
     const size = c.ImGui_CalcTextSize(density_in);
     c.ImDrawList_AddText(list, gui.vec2(at.x + chart_design.x_label[0] * k - size.x / 2, at.y + chart_design.x_label[1] * k - baseline), small, density_in);
     // The "out" label, turned to read upwards: it's drawn level, then its vertices are turned
     // around its anchor.
-    const out_size = c.ImGui_CalcTextSize("out");
+    const out = i18n.t.looks.chart_out;
+    const out_size = c.ImGui_CalcTextSize(out);
     const anchor = p(at, k, chart_design.y_label[0], chart_design.y_label[1]);
     const first = list.*.VtxBuffer.Size;
-    c.ImDrawList_AddText(list, gui.vec2(anchor.x - out_size.x / 2, anchor.y - baseline), small, "out");
+    c.ImDrawList_AddText(list, gui.vec2(anchor.x - out_size.x / 2, anchor.y - baseline), small, out);
     gui.turnSince(list, first, anchor, .up);
     fonts.pop();
     // The label goes at the top right, as in the design, or at the top left to keep it out of the
     // fitted curves' way.
     fonts.pushSized(.regular, fonts.caption_size * k);
-    const label = gui.print("{s}", .{chart.label()});
+    const label = chart.label();
     const label_size = c.ImGui_CalcTextSize(label);
     const label_x = if (chart == .fitted) at.x + chart_design.label_left * k else at.x + chart_design.label_right * k - label_size.x;
     c.ImDrawList_AddText(list, gui.vec2(label_x, at.y + chart_design.label_top * k - ascent()), theme.imU32(theme.colors.text_secondary), label);
@@ -2035,12 +2047,12 @@ fn drawMatrix(list: *c.ImDrawList, at: gui.Vec2, width: f32, matrix: model.Matri
 
 /// Draws the ΔE2000 figures for the held-out pairs. Returns the y below.
 fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) f32 {
-    const rows = [_][]const u8{ "Held-out ΔE2000, median", "Held-out ΔE2000, 95th percentile" };
-    var values: [2][]const u8 = .{ "[after fit]", "[after fit]" };
+    const rows = [_][]const u8{ i18n.t.looks.held_out_median, i18n.t.looks.held_out_p95 };
+    var values: [2][]const u8 = @splat(gui.print("[{s}]", .{i18n.t.looks.after_fit}));
     if (own.result) |r| {
         if (r.report.median) |m| {
             values = .{ gui.print("{d:.2}", .{m}), gui.print("{d:.2}", .{r.report.p95.?}) };
-        } else values = .{ "no pair held out", "no pair held out" };
+        } else values = @splat(i18n.t.looks.no_pair_held_out);
     }
     const height = gui.px(2 * measures_padding + measures_row_gap) + 2 * gui.lineFor(fonts.ui_size);
     c.ImDrawList_AddRectFilledEx(list, at, gui.vec2(at.x + width, at.y + height), theme.imU32(theme.colors.raised), gui.px(gui.control_rounding), 0);
@@ -2054,9 +2066,10 @@ fn drawMeasures(list: *c.ImDrawList, at: gui.Vec2, width: f32, own: *const Own) 
     }
     if (own.result) |r| {
         if (own.stale) {
-            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(note_gap), width, theme.colors.text_tertiary, "Out of date");
+            _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(note_gap), width, theme.colors.text_tertiary, i18n.t.looks.out_of_date);
         } else {
-            const note = gui.print("{d} {s} fitted · {d} held out · fitted median {d:.2}", .{ r.report.fitted_pairs, if (r.report.fitted_pairs == 1) "pair" else "pairs", r.report.held_out_pairs, r.report.fitted_median });
+            const summary = if (r.report.fitted_pairs == 1) i18n.t.looks.fit_summary_one else i18n.t.looks.fit_summary_many;
+            const note = gui.say(summary, .{ r.report.fitted_pairs, r.report.held_out_pairs, gui.print("{d:.2}", .{r.report.fitted_median}) });
             _ = gui.paragraphAt(list, at.x, at.y + height + gui.px(note_gap), width, theme.colors.text_tertiary, note);
         }
     }

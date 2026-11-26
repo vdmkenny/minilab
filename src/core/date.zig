@@ -76,12 +76,6 @@ pub fn stepMonth(year: u16, month: u8, step: i2) struct { u16, u8 } {
     return if (month == 1) .{ year - 1, months_in_year } else .{ year, month - 1 };
 }
 
-/// The month's name, for the calendar.
-pub fn monthName(month: u8) []const u8 {
-    const names = [months_in_year][]const u8{ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" };
-    return names[month - 1];
-}
-
 test "only ISO dates count as dates" {
     try std.testing.expectEqual(Date{ .year = 2026, .month = 10 }, Date.parse("2026-10").?);
     try std.testing.expectEqual(Date{ .year = 2026, .month = 2, .day = 28 }, Date.parse("2026-02-28").?);

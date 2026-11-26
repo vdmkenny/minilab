@@ -9,6 +9,7 @@ const gui = @import("../ui/gui.zig");
 const theme = @import("../ui/theme.zig");
 const fonts = @import("../ui/fonts.zig");
 const labels = @import("labels.zig");
+const i18n = @import("../i18n/i18n.zig");
 const Texture = @import("../platform/texture.zig").Texture;
 const Frame = @import("frame.zig").Frame;
 const Library = @import("library.zig").Library;
@@ -139,11 +140,7 @@ const Compare = enum {
     positive,
 
     fn label(compare: Compare) [:0]const u8 {
-        return switch (compare) {
-            .split => "Split",
-            .negative => "Negative",
-            .positive => "Positive",
-        };
+        return i18n.label(i18n.t.develop.compare, compare);
     }
 };
 /// How big the viewer shows the frame.
@@ -541,6 +538,12 @@ pub const State = struct {
         state.picking = null;
     }
 
+    /// Starts the crop tool, or ends it keeping its crop if it's on.
+    fn toggleCrop(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
+        const done = if (state.cropping != null) state.endCrop(gpa, io, library, true) else state.startCrop(gpa, library);
+        done catch |err| std.log.err("crop failed: {t}", .{err});
+    }
+
     /// Ends the crop tool. Keeps the new crop if `keep` is set, or else goes back to the old one.
     fn endCrop(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, keep: bool) !void {
         const edit = state.cropping orelse return;
@@ -626,7 +629,7 @@ pub const State = struct {
             const saved = rl.frames.items[index];
             const scan_path = try rl.scanPath(gpa, index);
             defer gpa.free(scan_path);
-            var frame: Frame = try .load(gpa, io, scan_path, gui.print("Frame {d}", .{index + 1}), saved.crop, saved.quarter_turns, saved.mirrored);
+            var frame: Frame = try .load(gpa, io, scan_path, gui.say(i18n.t.develop.frame_name, .{index + 1}), saved.crop, saved.quarter_turns, saved.mirrored);
             if (saved.width == 0) {
                 // Rolls made before we recorded the scan size: the thumbnails need it for crops.
                 rl.frames.items[index].width = frame.scan_width;
@@ -709,7 +712,7 @@ pub const State = struct {
     /// way to import another .cube.
     fn drawLook(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library) void {
         const frame = &state.frame.?;
-        if (!gui.beginCombo("look", frame.look.label(), 0, .tall)) return;
+        if (!gui.beginCombo("look", labels.look(&frame.look), 0, .tall)) return;
         defer gui.endCombo();
         if (c.ImGui_IsWindowAppearing()) {
             state.look_choices.deinit(gpa);
@@ -720,22 +723,22 @@ pub const State = struct {
             if (choice.group != group) {
                 group = choice.group;
                 c.ImGui_SeparatorText(switch (group) {
-                    .builtin => "Built in",
-                    .bundled => "Film looks",
-                    .imported => "Imported LUTs",
-                    .fitted => "Fitted looks",
+                    .builtin => i18n.t.develop.looks_built_in,
+                    .bundled => i18n.t.develop.looks_film,
+                    .imported => i18n.t.develop.looks_imported,
+                    .fitted => i18n.t.develop.looks_fitted,
                 });
                 if (group == .bundled) state.drawPacks(frame);
             }
             // The bundled looks are in their collections' menus.
             if (group == .bundled) continue;
             c.ImGui_PushIDInt(@intCast(i));
-            if (c.ImGui_SelectableEx(gui.print("{s}", .{choice.id.label()}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, choice.id);
+            if (c.ImGui_SelectableEx(gui.print("{s}", .{labels.look(&choice.id)}).ptr, choice.id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, choice.id);
             c.ImGui_PopID();
         }
         c.ImGui_Separator();
-        if (c.ImGui_SelectableEx("Import .cube…", false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
-        gui.tooltip("3D or 1D · sRGB or Rec. 709");
+        if (c.ImGui_SelectableEx(i18n.t.develop.import_cube, false, 0, gui.vec2(0, 0))) state.cube_dialog.show(gpa, io);
+        gui.tooltip(i18n.t.develop.import_cube_help);
     }
 
     /// Draws a menu for each collection of bundled looks, with its looks grouped by film.
@@ -750,7 +753,7 @@ pub const State = struct {
                 if (b.pack != pack) continue;
                 if (film != b.film) {
                     film = b.film;
-                    c.ImGui_SeparatorText(gui.print("{s}", .{b.film.label()}).ptr);
+                    c.ImGui_SeparatorText(gui.print("{s}", .{labels.lookFilm(b.film)}).ptr);
                 }
                 const id: look.Id = .ofBundled(i);
                 if (c.ImGui_SelectableEx(gui.print("{s}", .{b.name}).ptr, id.eql(&frame.look), 0, gui.vec2(0, 0))) state.setLook(frame, id);
@@ -779,20 +782,20 @@ pub const State = struct {
         if (rl.info.kind != .colour_negative or labels.stockGamma(rl.info.stock) == null) return;
         gui.rowLabel("");
         const scanner = Library.scannerOf(rl.info) orelse {
-            gui.paragraph(theme.colors.text_tertiary, "Stock balance · no scanner on this roll");
+            gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.stock_balance_no_scanner);
             return;
         };
         const measured = library.calibrations.rolls(scanner);
         var included = false;
         for (measured) |m| included = included or std.mem.eql(u8, m.roll, rl.info.name);
-        const status = if (measured.len == 0)
-            gui.print("{s} not calibrated", .{scanner})
-        else
-            gui.print("{s} calibrated from {d} {s}{s}", .{ scanner, measured.len, if (measured.len == 1) "roll" else "rolls", if (included) " · this one included" else "" });
+        const status = if (measured.len == 0) gui.say(i18n.t.develop.not_calibrated, .{scanner}) else status: {
+            const calibrated = gui.say(if (measured.len == 1) i18n.t.develop.calibrated_from_one_roll else i18n.t.develop.calibrated_from_rolls, .{ scanner, measured.len });
+            break :status if (included) gui.say(i18n.t.develop.this_roll_included, .{calibrated}) else calibrated;
+        };
         gui.paragraph(theme.colors.text_tertiary, status);
         gui.rowLabel("");
         c.ImGui_BeginDisabled(rl.frames.items.len < minilab.calibration.min_frames);
-        const label: [:0]const u8 = if (measured.len == 0) "Calibrate from this roll" else if (included) "Measure this roll again" else "Add this roll";
+        const label = if (measured.len == 0) i18n.t.develop.calibrate_from_roll else if (included) i18n.t.develop.measure_roll_again else i18n.t.develop.add_roll;
         if (gui.button(label)) state.calibrate(gpa, io, library, r, scanner);
         c.ImGui_EndDisabled();
         if (state.calibration_note.len > 0) {
@@ -816,14 +819,14 @@ pub const State = struct {
             slopes.append(gpa, s) catch return;
         }
         const factors = minilab.calibration.measure(slopes.items, gamma) orelse {
-            state.calibration_note.set("Measured {d} of {d} frames needed", .{ slopes.items.len, minilab.calibration.min_frames });
+            state.calibration_note.set("{s}", .{gui.say(i18n.t.develop.frames_needed, .{ slopes.items.len, minilab.calibration.min_frames })});
             return;
         };
         library.calibrations.add(io, scanner, .{ .roll = rl.info.name, .stock = rl.info.stock.?, .frames = @intCast(slopes.items.len), .factors = factors }) catch |err| {
-            state.calibration_note.set("Calibration not saved: {t}", .{err});
+            state.calibration_note.set("{s}", .{gui.say(i18n.t.develop.calibration_not_saved, .{@errorName(err)})});
             return;
         };
-        state.calibration_note.set("Measured {d} frames · red ×{d:.2}, blue ×{d:.2} against the datasheet", .{ slopes.items.len, factors[0], factors[2] });
+        state.calibration_note.set("{s}", .{gui.say(i18n.t.develop.calibration_measured, .{ slopes.items.len, gui.print("{d:.2}", .{factors[0]}), gui.print("{d:.2}", .{factors[2]}) })});
         state.applyStock(gpa, io, library, r);
     }
 
@@ -910,9 +913,7 @@ pub const State = struct {
         if (keys.contains(.before)) state.compare = if (state.compare == .negative) .positive else .negative;
         if (keys.contains(.split)) state.compare = if (state.compare == .split) .positive else .split;
         if (keys.contains(.cancel)) state.picking = null;
-        if (keys.contains(.crop)) {
-            if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err}) else state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
-        }
+        if (keys.contains(.crop)) state.toggleCrop(gpa, io, library);
         if (keys.contains(.confirm) and state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
         if (keys.contains(.cancel) and state.cropping != null) state.endCrop(gpa, io, library, false) catch |err| std.log.err("crop failed: {t}", .{err});
         if (keys.contains(.turn_right)) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
@@ -943,18 +944,18 @@ pub const State = struct {
         if (keys.contains(.sync) and state.rollIndex(library) != null) state.ask_sync = true;
         if (keys.contains(.copy_settings)) {
             state.clipboard = .of(frame);
-            return gui.print("Copied settings of {s}", .{frame.name});
+            return gui.say(i18n.t.develop.copied_settings, .{frame.name});
         }
         if (keys.contains(.paste_settings)) {
-            const copied = state.clipboard orelse return "Nothing copied yet";
+            const copied = state.clipboard orelse return i18n.t.develop.nothing_copied;
             state.paste(copied);
         }
         if (keys.contains(.paste_previous)) {
             const r = state.rollIndex(library) orelse return null;
             const index = state.selected orelse return null;
-            if (index == 0) return "No previous frame";
+            if (index == 0) return i18n.t.develop.no_previous_frame;
             const previous = library.rolls.items[r].frames.items[index - 1];
-            if (!previous.developed) return "Previous frame not developed";
+            if (!previous.developed) return i18n.t.develop.previous_not_developed;
             state.paste(.{ .look = previous.look, .settings = previous.settings });
         }
         return null;
@@ -1042,25 +1043,25 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
     var clicked: ?usize = null;
     const total = state.count(library);
     const header_y = c.ImGui_GetCursorPosY();
-    gui.heading("FRAMES");
+    gui.heading(i18n.t.develop.frames_heading);
     if (roll_index) |r| {
-        const counted = gui.print("{d} of {d}", .{ library.rolls.items[r].developedCount(), total });
+        const counted = gui.say(i18n.t.develop.developed_count, .{ library.rolls.items[r].developedCount(), total });
         c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - c.ImGui_CalcTextSize(counted).x, 0);
         c.ImGui_SetCursorPosY(header_y);
         gui.textColored(theme.colors.text_tertiary, counted);
-        gui.tooltip("Developed of all frames");
+        gui.tooltip(i18n.t.develop.developed_count_help);
     }
     c.ImGui_Dummy(gui.vec2(0, gui.px(frames_heading_gap) - c.ImGui_GetStyle().*.ItemSpacing.y * 2));
 
     if (roll_index == null) {
-        if (total == 0) gui.paragraph(theme.colors.text_tertiary, "No scans");
+        if (total == 0) gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.no_scans);
         for (state.loose.items, 0..) |path, i| {
             c.ImGui_PushIDInt(@intCast(i));
             if (c.ImGui_SelectableEx(gui.print("{s}", .{std.fs.path.basename(path)}), state.selected == i, 0, gui.vec2(0, 0))) clicked = i;
             c.ImGui_PopID();
         }
     } else if (total == 0) {
-        gui.paragraph(theme.colors.text_tertiary, "No frames");
+        gui.paragraph(theme.colors.text_tertiary, i18n.t.common.no_frames);
     } else {
         const r = roll_index.?;
         const list = c.ImGui_GetWindowDrawList();
@@ -1090,12 +1091,12 @@ fn drawFrames(state: *State, gpa: std.mem.Allocator, library: *Library, roll_ind
         gui.paragraph(theme.colors.text_tertiary, labels.rollFormatNote(library.rolls.items[r].info.format));
         const base = if (state.frame) |f| f.settings.base_source else .measured;
         gui.paragraph(theme.colors.text_tertiary, switch (base) {
-            .measured => "Base measured per frame",
-            .gaps => "Base from the gaps between frames",
-            .picked => "Base picked on this frame",
+            .measured => i18n.t.develop.base_measured_per_frame,
+            .gaps => i18n.t.develop.base_from_gaps,
+            .picked => i18n.t.develop.base_picked,
         });
     } else {
-        gui.paragraph(theme.colors.text_tertiary, "Loose scans · not saved");
+        gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.loose_scans);
     }
     return clicked;
 }
@@ -1160,45 +1161,43 @@ fn drawViewer(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
 /// the overlays, the crop and turn tools, and the pipeline.
 fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, list: *c.ImDrawList, origin: gui.Vec2, width: f32, toolbar_height: f32) void {
     c.ImDrawList_AddRectFilled(list, origin, gui.vec2(origin.x + width, origin.y + toolbar_height), theme.imU32(theme.colors.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, origin.y + toolbar_height - 1), gui.vec2(origin.x + width, origin.y + toolbar_height - 1), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + width, origin.y + toolbar_height - 1, theme.imU32(theme.colors.divider));
     c.ImGui_SetCursorScreenPos(gui.vec2(origin.x + gui.px(toolbar.padding_x), origin.y + gui.px(toolbar.padding_y)));
     if (gui.segmentedOf(Compare, "compare", std.enums.values(Compare), state.compare, Compare.label)) |picked| state.compare = picked;
     const controls_y = origin.y + (toolbar_height - 1 - c.ImGui_GetFrameHeight()) / 2;
     nextControl(toolbar.group_gap, controls_y);
-    if (gui.button("Fit")) {
+    if (gui.button(i18n.t.develop.fit)) {
         state.zoom = .fit;
         state.pan = .{ .x = 0, .y = 0 };
     }
-    shortcuts.tooltip("Whole frame", .zoom_out);
+    shortcuts.tooltip(i18n.t.develop.fit_help, .zoom_out);
     nextControl(toolbar.button_gap, controls_y);
     if (gui.button("100%")) state.zoom = .actual;
-    shortcuts.tooltip("Actual pixels · drag to move", .zoom_in);
+    shortcuts.tooltip(i18n.t.develop.actual_size_help, .zoom_in);
     nextControl(toolbar.group_gap, controls_y);
-    if (gui.checkbox("Clipping", &state.clipping)) state.shown_stale = true;
-    shortcuts.tooltip("Clipped highlights red, shadows blue", .clipping);
+    if (gui.checkbox(i18n.t.develop.clipping, &state.clipping)) state.shown_stale = true;
+    shortcuts.tooltip(i18n.t.develop.clipping_help, .clipping);
     nextControl(toolbar.group_gap, controls_y);
     if (gui.iconButton("loupe", if (state.loupe) .selected else .normal, .search)) state.loupe = !state.loupe;
-    shortcuts.tooltip("Loupe · full resolution", .loupe);
+    shortcuts.tooltip(i18n.t.develop.loupe_help, .loupe);
     nextControl(toolbar.group_gap, controls_y);
     c.ImGui_BeginDisabled(state.frame == null);
     const crop_clicked = gui.iconButton("crop", if (state.cropping != null) .selected else .normal, .crop);
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Crop and turn", .crop);
-    if (crop_clicked) {
-        if (state.cropping != null) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err}) else state.startCrop(gpa, library) catch |err| std.log.err("crop failed: {t}", .{err});
-    }
+    shortcuts.tooltip(i18n.t.develop.crop_help, .crop);
+    if (crop_clicked) state.toggleCrop(gpa, io, library);
     // Turning is quicker here than through the crop tool, and the crop tool keeps the buttons.
     c.ImGui_BeginDisabled(state.frame == null);
     nextControl(toolbar.button_gap, controls_y);
     if (gui.iconButton("turn left", .normal, .rotate_ccw)) state.turn(gpa, io, library, 3) catch |err| std.log.err("turn failed: {t}", .{err});
-    shortcuts.tooltip("Rotate left", .turn_left);
+    shortcuts.tooltip(i18n.t.develop.rotate_left, .turn_left);
     nextControl(toolbar.turn_gap, controls_y);
     if (gui.iconButton("turn right", .normal, .rotate_cw)) state.turn(gpa, io, library, 1) catch |err| std.log.err("turn failed: {t}", .{err});
-    shortcuts.tooltip("Rotate right", .turn_right);
+    shortcuts.tooltip(i18n.t.develop.rotate_right, .turn_right);
     c.ImGui_EndDisabled();
     if (state.cropping != null) {
         nextControl(toolbar.button_gap, controls_y);
-        if (gui.button("Auto")) {
+        if (gui.button(i18n.t.develop.auto_crop)) {
             const frame = &state.frame.?;
             if (frame.detect(gpa, state.format(library), state.dpi(library))) |area| {
                 const scale: f32 = @floatCast(frame.scale());
@@ -1206,15 +1205,15 @@ fn drawToolbar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libr
                 state.cropping.?.max = .{ @as(f32, @floatFromInt(area.x + area.width)) / scale, @as(f32, @floatFromInt(area.y + area.height)) / scale };
             } else |_| {}
         }
-        gui.tooltip("Detect the frame");
+        gui.tooltip(i18n.t.develop.auto_crop_help);
         nextControl(toolbar.button_gap, controls_y);
         if (gui.iconButton("mirror", if (state.cropping.?.mirrored) .selected else .normal, .flip_horizontal)) state.mirror(gpa, io, library) catch |err| std.log.err("mirror failed: {t}", .{err});
-        shortcuts.tooltip("Flip", .mirror);
+        shortcuts.tooltip(i18n.t.develop.flip, .mirror);
         nextControl(toolbar.button_gap, controls_y);
-        if (gui.buttonOf(.primary, "Done", gui.vec2(0, 0))) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
-        shortcuts.tooltip("Keeps the crop", .confirm);
+        if (gui.buttonOf(.primary, i18n.t.common.done, gui.vec2(0, 0))) state.endCrop(gpa, io, library, true) catch |err| std.log.err("crop failed: {t}", .{err});
+        shortcuts.tooltip(i18n.t.develop.keep_crop_help, .confirm);
     }
-    const pipeline = if (state.frame) |*f| (if (f.look.isNeutral()) "Scanner RGB, linear → sRGB" else gui.print("Scanner RGB, linear → {s} → sRGB", .{f.look.label()})) else "";
+    const pipeline = if (state.frame) |*f| (if (f.look.isNeutral()) i18n.t.develop.pipeline else gui.say(i18n.t.develop.pipeline_with_look, .{f.look.label()})) else "";
     // This is the toolbar's last control. The pipeline only shows where it won't run under the
     // controls, which the crop tool's buttons often reach.
     const controls_end = c.ImGui_GetItemRectMax().x;
@@ -1238,7 +1237,7 @@ fn nextControl(gap: f32, y: f32) void {
 fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize, list: *c.ImDrawList, origin: gui.Vec2, width: f32, info_height: f32) void {
     const info_top = origin.y;
     c.ImDrawList_AddRectFilled(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top + info_height), theme.imU32(theme.colors.page));
-    c.ImDrawList_AddLine(list, gui.vec2(origin.x, info_top), gui.vec2(origin.x + width, info_top), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(list, origin.x, origin.x + width, info_top, theme.imU32(theme.colors.divider));
     if (state.frame) |frame| {
         // The rating on the right, and the frame's details from the left up to it.
         const limit = drawRating(state, io, library, list, origin.x + width - gui.px(toolbar.padding_x), info_top + info_height / 2);
@@ -1253,11 +1252,11 @@ fn drawInfoLine(state: *State, io: std.Io, library: *Library, roll_index: ?usize
             items[n] = labels.sizeAndRatio(library.rolls.items[r].info.format);
             n += 1;
         }
-        items[n] = gui.print("scan {d} × {d} px, 48-bit linear", .{ frame.scan_width, frame.scan_height });
+        items[n] = gui.say(i18n.t.develop.info_scan, .{ frame.scan_width, frame.scan_height });
         n += 1;
         if (frame.crop) |area| {
-            const turned = if (frame.quarter_turns == 0) "" else gui.print(", turned {d}°", .{@as(u16, frame.quarter_turns) * 90});
-            items[n] = gui.print("crop {d} × {d} px{s}{s}", .{ area.width, area.height, turned, if (frame.mirrored) ", mirrored" else "" });
+            const turned = if (frame.quarter_turns == 0) "" else gui.say(i18n.t.develop.info_turned, .{degrees(frame.quarter_turns)});
+            items[n] = gui.say(i18n.t.develop.info_crop, .{ area.width, area.height, turned, if (frame.mirrored) i18n.t.develop.info_mirrored else "" });
             n += 1;
         }
         for (items[0..n]) |item| {
@@ -1286,7 +1285,7 @@ fn drawRating(state: *State, io: std.Io, library: *Library, list: *c.ImDrawList,
     c.ImGui_SetCursorScreenPos(gui.vec2(reject_x, top));
     if (c.ImGui_InvisibleButton("reject", gui.vec2(size, size), 0)) next.rejected = !current.rejected;
     const reject_hovered = c.ImGui_IsItemHovered(0);
-    if (current.rejected) shortcuts.tooltip("Clear reject", .unreject) else shortcuts.tooltip("Reject", .reject);
+    if (current.rejected) shortcuts.tooltip(i18n.t.develop.clear_reject, .unreject) else shortcuts.tooltip(i18n.t.develop.reject, .reject);
     const cross = if (current.rejected) theme.red else if (reject_hovered) theme.colors.text else theme.colors.text_tertiary;
     gui.cross(list, gui.vec2(reject_x + size / 2, top + size / 2), size * reject_arm, gui.px(reject_stroke), cross);
 
@@ -1318,7 +1317,7 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     const frame = if (state.frame) |*f| f else {
         if (state.failed) |index| {
             c.ImGui_SetCursorScreenPos(gui.vec2(area_min.x + gui.px(picture_margin_x), area_min.y + gui.px(picture_margin_x)));
-            gui.textColored(theme.colors.text_tertiary, gui.print("Frame {d} failed to load", .{index + 1}));
+            gui.textColored(theme.colors.text_tertiary, gui.say(i18n.t.develop.failed_to_load, .{index + 1}));
         }
         return;
     };
@@ -1438,13 +1437,13 @@ fn drawComparison(state: *const State, list: *c.ImDrawList, picture: PictureOnSc
         c.ImDrawList_AddRectFilled(list, gui.vec2(split_now - gui.px(split_line) / 2, min.y), gui.vec2(split_now + gui.px(split_line) / 2, max.y), amber);
         c.ImDrawList_AddCircleFilled(list, gui.vec2(split_now, (min.y + max.y) / 2), gui.px(split_handle), amber, split_handle_segments);
         const inset = gui.px(tag_inset);
-        tag(list, gui.vec2(min.x + inset, min.y + inset), "Negative", .left);
-        tag(list, gui.vec2(max.x - inset, min.y + inset), "Positive", .right);
+        tag(list, gui.vec2(min.x + inset, min.y + inset), Compare.negative.label(), .left);
+        tag(list, gui.vec2(max.x - inset, min.y + inset), Compare.positive.label(), .right);
     }
     if (state.picking) |picking| {
         const what = switch (picking) {
-            .base => "Click the film base · Esc to cancel",
-            .neutral => "Click something neutral gray · Esc to cancel",
+            .base => i18n.t.develop.pick_base_hint,
+            .neutral => i18n.t.develop.pick_neutral_hint,
         };
         // Centred along the bottom.
         const box = tagSize(what);
@@ -1507,8 +1506,8 @@ fn drawLoupe(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     c.ImDrawList_AddImageRounded(list, texture.ref(), min, max, gui.vec2(0, 0), gui.vec2(1, 1), 0xFFFFFFFF, radius, 0);
     // A dark ring and a light one, so the edge shows on any picture, and a small mark at the
     // centre, where a click picks.
-    c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(loupe_ring.outer_offset), theme.imU32(theme.colors.header), loupe_ring.segments, gui.px(loupe_ring.outer));
-    c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.colors.text), loupe_ring.segments, gui.px(loupe_ring.inner));
+    c.ImDrawList_AddCircleEx(list, centre, radius + gui.px(loupe_ring.outer_offset), theme.imU32(theme.colors.header), loupe_ring.segments, gui.px(loupe_ring.outer), 0);
+    c.ImDrawList_AddCircleEx(list, centre, radius, theme.imU32(theme.colors.text), loupe_ring.segments, gui.px(loupe_ring.inner), 0);
     gui.plus(list, centre, gui.px(loupe_ring.mark), 1, theme.withAlpha(theme.colors.text, loupe_ring.mark_alpha));
 }
 
@@ -1554,8 +1553,8 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     for ([_]f32{ 1.0 / 3.0, 2.0 / 3.0 }) |t| {
         const x = box_min.x + (box_max.x - box_min.x) * t;
         const y = box_min.y + (box_max.y - box_min.y) * t;
-        c.ImDrawList_AddLine(list, gui.vec2(x, box_min.y), gui.vec2(x, box_max.y), thirds);
-        c.ImDrawList_AddLine(list, gui.vec2(box_min.x, y), gui.vec2(box_max.x, y), thirds);
+        c.ImDrawList_AddLineV(list, x, box_min.y, box_max.y, thirds);
+        c.ImDrawList_AddLineH(list, box_min.x, box_max.x, y, thirds);
     }
     const amber = theme.imU32(theme.colors.accent);
     c.ImDrawList_AddRectEx(list, box_min, box_max, amber, 0, gui.px(crop_line), 0);
@@ -1564,13 +1563,22 @@ fn cropTool(edit: *CropEdit, list: *c.ImDrawList, origin: gui.Vec2, scale: f32, 
     for ([_]gui.Vec2{ box_min, gui.vec2(box_max.x, box_min.y), box_max, gui.vec2(box_min.x, box_max.y) }, 0..) |corner, i| {
         const sx: f32 = if (i == 1 or i == 2) -1 else 1;
         const sy: f32 = if (i >= 2) -1 else 1;
-        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x + sx * arm, corner.y), amber, thick);
-        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x, corner.y + sy * arm), amber, thick);
+        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x + sx * arm, corner.y), amber, thick, 0);
+        c.ImDrawList_AddLineEx(list, corner, gui.vec2(corner.x, corner.y + sy * arm), amber, thick, 0);
     }
     if (edit.turns != 0 or edit.mirrored) {
-        const note = if (edit.turns == 0) "Mirrored after cropping" else if (edit.mirrored) gui.print("Mirrored and turned {d}° after cropping", .{@as(u16, edit.turns) * 90}) else gui.print("Turned {d}° after cropping", .{@as(u16, edit.turns) * 90});
+        const note = if (edit.turns == 0)
+            i18n.t.develop.mirrored_after_cropping
+        else
+            gui.say(if (edit.mirrored) i18n.t.develop.mirrored_and_turned_after_cropping else i18n.t.develop.turned_after_cropping, .{degrees(edit.turns)});
         tag(list, gui.vec2(box_min.x + gui.px(crop_note_inset), box_min.y + gui.px(crop_note_inset)), note, .left);
     }
+}
+
+/// The angle of `quarter_turns`, in degrees.
+fn degrees(quarter_turns: u2) u16 {
+    const quarter_turn = 90;
+    return @as(u16, quarter_turns) * quarter_turn;
 }
 
 /// Draws a label over the picture, on a dark background, running from `at` towards `side`.
@@ -1623,7 +1631,7 @@ fn drawSettingsColumn(state: *State, gpa: std.mem.Allocator, io: std.Io, library
     _ = c.ImGui_BeginChild("settings bar", gui.vec2(gui.px(settings_width), bar), c.ImGuiChildFlags_AlwaysUseWindowPadding, c.ImGuiWindowFlags_NoScrollbar);
     c.ImGui_PopStyleVar();
     gui.edge(.left);
-    c.ImDrawList_AddLine(c.ImGui_GetWindowDrawList(), corner, gui.vec2(corner.x + gui.px(settings_width), corner.y), theme.imU32(theme.colors.divider));
+    c.ImDrawList_AddLineH(c.ImGui_GetWindowDrawList(), corner.x, corner.x + gui.px(settings_width), corner.y, theme.imU32(theme.colors.divider));
     c.ImGui_BeginDisabled(state.cropping != null);
     if (state.frame != null) drawBottomBar(state, gpa, io, library, roll_index);
     c.ImGui_EndDisabled();
@@ -1640,55 +1648,55 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     drawBase(state);
 
     gui.beginSection("density");
-    gui.heading("DENSITY");
+    gui.heading(i18n.t.develop.density_heading);
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
         defer c.ImGui_PopStyleVar();
         // Each slider resets to the frame's automatic setting, on its current film base.
         const auto = frame.automaticSettings();
-        if (gui.sliderRow("D max", &s.density_range, 0.1, 6, "{d:.2}", .{
+        if (gui.sliderRow(i18n.t.develop.d_max, &s.density_range, 0.1, 6, "{d:.2}", .{
             .default = auto.density_range,
-            .help = "Lower brightens highlights · higher keeps them from clipping",
+            .help = i18n.t.develop.d_max_help,
         })) state.changed();
-        if (gui.sliderRow("Offset", &s.offset, -1, 1, "{d:.2}", .{
+        if (gui.sliderRow(i18n.t.develop.offset, &s.offset, -1, 1, "{d:.2}", .{
             .default = auto.offset,
-            .help = "Higher sends more shadows to black · lower lifts them",
+            .help = i18n.t.develop.offset_help,
         })) state.changed();
         drawMatrix(state);
         c.ImGui_Dummy(gui.vec2(0, gui.px(inversion_gap)));
-        gui.heading("INVERSION");
+        gui.heading(i18n.t.develop.inversion_heading);
         c.ImGui_BeginDisabled(fitted);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Contrast", &s.contrast, 1, 8, "{d:.2}", .{
+        if (gui.sliderRow(i18n.t.develop.contrast, &s.contrast, 1, 8, "{d:.2}", .{
             .default = auto.contrast,
-            .help = "Higher adds contrast · lower flattens it",
+            .help = i18n.t.develop.contrast_help,
         })) state.changed();
-        if (gui.sliderRow("Black", &s.black, -0.5, 0.5, "{d:.3}", .{
+        if (gui.sliderRow(i18n.t.develop.black, &s.black, -0.5, 0.5, "{d:.3}", .{
             .default = auto.black,
-            .help = "Higher lifts black toward gray · lower deepens it",
+            .help = i18n.t.develop.black_help,
         })) state.changed();
-        if (gui.sliderRow("Highlight roll-off", &s.roll_off, 0.01, 0.99, "{d:.2}", .{
+        if (gui.sliderRow(i18n.t.develop.highlight_roll_off, &s.roll_off, 0.01, 0.99, "{d:.2}", .{
             .default = auto.roll_off,
-            .help = "Lower eases highlights off sooner · higher keeps them until they clip",
+            .help = i18n.t.develop.highlight_roll_off_help,
         })) state.changed();
-        if (gui.sliderRow("Exposure", &s.exposure, 0.5, 2, "{d:.2}", .{
+        if (gui.sliderRow(i18n.t.develop.exposure, &s.exposure, 0.5, 2, "{d:.2}", .{
             .default = auto.exposure,
-            .help = "Higher brightens the picture · lower darkens it",
+            .help = i18n.t.develop.exposure_help,
         })) state.changed();
     }
     gui.endSection(true);
 
     gui.beginSection("balance");
-    gui.heading("COLOR BALANCE");
+    gui.heading(i18n.t.develop.color_balance_heading);
     {
         c.ImGui_BeginDisabled(s.kind.isMonochrome());
         defer c.ImGui_EndDisabled();
         {
             c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
             defer c.ImGui_PopStyleVar();
-            if (gui.sliderRow("Saturation", &s.saturation, 0, 2, "{d:.2}", .{
+            if (gui.sliderRow(i18n.t.develop.saturation, &s.saturation, 0, 2, "{d:.2}", .{
                 .default = (develop.Settings{}).saturation,
-                .help = "Higher is more colorful · 0 gray, 1 unchanged",
+                .help = i18n.t.develop.saturation_help,
             })) state.changed();
         }
         const gap = gui.px(range_gap);
@@ -1696,16 +1704,16 @@ fn drawSettings(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(range_padding_x), gui.px(small_button_padding_y)));
         for (comptime std.enums.values(develop.Range), 0..) |range, i| {
             if (i > 0) c.ImGui_SameLineEx(0, gap);
-            if (gui.buttonOf(if (state.range == range) .selected else .unselected, gui.print("{s}", .{range.label()}), gui.vec2(third / gui.scale, 0))) state.range = range;
+            if (gui.buttonOf(if (state.range == range) .selected else .unselected, gui.print("{s}", .{labels.range(range)}), gui.vec2(third / gui.scale, 0))) state.range = range;
         }
         c.ImGui_PopStyleVar();
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(slider_row_gap)));
         defer c.ImGui_PopStyleVar();
         const which = @backingInt(state.range);
         if (temperatureRow(&s.temperature[which])) state.changed();
-        if (gui.sliderRow("Tint", &s.tint[which], -100, 100, "{d:.0}", .{
+        if (gui.sliderRow(i18n.t.develop.tint, &s.tint[which], -100, 100, "{d:.0}", .{
             .default = 0,
-            .help = "Higher is more magenta · lower more green",
+            .help = i18n.t.develop.tint_help,
         })) state.changed();
     }
     gui.endSection(true);
@@ -1720,7 +1728,7 @@ fn drawDust(state: *State) void {
     const Dust = minilab.dust.Settings;
     gui.beginSection("dust");
     fonts.pushSized(.semibold, fonts.small_size);
-    const toggled = gui.checkbox("REMOVE DUST", &d.remove);
+    const toggled = gui.checkbox(i18n.t.develop.remove_dust_heading, &d.remove);
     fonts.pop();
     if (toggled) state.changed();
     {
@@ -1728,18 +1736,18 @@ fn drawDust(state: *State) void {
         defer c.ImGui_PopStyleVar();
         c.ImGui_BeginDisabled(!d.remove);
         defer c.ImGui_EndDisabled();
-        if (gui.sliderRow("Threshold", &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{
+        if (gui.sliderRow(i18n.t.develop.threshold, &d.threshold, Dust.min_threshold, Dust.max_threshold, "{d:.1}×", .{
             .default = Dust.default_threshold,
-            .help = "Lower removes fainter specks · higher only obvious ones",
+            .help = i18n.t.develop.threshold_help,
         })) state.changed();
-        if (gui.sliderRow("Max size", &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{
+        if (gui.sliderRow(i18n.t.develop.max_size, &d.max_size, Dust.min_max_size, Dust.max_max_size, "{d:.1}%", .{
             .default = Dust.default_max_size,
-            .help = "Larger specks are kept · percent of the frame's long side",
+            .help = i18n.t.develop.max_size_help,
         })) state.changed();
-        if (gui.sliderRow("Max density", &d.max_density, Dust.min_max_density, Dust.max_max_density, "{d:.2} D", .{
+        if (gui.sliderRow(i18n.t.develop.max_density, &d.max_density, Dust.min_max_density, Dust.max_max_density, "{d:.2} D", .{
             .default = Dust.default_max_density,
-            .help = "Stronger specks are kept · lower to protect lights and stars",
-            .at_max = "Any",
+            .help = i18n.t.develop.max_density_help,
+            .at_max = i18n.t.develop.any_density,
         })) state.changed();
     }
     gui.endSection(false);
@@ -1750,28 +1758,28 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
     const frame = &state.frame.?;
     const s = &frame.settings;
     gui.beginSection("preset");
-    gui.heading("PRESET");
+    gui.heading(i18n.t.develop.preset_heading);
     {
         c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(row_gap_x), gui.px(row_gap)));
         defer c.ImGui_PopStyleVar();
-        gui.rowLabel("Film type");
+        gui.rowLabel(i18n.t.develop.film_type);
         if (s.finished) {
             // A finished picture is already a positive, so there's no film to invert.
             c.ImGui_BeginDisabled(true);
-            _ = gui.combo("film type", &.{"Finished scan"}, 0, 0);
+            _ = gui.combo("film type", &.{i18n.t.develop.finished_scan}, 0, 0);
             c.ImGui_EndDisabled();
         } else if (gui.comboOf(develop.FilmKind, "film type", &labels.film_kinds, s.kind, labels.filmKind, 0)) |picked| {
             if (roll_index) |r| prepareStock(library, &library.rolls.items[r], frame, picked);
             frame.measure(picked);
             state.changed();
         }
-        gui.rowLabel("Stock");
+        gui.rowLabel(i18n.t.develop.stock);
         drawStock(state, gpa, io, library, roll_index);
-        gui.rowLabel("Look");
+        gui.rowLabel(i18n.t.develop.look);
         state.drawLook(gpa, io, library);
-        gui.rowLabel("Tone");
+        gui.rowLabel(i18n.t.develop.tone);
         c.ImGui_BeginDisabled(fitted);
-        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, develop.Tone.label, 0)) |picked| {
+        if (gui.comboOf(develop.Tone, "tone", std.enums.values(develop.Tone), s.tone, labels.tone, 0)) |picked| {
             s.tone = picked;
             state.changed();
         }
@@ -1779,7 +1787,7 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
         drawWhiteBalance(state, library, roll_index);
         if (roll_index) |r| state.drawCalibration(gpa, io, library, r);
     }
-    if (fitted) gui.paragraph(theme.colors.text_tertiary, "Fitted look · no Tone or Inversion");
+    if (fitted) gui.paragraph(theme.colors.text_tertiary, i18n.t.develop.fitted_note);
     gui.endSection(true);
 }
 
@@ -1788,11 +1796,11 @@ fn drawPreset(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Libra
 fn drawWhiteBalance(state: *State, library: *Library, roll_index: ?usize) void {
     const frame = &state.frame.?;
     const s = &frame.settings;
-    gui.rowLabel("White balance");
+    gui.rowLabel(i18n.t.develop.white_balance);
     const modes = comptime std.enums.values(develop.WhiteBalance);
     var mode_names: [modes.len][]const u8 = undefined;
     const maker = if (roll_index) |r| (if (labels.findStock(library.rolls.items[r].info.stock orelse "")) |choice| (if (choice.preset) |p| p.maker else null) else null) else null;
-    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) m.label() else if (maker == null) "Stock (no preset)" else if (frame.stock_slopes == null) "Stock (calibrate first)" else gui.print("Stock ({s})", .{maker.?});
+    for (&mode_names, modes) |*n, m| n.* = if (m != .stock) labels.whiteBalance(m) else if (maker == null) i18n.t.develop.stock_balance_no_preset else if (frame.stock_slopes == null) i18n.t.develop.stock_balance_calibrate_first else gui.say(i18n.t.develop.stock_balance_of, .{maker.?});
     if (gui.combo("white balance", &mode_names, gui.indexIn(develop.WhiteBalance, modes, s.white_balance), 0)) |picked| {
         switch (modes[picked]) {
             .picked => state.picking = .neutral,
@@ -1808,11 +1816,11 @@ fn drawWhiteBalance(state: *State, library: *Library, roll_index: ?usize) void {
 fn temperatureRow(kelvin: *f32) bool {
     c.ImGui_PushID("Temperature");
     defer c.ImGui_PopID();
-    gui.rowLabel("Temperature");
+    gui.rowLabel(i18n.t.develop.temperature);
     var mired = develop.mired(kelvin.*);
     var changed = gui.slider("slider", &mired, develop.mired(develop.min_kelvin), develop.mired(develop.max_kelvin), 0);
     if (changed) kelvin.* = @round(develop.kelvinOfMired(mired) / kelvin_step) * kelvin_step;
-    gui.tooltip("Lower for warm light, like tungsten · higher for shade");
+    gui.tooltip(i18n.t.develop.temperature_help);
     if (gui.valueAndReset(gui.print("{d:.0} K", .{kelvin.*}), gui.print("{d:.0} K", .{develop.reference_kelvin}))) {
         kelvin.* = develop.reference_kelvin;
         changed = true;
@@ -1825,21 +1833,21 @@ fn temperatureRow(kelvin: *f32) bool {
 fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
     const r = roll_index orelse {
         c.ImGui_BeginDisabled(true);
-        _ = gui.combo("stock", &.{"None"}, 0, 0);
+        _ = gui.combo("stock", &.{i18n.t.common.none}, 0, 0);
         c.ImGui_EndDisabled();
         return;
     };
     const info = &library.rolls.items[r].info;
     const frame = &state.frame.?;
     var buffer: [labels.stock_choices.len + 1][]const u8 = undefined;
-    const names = labels.stockNames(frame.settings.kind, "None", &buffer);
+    const names = labels.stockNames(frame.settings.kind, i18n.t.common.none, &buffer);
     var chosen: usize = names.len - 1;
     if (info.stock) |stock| {
         for (names[0 .. names.len - 1], 0..) |name, i| if (std.mem.eql(u8, name, stock)) {
             chosen = i;
         };
     }
-    if (gui.searchCombo("stock", names, chosen, 0, "Search stocks")) |picked| {
+    if (gui.searchCombo("stock", names, chosen, 0, i18n.t.develop.search_stocks)) |picked| {
         info.stock = if (picked < names.len - 1) names[picked] else null;
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
@@ -1847,16 +1855,16 @@ fn drawStock(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Librar
     const choice = labels.findStock(info.stock orelse "") orelse return;
     if (choice.preset) |preset| {
         gui.tooltip(preset.source);
-    } else gui.tooltip("No datasheet numbers");
+    } else gui.tooltip(i18n.t.develop.no_datasheet);
     // Only a stock with a preset has something to correct by. With corrections off, the stock
     // is just the roll's metadata.
     if (choice.preset == null) return;
     gui.rowLabel("");
-    if (gui.checkbox("Datasheet corrections", &info.stock_corrections)) {
+    if (gui.checkbox(i18n.t.develop.datasheet_corrections, &info.stock_corrections)) {
         library.rolls.items[r].saveInfo(io) catch |err| std.log.err("can't save the roll: {t}", .{err});
         state.applyStock(gpa, io, library, r);
     }
-    gui.tooltip("Per-layer datasheet curves");
+    gui.tooltip(i18n.t.develop.datasheet_corrections_help);
 }
 
 /// Draws the film base section: its colour, where it comes from, and the picker.
@@ -1875,12 +1883,12 @@ fn drawBase(state: *State) void {
     gui.outline(swatch_min, swatch_max, theme.withAlpha(theme.colors.text, swatch_outline), gui.px(gui.choice_rounding), 1);
     const text_x = corner.x + side + gui.px(swatch_gap);
     fonts.push(.semibold);
-    c.ImDrawList_AddText(list, gui.vec2(text_x, corner.y + row_height / 2 - c.ImGui_GetTextLineHeight() * base_title_raise), theme.imU32(theme.colors.text), "Film base");
+    c.ImDrawList_AddText(list, gui.vec2(text_x, corner.y + row_height / 2 - c.ImGui_GetTextLineHeight() * base_title_raise), theme.imU32(theme.colors.text), i18n.t.develop.film_base);
     fonts.pop();
     const source = switch (frame.settings.base_source) {
-        .measured => "Thinnest film in this frame",
-        .gaps => if (frame.base_from_roll) "From the gaps between the roll's frames" else "From the gaps beside this frame",
-        .picked => "Picked on this frame",
+        .measured => i18n.t.develop.base_thinnest,
+        .gaps => if (frame.base_from_roll) i18n.t.develop.base_from_roll_gaps else i18n.t.develop.base_from_frame_gaps,
+        .picked => i18n.t.develop.base_picked_here,
     };
     c.ImDrawList_AddText(list, gui.vec2(text_x, corner.y + row_height / 2 + gui.px(base_source_drop)), theme.imU32(theme.colors.text_tertiary), source);
     const pick_side = c.ImGui_GetFrameHeight();
@@ -1888,7 +1896,7 @@ fn drawBase(state: *State) void {
     if (gui.iconButton("pick base", if (state.picking == .base) .selected else .normal, .pipette)) {
         state.picking = if (state.picking == .base) null else .base;
     }
-    shortcuts.tooltip("Pick the film base", .base);
+    shortcuts.tooltip(i18n.t.develop.pick_base_help, .base);
     c.ImGui_SetCursorScreenPos(gui.vec2(corner.x, corner.y + row_height));
     c.ImGui_Dummy(gui.vec2(0, 0));
     gui.endSection(true);
@@ -1897,17 +1905,18 @@ fn drawBase(state: *State) void {
 /// Draws the density matrix row and its editor.
 fn drawMatrix(state: *State) void {
     const s = &state.frame.?.settings;
-    gui.rowLabel("Matrix");
+    gui.rowLabel(i18n.t.develop.matrix);
     const is_identity = std.meta.eql(s.matrix, develop.identity);
-    const edit_width = gui.px(gui.value_column);
-    gui.textColored(theme.colors.text_tertiary, if (is_identity) "Identity" else "Custom");
+    // As wide as the values above it, or wider if the word needs it.
+    const edit_width = @max(gui.px(gui.value_column), gui.fittedWidth(i18n.t.common.edit, edit_padding_x));
+    gui.textColored(theme.colors.text_tertiary, if (is_identity) i18n.t.develop.identity else i18n.t.develop.custom);
     c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - edit_width, 0);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_FramePadding, gui.vec2(gui.px(edit_padding_x), gui.px(small_button_padding_y)));
-    if (gui.buttonOf(.normal, "Edit", gui.vec2(gui.value_column, 0))) _ = c.ImGui_OpenPopup("matrix", 0);
+    if (gui.buttonOf(.normal, i18n.t.common.edit, gui.vec2(edit_width / gui.scale, 0))) _ = c.ImGui_OpenPopup("matrix", 0);
     c.ImGui_PopStyleVar();
     if (!c.ImGui_BeginPopup("matrix", 0)) return;
     defer c.ImGui_EndPopup();
-    gui.heading("DENSITY MATRIX");
+    gui.heading(i18n.t.develop.density_matrix_heading);
     for (&s.matrix, [_][]const u8{ "R", "G", "B" }) |*row, name| {
         c.ImGui_AlignTextToFramePadding();
         gui.textColored(theme.colors.text_secondary, name);
@@ -1917,23 +1926,23 @@ fn drawMatrix(state: *State) void {
             if (c.ImGui_DragFloatEx(gui.print("##{s}{d}", .{ name, i }), v, 0.002, -2, 3, "%.3f", 0)) state.changed();
         }
     }
-    if (gui.button("Identity")) {
+    if (gui.button(i18n.t.develop.identity)) {
         s.matrix = develop.identity;
         state.changed();
     }
 }
 
 fn drawBottomBar(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Library, roll_index: ?usize) void {
-    const reset_width = c.ImGui_CalcTextSize("Reset").x + gui.px(2 * reset_padding);
+    const reset_width = c.ImGui_CalcTextSize(i18n.t.common.reset).x + gui.px(2 * reset_padding);
     const sync_width = c.ImGui_GetContentRegionAvail().x - reset_width - gui.px(bar_gap);
     c.ImGui_BeginDisabled(roll_index == null);
-    if (gui.buttonOf(.primary, "Sync to roll…", gui.vec2(sync_width / gui.scale, bottom_bar_height)) or state.ask_sync) _ = c.ImGui_OpenPopup("sync", 0);
+    if (gui.buttonOf(.primary, i18n.t.develop.sync_to_roll, gui.vec2(sync_width / gui.scale, bottom_bar_height)) or state.ask_sync) _ = c.ImGui_OpenPopup("sync", 0);
     state.ask_sync = false;
     c.ImGui_EndDisabled();
-    shortcuts.tooltip("Sync to roll", .sync);
+    shortcuts.tooltip(i18n.t.develop.sync_to_roll_help, .sync);
     c.ImGui_SameLineEx(0, gui.px(bar_gap));
-    if (gui.buttonOf(.outline, "Reset", gui.vec2(reset_width / gui.scale, bottom_bar_height))) state.reset(io, library);
-    shortcuts.tooltip("Reset", .reset);
+    if (gui.buttonOf(.outline, i18n.t.common.reset, gui.vec2(reset_width / gui.scale, bottom_bar_height))) state.reset(io, library);
+    shortcuts.tooltip(i18n.t.common.reset, .reset);
 
     const r = roll_index orelse return;
     drawSyncMenu(state, gpa, io, library, r);
@@ -1963,24 +1972,24 @@ fn drawSyncMenu(state: *State, gpa: std.mem.Allocator, io: std.Io, library: *Lib
     if (!c.ImGui_BeginPopup("sync", 0)) return;
     defer c.ImGui_EndPopup();
     const rl = &library.rolls.items[r];
-    gui.heading("SYNC TO ROLL");
+    gui.heading(i18n.t.develop.sync_heading);
     const others = rl.frames.items.len -| 1;
-    gui.text(gui.print("To the {d} other {s} of {s}", .{ others, if (others == 1) "frame" else "frames", rl.info.name }));
+    gui.text(gui.say(if (others == 1) i18n.t.develop.sync_to_one_other else i18n.t.develop.sync_to_others, .{ others, rl.info.name }));
     const groups = [_]struct { *bool, [:0]const u8 }{
-        .{ &state.sync.look, "Look, tone and saturation" },
-        .{ &state.sync.balance, "White balance" },
-        .{ &state.sync.density, "Density: D max and offset" },
-        .{ &state.sync.base, "Film base" },
-        .{ &state.sync.dust, "Dust removal" },
-        .{ &state.sync.geometry, "Crop, turns and mirror" },
+        .{ &state.sync.look, i18n.t.develop.sync_look },
+        .{ &state.sync.balance, i18n.t.develop.white_balance },
+        .{ &state.sync.density, i18n.t.develop.sync_density },
+        .{ &state.sync.base, i18n.t.develop.film_base },
+        .{ &state.sync.dust, i18n.t.develop.sync_dust },
+        .{ &state.sync.geometry, i18n.t.develop.sync_geometry },
     };
     for (groups) |group| _ = gui.checkbox(group[1], group[0]);
-    if (gui.buttonOf(.primary, "Sync", gui.vec2(0, 0))) {
+    if (gui.buttonOf(.primary, i18n.t.develop.sync, gui.vec2(0, 0))) {
         syncRoll(state, gpa, io, library, r);
         c.ImGui_CloseCurrentPopup();
     }
     c.ImGui_SameLine();
-    if (gui.button("Cancel")) c.ImGui_CloseCurrentPopup();
+    if (gui.button(i18n.t.common.cancel)) c.ImGui_CloseCurrentPopup();
 }
 
 /// What Sync copies to the other frames.
@@ -2061,14 +2070,20 @@ fn drawHistogramSection(frame: *Frame) void {
     gui.beginSection("histogram");
     drawHistogram(frame);
     fonts.pushSized(.regular, fonts.small_size);
-    const shadows = gui.print("Shadows clipped {d:.1}%", .{frame.clipped_shadows * 100});
-    const highlights = gui.print("Highlights clipped {d:.1}%", .{frame.clipped_highlights * 100});
+    const shadows = gui.say(i18n.t.develop.shadows_clipped, .{percent(frame.clipped_shadows)});
+    const highlights = gui.say(i18n.t.develop.highlights_clipped, .{percent(frame.clipped_highlights)});
     c.ImGui_SetCursorPosY(c.ImGui_GetCursorPosY() - gui.px(clipping_raise));
     gui.textColored(theme.colors.text_tertiary, shadows);
     c.ImGui_SameLineEx(c.ImGui_GetContentRegionAvail().x + c.ImGui_GetCursorPosX() - c.ImGui_CalcTextSize(highlights).x, 0);
     gui.textColored(theme.colors.text_tertiary, highlights);
     fonts.pop();
     gui.endSection(true);
+}
+
+/// `share` as a percentage, to one decimal place.
+fn percent(share: f32) [:0]const u8 {
+    const hundred = 100;
+    return gui.print("{d:.1}", .{share * hundred});
 }
 
 /// Draws the rendering's histogram, with each channel as a filled area.

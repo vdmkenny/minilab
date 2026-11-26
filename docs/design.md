@@ -762,7 +762,8 @@ Rolls/
 ```
 
 The app's own preferences, such as its appearance, aren't in the library: they belong to your
-account and go in `preferences.json` in its settings folder ([settings.md](settings.md)).
+account and go in `preferences.json` in its settings folder ([settings.md](settings.md)). The interface's text is in `src/i18n`, in English and each
+language it's translated into ([translating.md](translating.md)).
 
 **Why TIFF for raw scans.** Your raw scans are your archive, so they shouldn't be locked into
 minilab. A 16-bit TIFF with ZIP compression (Deflate with the horizontal predictor) loses

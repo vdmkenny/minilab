@@ -18,6 +18,8 @@ const usage =
     \\      [--workspace <name>]         start in rolls, scan, develop, export or looks
     \\      [--shortcuts]                show the keyboard shortcuts
     \\      [--screenshot <file.png>]    draw the screen without a window and save it
+    \\      [--language <code>]          the interface's language for this run: en, nl, fr, de,
+    \\                                   it, es or ja. A screenshot is in English otherwise
     \\  minilab import <roll name> <scan or folder>...
     \\      [--library <folder>] [--stock <name>] [--film colour|bw|slide]
     \\      [--flat <file>] [--move]     add scans to a roll, and make the roll if it doesn't exist
@@ -383,6 +385,8 @@ fn parseOpen(arena: std.mem.Allocator, library: []const u8, home: ?[]const u8, a
             options.shortcuts = true;
         } else if (eql(arg, "--screenshot")) {
             options.screenshot = try each.value();
+        } else if (eql(arg, "--language")) {
+            options.language = minilab.preferences.Language.ofCode(try each.value()) orelse return error.Usage;
         } else if (eql(arg, "--library")) {
             options.library = try each.value();
         } else if (eql(arg, "--roll")) {
@@ -799,6 +803,7 @@ test {
     _ = @import("ui/gui.zig");
     _ = @import("ui/theme.zig");
     _ = @import("ui/icons.zig");
+    _ = @import("i18n/i18n.zig");
     _ = @import("platform/window.zig");
 }
 

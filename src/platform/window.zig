@@ -5,6 +5,8 @@ const std = @import("std");
 const c = @import("c");
 const icon = @import("icon.zig");
 const sdl = @import("sdl.zig");
+const locale = @import("locale.zig");
+const Language = @import("minilab").preferences.Language;
 
 pub const Error = sdl.Error;
 const fail = sdl.fail;
@@ -38,6 +40,8 @@ pub const Window = struct {
     dropped: Dropped = .{},
     /// Whether the system's appearance is light. It follows the system as it changes.
     system_light: bool = false,
+    /// The first of the system's languages the app has, if any. It follows the system too.
+    system_language: ?Language = null,
 
     /// Opens a window of `width` by `height` points at the display's scale, with ImGui set up to
     /// draw in it. A hidden window only draws into images (`capture`).
@@ -80,7 +84,7 @@ pub const Window = struct {
         };
         if (!c.cImGui_ImplSDLGPU3_Init(&info)) return fail("ImGui_ImplSDLGPU3_Init");
         if (!hidden) _ = c.SDL_ShowWindow(handle);
-        return .{ .handle = handle, .gpu = gpu, .scale = scale, .system_light = systemLight() };
+        return .{ .handle = handle, .gpu = gpu, .scale = scale, .system_light = systemLight(), .system_language = locale.preferredLanguage() };
     }
 
     pub fn close(window: *Window) void {
@@ -126,6 +130,7 @@ pub const Window = struct {
                 window.close_asked = true;
             },
             c.SDL_EVENT_SYSTEM_THEME_CHANGED => window.system_light = systemLight(),
+            c.SDL_EVENT_LOCALE_CHANGED => window.system_language = locale.preferredLanguage(),
             c.SDL_EVENT_DROP_FILE => if (event.drop.data) |data| {
                 window.dropped.add(std.mem.span(data), .{ event.drop.x, event.drop.y });
             },

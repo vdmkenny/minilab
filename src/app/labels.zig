@@ -1,39 +1,62 @@
-//! How formats, films and stocks are written in the interface.
+//! How formats, films and stocks are written in the interface, in the language it's in.
 
 const std = @import("std");
 const minilab = @import("minilab");
 const gui = @import("../ui/gui.zig");
+const i18n = @import("../i18n/i18n.zig");
 
 const formats = minilab.formats;
 const develop = minilab.develop;
+const looks = minilab.look;
 
 /// The format's name and its size in mm, along the film × across it, like "Full frame, 36 × 24".
 /// Sheet film and plate names already include their size.
 pub fn format(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    switch (f.size) {
-        .sheet, .plate => return gui.print("{s}", .{f.name}),
-        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => {},
-    }
-    var name_buffer: [32]u8 = undefined;
-    const name = capitalised(&name_buffer, f.name);
-    return gui.print("{s}, {d} × {d}", .{ name, f.width_mm, f.height_mm });
+    const name = formatName(id);
+    if (namesSize(f.size)) return gui.print("{s}", .{name});
+    var name_buffer: [64]u8 = undefined;
+    return gui.print("{s}, {d} × {d}", .{ capitalised(&name_buffer, name), f.width_mm, f.height_mm });
 }
 
 /// The film size and the format, like "135 · full frame, 36 × 24", for the roll cards.
 pub fn filmAndFormat(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    switch (f.size) {
-        .sheet, .plate => return gui.print("{s} · {s}", .{ f.size.label(), f.name }),
-        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => {},
-    }
-    return gui.print("{s} · {s}, {d} × {d}", .{ f.size.label(), f.name, f.width_mm, f.height_mm });
+    const name = formatName(id);
+    if (namesSize(f.size)) return gui.print("{s} · {s}", .{ filmSizeName(f.size), name });
+    return gui.print("{s} · {s}, {d} × {d}", .{ filmSizeName(f.size), name, f.width_mm, f.height_mm });
 }
 
 /// The size and the ratio, like "36 × 24 mm · 3:2", for the viewer's info line.
 pub fn sizeAndRatio(id: formats.Standard) [:0]const u8 {
     const f = id.format();
     return gui.print("{d} × {d} mm · {s}", .{ f.width_mm, f.height_mm, ratio(f.ratio()) });
+}
+
+/// Whether the formats of film `size` have their size in their name, as sheet film and plates do.
+fn namesSize(size: formats.FilmSize) bool {
+    return switch (size) {
+        .sheet, .plate => true,
+        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => false,
+    };
+}
+
+/// The format's name: translated when it has words in it, like "full frame", and as it is when
+/// it's only a size, like "6×6".
+pub fn formatName(id: formats.Standard) []const u8 {
+    const Names = @TypeOf(i18n.t.labels.format);
+    return switch (id) {
+        inline else => |tag| if (@hasField(Names, @tagName(tag))) @field(i18n.t.labels.format, @tagName(tag)) else tag.format().name,
+    };
+}
+
+/// The name of format `f`, translated like `formatName` when it's a standard one.
+fn nameOf(f: formats.Format) []const u8 {
+    for (std.enums.values(formats.Standard)) |id| {
+        const standard = id.format();
+        if (standard.size == f.size and std.mem.eql(u8, standard.name, f.name)) return formatName(id);
+    }
+    return f.name;
 }
 
 /// A ratio the way people say it (3:2, 4:3, 1:1), or else just the number.
@@ -56,20 +79,27 @@ pub fn rollFrame(roll_name: []const u8, index: usize) [:0]const u8 {
 /// The note under the frames, like "35mm full frame · 3:2 · whole roll".
 pub fn rollFormatNote(id: formats.Standard) [:0]const u8 {
     const f = id.format();
-    return gui.print("{s} · {s} · whole roll", .{ filmAndName(f), ratio(f.ratio()) });
+    return gui.print("{s} · {s} · {s}", .{ filmAndName(f), ratio(f.ratio()), i18n.t.labels.whole_roll });
 }
 
 /// The film and the format's name, like "35mm full frame" or "Glass plate · Half plate, 4¾×6½ in".
 pub fn filmAndName(f: formats.Format) [:0]const u8 {
-    return switch (f.size) {
-        .sheet, .plate => gui.print("{s} · {s}", .{ f.size.label(), f.name }),
-        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => gui.print("{s} {s}", .{ filmSize(f.size), f.name }),
-    };
+    if (namesSize(f.size)) return gui.print("{s} · {s}", .{ filmSizeName(f.size), nameOf(f) });
+    return gui.print("{s} {s}", .{ filmSize(f.size), nameOf(f) });
 }
 
 /// The film size as people say it: "35mm" rather than "135".
 pub fn filmSize(size: formats.FilmSize) []const u8 {
-    return if (size == .@"135") "35mm" else size.label();
+    return if (size == .@"135") "35mm" else filmSizeName(size);
+}
+
+/// The film size's name, like "120/220" or "Sheet film", as the Rolls page's filter lists it.
+pub fn filmSizeName(size: formats.FilmSize) []const u8 {
+    return switch (size) {
+        .sheet => i18n.t.labels.film_size.sheet,
+        .plate => i18n.t.labels.film_size.plate,
+        .@"135", .@"120", .@"127", .@"110", .@"126", .aps, .minox => size.label(),
+    };
 }
 
 fn capitalised(buffer: []u8, name: []const u8) []const u8 {
@@ -80,12 +110,7 @@ fn capitalised(buffer: []u8, name: []const u8) []const u8 {
 }
 
 pub fn filmKind(kind: develop.FilmKind) []const u8 {
-    return switch (kind) {
-        .colour_negative => "Color negative",
-        .bw_negative => "B&W negative",
-        .colour_positive => "Color positive",
-        .bw_positive => "B&W positive",
-    };
+    return i18n.label(i18n.t.labels.film_kind, kind);
 }
 
 /// The film types, in the order the menus list them.
@@ -95,7 +120,7 @@ pub const film_kinds = [_]develop.FilmKind{ .colour_negative, .bw_negative, .col
 pub fn filmSizeChoice(size: formats.FilmSize) []const u8 {
     return switch (size) {
         .@"135" => "135 (35mm)",
-        else => size.label(),
+        else => filmSizeName(size),
     };
 }
 
@@ -188,16 +213,85 @@ pub fn megabytes(bytes: u64) u64 {
 
 /// Why a .cube file couldn't be imported, for the notice.
 pub fn importError(err: anyerror) []const u8 {
+    const says = &i18n.t.labels.import_error;
     return switch (err) {
-        error.NotACube => "not a .cube LUT",
-        error.BadSize => gui.print("size outside {d} to {d} points a side", .{ minilab.cube_lut.min_size, minilab.cube_lut.max_size_3d }),
-        error.Truncated => "file ends early",
-        error.TooMuchData => "more values than its size",
-        error.InvalidNumber => "value not a number",
-        error.FileTooBig => gui.print("over {d} MB", .{minilab.look.max_cube_bytes >> 20}),
-        error.NoLibrary => "no library open",
+        error.NotACube => says.not_a_cube,
+        error.BadSize => gui.say(says.bad_size, .{ minilab.cube_lut.min_size, minilab.cube_lut.max_size_3d }),
+        error.Truncated => says.truncated,
+        error.TooMuchData => says.too_much_data,
+        error.InvalidNumber => says.invalid_number,
+        error.FileTooBig => gui.say(says.file_too_big, .{looks.max_cube_bytes >> 20}),
+        error.NoLibrary => says.no_library,
         else => @errorName(err),
     };
+}
+
+// The names of the core's choices, for the screen. The core's own `label` functions stay in
+// English, for the command line.
+
+pub fn tone(t: develop.Tone) []const u8 {
+    return i18n.label(i18n.t.labels.tone, t);
+}
+
+pub fn whiteBalance(balance: develop.WhiteBalance) []const u8 {
+    return i18n.label(i18n.t.labels.white_balance, balance);
+}
+
+pub fn range(r: develop.Range) []const u8 {
+    return i18n.label(i18n.t.labels.range, r);
+}
+
+/// Where a roll's scans come from.
+pub fn input(i: minilab.roll.Input) []const u8 {
+    return i18n.label(i18n.t.labels.input, i);
+}
+
+/// The look's name: a built-in look's translated, any other's as it is.
+pub fn look(id: *const looks.Id) []const u8 {
+    return switch (id.kind()) {
+        .builtin => |b| builtinLook(b),
+        .bundled, .cube, .fitted => id.label(),
+    };
+}
+
+pub fn builtinLook(b: looks.Builtin) []const u8 {
+    return i18n.label(i18n.t.labels.builtin_look, b);
+}
+
+/// The kind of film a bundled look emulates.
+pub fn lookFilm(film: minilab.bundled_looks.Film) []const u8 {
+    return i18n.label(i18n.t.labels.look_film, film);
+}
+
+pub fn holder(h: minilab.frames.Holder) [:0]const u8 {
+    return i18n.label(i18n.t.labels.holder, h);
+}
+
+pub fn exportStage(stage: minilab.@"export".Stage) []const u8 {
+    return i18n.label(i18n.t.labels.export_stage, stage);
+}
+
+/// How a reference picture is turned or mirrored, or nothing when it's upright.
+pub fn orientation(o: minilab.looks.register.Orientation) []const u8 {
+    return switch (o) {
+        .upright => "",
+        inline else => |tag| @field(i18n.t.labels.orientation, @tagName(tag)),
+    };
+}
+
+/// Where a look's reference pictures come from, as the menu lists it.
+pub fn references(source: minilab.looks.draft.Source) []const u8 {
+    return i18n.label(i18n.t.labels.references, source);
+}
+
+/// The same, shortened for the list of looks.
+pub fn referencesShort(source: minilab.looks.draft.Source) []const u8 {
+    return i18n.label(i18n.t.labels.references_short, source);
+}
+
+/// A single reference picture from `source`, for a column header or a caption.
+pub fn referenceOne(source: minilab.looks.draft.Source) []const u8 {
+    return i18n.label(i18n.t.labels.reference_one, source);
 }
 
 test "formats, sizes and ratios read the way people say them" {
