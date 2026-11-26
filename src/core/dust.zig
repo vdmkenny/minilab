@@ -247,15 +247,18 @@ pub fn remove(gpa: std.mem.Allocator, scan: image.Scan, settings: Settings, pola
     defer found.deinit(gpa);
     const planes: Planes = .{ .marks = marks, .density = density, .top_hat = top_hat, .background = background, .width = scan.width, .height = scan.height };
     try findSpecks(gpa, planes, sizes, settings.densest(), &found);
-    try fill(gpa, scan, planes.densityPlane(), found, sizes.edge);
+    // The specks found by their shape are never wider than a fibre.
+    try fill(gpa, scan, planes.densityPlane(), found, sizes.edge, std.math.maxInt(usize));
     return found.boxes.items.len;
 }
 
 /// Fills the pixels `mask` marks on `scan`, and `edge` pixels round them, the way dust removal
 /// fills its specks (`fill`): each group of marked pixels that touch takes the patch of film
 /// nearby that matches best. It's for defects found another way, such as from an infrared plane.
-/// Returns how many groups it filled.
-pub fn fillMask(gpa: std.mem.Allocator, scan: image.Scan, mask: []const bool, edge: usize) !usize {
+/// A group wider than the widest speck the shape finder takes, on a frame `frame_longest` pixels
+/// along its longer side, is filled smoothly from its edge instead (`fill`). Returns how many
+/// groups it filled.
+pub fn fillMask(gpa: std.mem.Allocator, scan: image.Scan, mask: []const bool, edge: usize, frame_longest: usize) !usize {
     std.debug.assert(mask.len == scan.pixels.len);
     const density = try gpa.alloc(Code, scan.pixels.len);
     defer gpa.free(density);
@@ -263,7 +266,8 @@ pub fn fillMask(gpa: std.mem.Allocator, scan: image.Scan, mask: []const bool, ed
     var found: Specks = .{};
     defer found.deinit(gpa);
     try groupMask(gpa, mask, scan.width, scan.height, &found);
-    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, edge);
+    const widest_patch = Sizes.of(frame_longest, Settings.max_max_size).widest;
+    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, edge, widest_patch);
     return found.boxes.items.len;
 }
 
@@ -834,8 +838,10 @@ const patch_steps = 4;
 /// patch of film nearby whose ring of pixels best matches the ring round the speck, its level
 /// evened out to the speck's ring. So the grain, and the picture's own texture such as fur or
 /// leaves, carry on through the speck from real film. Where there's no patch to take, at the
-/// picture's edge or among other specks, the speck is filled smoothly from its edge inwards.
-fn fill(gpa: std.mem.Allocator, scan: image.Scan, density: CodePlane, found: Specks, edge: usize) !void {
+/// picture's edge or among other specks, the speck is filled smoothly from its edge inwards. So is
+/// one wider than `widest_patch`, like a long hair: looking for a patch that size would take far
+/// too long, and a thin defect fills well from its edges.
+fn fill(gpa: std.mem.Allocator, scan: image.Scan, density: CodePlane, found: Specks, edge: usize, widest_patch: usize) !void {
     const w = scan.width;
     const h = scan.height;
     // Every pixel to fill, so a patch is never taken from another speck.
@@ -871,7 +877,8 @@ fn fill(gpa: std.mem.Allocator, scan: image.Scan, density: CodePlane, found: Spe
             } else if (in_box) try inside.append(gpa, place);
         };
         const patch: Patch = .{ .density = density, .holes = holes, .box = box, .ring = ring.items, .inside = inside.items };
-        if (patch.best()) |offset| {
+        const patched = if (@max(speck.area.width, speck.area.height) <= widest_patch) patch.best() else null;
+        if (patched) |offset| {
             patch.copy(scan, offset);
         } else try smooth(gpa, scan, box, shape.items);
     }
@@ -1408,7 +1415,7 @@ test "a speck in texture is filled with the texture round it" {
     const density = try gpa.alloc(Code, scan.pixels.len);
     defer gpa.free(density);
     try densities(gpa, scan.pixels, .dense, density);
-    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, 1);
+    try fill(gpa, scan, .{ .values = density, .width = scan.width, .height = scan.height }, found, 1, std.math.maxInt(usize));
     var squares: f32 = 0;
     for (found.pixels.items) |at| {
         const d = meanDensity(scan.pixels[at]) - meanDensity(film.pixels[at]);
@@ -1436,7 +1443,7 @@ test "a mask is filled from the film round it, and nothing else changes" {
         const dy = @as(isize, @intCast(i / scan.width)) - cy;
         m.* = dx * dx + dy * dy <= radius * radius;
     }
-    try std.testing.expectEqual(1, try fillMask(gpa, scan, mask, 1));
+    try std.testing.expectEqual(1, try fillMask(gpa, scan, mask, 1, scan.width));
     // The disc is back to the film round it, to within the grain.
     try std.testing.expectApproxEqAbs(densityAround(film, cx, cy, radius), densityAround(scan, cx, cy, radius), 0.05);
     // Away from it, nothing changed.
@@ -1445,4 +1452,23 @@ test "a mask is filled from the film round it, and nothing else changes" {
         const dy = @as(isize, @intCast(i / scan.width)) - cy;
         if (@abs(dx) > radius + 1 or @abs(dy) > radius + 1) try std.testing.expectEqual(before, after);
     }
+}
+
+test "a long hair is filled smoothly from its edges, not with a patch searched for" {
+    const gpa = std.testing.allocator;
+    var film = try testFilm(gpa, 800, 600, .{ .density = 0.02 });
+    defer film.deinit(gpa);
+    var scan: image.Scan = .{ .width = film.width, .height = film.height, .pixels = try gpa.dupe([image.channel_count]u16, film.pixels) };
+    defer scan.deinit(gpa);
+    // A hair 500 pixels long and 3 wide, far wider than any speck on an 800-pixel frame.
+    const mask = try gpa.alloc(bool, scan.pixels.len);
+    defer gpa.free(mask);
+    @memset(mask, false);
+    for (300..303) |y| for (150..650) |x| {
+        mask[y * scan.width + x] = true;
+        for (&scan.pixels[y * scan.width + x]) |*v| v.* /= 20;
+    };
+    try std.testing.expectEqual(1, try fillMask(gpa, scan, mask, 1, scan.width));
+    // Filled from the film round it, to within the grain.
+    try std.testing.expectApproxEqAbs(densityAround(film, 400, 301, 1), densityAround(scan, 400, 301, 1), 0.08);
 }
