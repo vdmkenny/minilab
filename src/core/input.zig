@@ -79,7 +79,8 @@ pub fn readable(path: []const u8) bool {
 
 /// The scans at `paths`, with each folder among them replaced by the files in it that `readable`
 /// takes, in natural order (2 before 10). Folders inside folders aren't opened, and hidden files
-/// are left out. Free the result with `freeExpanded`.
+/// are left out, and so are scans' infrared planes in files of their own (`isInfraredFile`),
+/// which come in with their scans. Free the result with `freeExpanded`.
 pub fn expand(gpa: std.mem.Allocator, io: std.Io, paths: []const []const u8) ![][]u8 {
     var out: std.ArrayList([]u8) = .empty;
     errdefer {
@@ -89,7 +90,7 @@ pub fn expand(gpa: std.mem.Allocator, io: std.Io, paths: []const []const u8) ![]
     for (paths) |path| {
         var dir = std.Io.Dir.cwd().openDir(io, path, .{ .iterate = true }) catch |err| switch (err) {
             error.NotDir => {
-                try out.append(gpa, try gpa.dupe(u8, path));
+                if (!isInfraredFile(io, path)) try out.append(gpa, try gpa.dupe(u8, path));
                 continue;
             },
             else => return err,
@@ -99,7 +100,12 @@ pub fn expand(gpa: std.mem.Allocator, io: std.Io, paths: []const []const u8) ![]
         var each = dir.iterate();
         while (try each.next(io)) |entry| {
             if (entry.kind != .file or entry.name[0] == '.' or !readable(entry.name)) continue;
-            try out.append(gpa, try std.fs.path.join(gpa, &.{ path, entry.name }));
+            const file = try std.fs.path.join(gpa, &.{ path, entry.name });
+            if (isInfraredFile(io, file)) {
+                gpa.free(file);
+                continue;
+            }
+            try out.append(gpa, file);
         }
         std.mem.sort([]u8, out.items[start..], {}, naturalLess);
     }
@@ -198,9 +204,70 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !Read {
 pub fn readWith(gpa: std.mem.Allocator, io: std.Io, path: []const u8, options: Options) !Read {
     const bytes = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(max_file_bytes));
     defer gpa.free(bytes);
-    const result = try decode(gpa, Kind.of(path), bytes, options);
+    var result = try decode(gpa, Kind.of(path), bytes, options);
+    errdefer result.deinit(gpa);
+    // A plane that isn't in the file may be in a file of its own next to it.
+    if (options.infrared and result.infrared == null and !result.kind.finished()) {
+        if (try infraredFileFor(gpa, io, path)) |plane_path| {
+            defer gpa.free(plane_path);
+            result.infrared = readPlane(gpa, io, plane_path) catch |err| plane: {
+                log.warn("{s} looks like {s}'s infrared plane, but can't be read as one ({t})", .{ plane_path, path, err });
+                break :plane null;
+            };
+        }
+    }
     if (!result.linear()) log.warn("{s} has 8 bits per sample: it's probably not linear, and will develop with the wrong contrast", .{path});
     return result;
+}
+
+/// The ends of a file's name, before its extension, that mark it as the infrared plane of the
+/// scan named without them, next to it: scan0001_ir.tif for scan0001.tif. Scanning software that
+/// saves the plane in a file of its own lets you name it, so this is minilab's rule. Case doesn't
+/// matter.
+const infrared_markers = [_][]const u8{ "_ir", "-ir", ".ir", " ir", "_infrared", "-infrared", ".infrared", " infrared" };
+
+/// The name `name` would have without an infrared marker before its extension, as a slice of it,
+/// or null when it has none or isn't a TIFF.
+fn scanStemOf(name: []const u8) ?[]const u8 {
+    const extension = std.fs.path.extension(name);
+    for (tiff_extensions) |tiff_extension| {
+        if (!std.ascii.eqlIgnoreCase(extension, tiff_extension)) continue;
+        const stem = name[0 .. name.len - extension.len];
+        for (infrared_markers) |marker| {
+            if (stem.len > marker.len and std.ascii.endsWithIgnoreCase(stem, marker)) return stem[0 .. stem.len - marker.len];
+        }
+    }
+    return null;
+}
+
+/// The infrared plane of the scan at `path`, saved in a file of its own next to it
+/// (`infrared_markers`), if there is one. The caller frees the path.
+pub fn infraredFileFor(gpa: std.mem.Allocator, io: std.Io, path: []const u8) !?[]u8 {
+    const folder = std.fs.path.dirname(path) orelse ".";
+    const stem = std.fs.path.stem(path);
+    var dir = std.Io.Dir.cwd().openDir(io, folder, .{ .iterate = true }) catch return null;
+    defer dir.close(io);
+    var each = dir.iterate();
+    while (try each.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        const scan_stem = scanStemOf(entry.name) orelse continue;
+        if (std.mem.eql(u8, scan_stem, stem)) return try std.fs.path.join(gpa, &.{ folder, entry.name });
+    }
+    return null;
+}
+
+/// Whether the file at `path` is the infrared plane of a scan next to it (`infrared_markers`),
+/// so not a scan of its own. A file named like one with no scan beside it is a scan.
+pub fn isInfraredFile(io: std.Io, path: []const u8) bool {
+    const scan_stem = scanStemOf(std.fs.path.basename(path)) orelse return false;
+    const folder = std.fs.path.dirname(path) orelse ".";
+    var dir = std.Io.Dir.cwd().openDir(io, folder, .{ .iterate = true }) catch return false;
+    defer dir.close(io);
+    var each = dir.iterate();
+    while (each.next(io) catch return false) |entry| {
+        if (entry.kind == .file and readable(entry.name) and std.mem.eql(u8, std.fs.path.stem(entry.name), scan_stem)) return true;
+    }
+    return false;
 }
 
 /// Reads the infrared plane in the TIFF file at `path`, such as a roll's (`roll.infraredName`).
@@ -303,6 +370,42 @@ test "a folder expands to the scans in it, in order, and a file stays itself" {
     try std.testing.expectEqualStrings("IMG_2.JPG", std.fs.path.basename(found[0]));
     try std.testing.expectEqualStrings("IMG_10.jpg", std.fs.path.basename(found[1]));
     try std.testing.expectEqualStrings(lone, found[2]);
+}
+
+test "an infrared plane in a file of its own comes in with its scan, and isn't a scan itself" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var scan: image.Scan = try .init(gpa, 8, 6);
+    defer scan.deinit(gpa);
+    @memset(scan.pixels, .{ 30000, 20000, 10000 });
+    var plane: image.Plane = try .init(gpa, 8, 6);
+    defer plane.deinit(gpa);
+    for (plane.pixels, 0..) |*p, i| p.* = .{@intCast(40000 + i)};
+    const scan_file = try tiff.write(gpa, u16, scan, .{});
+    defer gpa.free(scan_file);
+    const plane_file = try tiff.writePlane(gpa, plane, .{});
+    defer gpa.free(plane_file);
+    try tmp.dir.writeFile(io, .{ .sub_path = "scan0001.tif", .data = scan_file });
+    try tmp.dir.writeFile(io, .{ .sub_path = "scan0001_IR.tif", .data = plane_file });
+    // Named like a plane, but with no scan beside it: a picture of its own.
+    try tmp.dir.writeFile(io, .{ .sub_path = "beach_ir.tif", .data = scan_file });
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+
+    const found = try expand(gpa, io, &.{folder});
+    defer freeExpanded(gpa, found);
+    try std.testing.expectEqual(@as(usize, 2), found.len);
+    try std.testing.expectEqualStrings("beach_ir.tif", std.fs.path.basename(found[0]));
+    try std.testing.expectEqualStrings("scan0001.tif", std.fs.path.basename(found[1]));
+
+    var read_back = try readWith(gpa, io, found[1], .{ .infrared = true });
+    defer read_back.deinit(gpa);
+    try std.testing.expectEqualSlices([1]u16, plane.pixels, read_back.infrared.?.pixels);
+    var picture = try readWith(gpa, io, found[0], .{ .infrared = true });
+    defer picture.deinit(gpa);
+    try std.testing.expect(picture.infrared == null);
 }
 
 test "a JPEG reads as linear, and encodes back to what it was" {
