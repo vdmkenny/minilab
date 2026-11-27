@@ -210,6 +210,9 @@ low-resolution scan of the whole area.
   "finishing" until it's done.
 - sane-backends ships a `test` backend that makes up frames (Homebrew has `libsane-test.so`).
   The tests use it where libsane is installed, so the SANE code gets tested without a scanner.
+- The tests also have a scanner of their own (`src/scan/sane_fake.zig`), which stands in for
+  libsane's functions and needs nothing installed. It sends colour in one frame or three, and
+  infrared in each way drivers send it, and counts any `sane_cancel` that comes mid-scan.
 
 **TWAIN (Windows).**
 

@@ -121,10 +121,10 @@ fn searchPath(gpa: std.mem.Allocator, own: []const u8, comptime system: []const 
     return std.mem.joinZ(gpa, ":", parts[0..count]);
 }
 
-const Int = i32;
-const Word = i32;
-const Bool = Word;
-const Handle = *anyopaque;
+pub const Int = i32;
+pub const Word = i32;
+pub const Bool = Word;
+pub const Handle = *anyopaque;
 
 pub const Status = enum(c_int) {
     good = 0,
@@ -161,26 +161,26 @@ pub const Status = enum(c_int) {
     }
 };
 
-const ValueType = enum(c_int) { bool = 0, int = 1, fixed = 2, string = 3, button = 4, group = 5, _ };
-const Unit = enum(c_int) { none = 0, pixel = 1, bit = 2, mm = 3, dpi = 4, percent = 5, microsecond = 6, _ };
-const ConstraintType = enum(c_int) { none = 0, range = 1, word_list = 2, string_list = 3, _ };
-const Action = enum(c_int) { get_value = 0, set_value = 1, set_auto = 2 };
-const FrameFormat = enum(c_int) { gray = 0, rgb = 1, red = 2, green = 3, blue = 4, _ };
+pub const ValueType = enum(c_int) { bool = 0, int = 1, fixed = 2, string = 3, button = 4, group = 5, _ };
+pub const Unit = enum(c_int) { none = 0, pixel = 1, bit = 2, mm = 3, dpi = 4, percent = 5, microsecond = 6, _ };
+pub const ConstraintType = enum(c_int) { none = 0, range = 1, word_list = 2, string_list = 3, _ };
+pub const Action = enum(c_int) { get_value = 0, set_value = 1, set_auto = 2 };
+pub const FrameFormat = enum(c_int) { gray = 0, rgb = 1, red = 2, green = 3, blue = 4, _ };
 
 /// Option capability flags.
-const cap_soft_select = 1 << 0;
-const cap_inactive = 1 << 5;
+pub const cap_soft_select = 1 << 0;
+pub const cap_inactive = 1 << 5;
 
-const RawDevice = extern struct {
+pub const RawDevice = extern struct {
     name: [*:0]const u8,
     vendor: [*:0]const u8,
     model: [*:0]const u8,
     type: [*:0]const u8,
 };
 
-const Range = extern struct { min: Word, max: Word, quant: Word };
+pub const Range = extern struct { min: Word, max: Word, quant: Word };
 
-const OptionDescriptor = extern struct {
+pub const OptionDescriptor = extern struct {
     name: ?[*:0]const u8,
     title: ?[*:0]const u8,
     desc: ?[*:0]const u8,
@@ -248,7 +248,7 @@ const Strings = struct {
     }
 };
 
-const Parameters = extern struct {
+pub const Parameters = extern struct {
     format: FrameFormat,
     last_frame: Bool,
     bytes_per_line: Int,
@@ -258,7 +258,7 @@ const Parameters = extern struct {
 };
 
 /// SANE's fixed-point numbers have 16 bits of fraction.
-const fixed_one = 1 << 16;
+pub const fixed_one = 1 << 16;
 
 fn fix(value: f64) Word {
     return interface.wholeOf(Word, value * fixed_one);
@@ -269,7 +269,7 @@ fn unfix(value: Word) f64 {
 }
 
 /// libsane's functions.
-const Api = struct {
+pub const Api = struct {
     init: *const fn (version: ?*Int, authorize: ?*const anyopaque) callconv(.c) Status,
     exit: *const fn () callconv(.c) void,
     get_devices: *const fn (list: *?[*:null]const ?*const RawDevice, local_only: Bool) callconv(.c) Status,
@@ -910,6 +910,8 @@ pub const Scanner = struct {
         var depth: image.Depth = .eight;
         var rows: usize = 0;
         var frame: usize = 0;
+        // Whether the first frame held a whole colour picture, not one channel of three or grey.
+        var colour_first = false;
         while (true) : (frame += 1) {
             const started = scanner.api.start(scanner.handle);
             if (started != .good) {
@@ -926,6 +928,7 @@ pub const Scanner = struct {
             if (frame == 0) {
                 width = layout.width;
                 depth = layout.depth;
+                colour_first = layout.channel == null and !layout.gray;
                 if (parameters.lines > 0) pixels.ensureTotalCapacity(gpa, width * @as(usize, @intCast(parameters.lines))) catch |err| {
                     scanner.finish();
                     return err;
@@ -936,11 +939,18 @@ pub const Scanner = struct {
             }
             const lines: u32 = @intCast(@max(parameters.lines, 0));
             if (frame == 0) progress.total.store(lines * @as(u32, if (layout.channel == null) 1 else 3), .release);
-            const read_rows = try scanner.readFrame(gpa, parameters, layout, &pixels, &plane, progress);
-            if (frame == 0) rows = read_rows;
-            if (parameters.last_frame != 0 or frame == 2) break;
+            // A grey frame that follows a colour one, in the same scan, is the infrared. Read as
+            // more of the picture, it would be lost, and the infrared looked for in another scan.
+            if (infrared and frame > 0 and colour_first and layout.gray) {
+                try scanner.readPlane(gpa, parameters, layout, &plane, progress);
+            } else {
+                const read_rows = try scanner.readFrame(gpa, parameters, layout, &pixels, &plane, progress);
+                if (frame == 0) rows = read_rows;
+            }
+            if (parameters.last_frame != 0 or frame == last_of_three) break;
         }
-        // A switch can send the infrared as a grey frame after the colour (coolscan2, avision).
+        // A switch can also send the infrared as a grey frame after a colour frame that said it
+        // was the last (coolscan2, avision).
         if (infrared and plane.items.len == 0) try scanner.readInfraredFrame(gpa, width, &plane, progress);
         // After the last frame, `sane_cancel` puts the backend back to idle.
         scanner.api.cancel(scanner.handle);
@@ -963,6 +973,11 @@ pub const Scanner = struct {
         if (scanner.api.get_parameters(scanner.handle, &parameters) != .good or parameters.format != .gray) return;
         const layout = Layout.of(parameters, false) catch return;
         if (layout.width != width) return;
+        try scanner.readPlane(gpa, parameters, layout, plane, progress);
+    }
+
+    /// Reads a grey frame to the end, into `plane`.
+    fn readPlane(scanner: *Scanner, gpa: std.mem.Allocator, parameters: Parameters, layout: Layout, plane: *std.ArrayList([1]u16), progress: *interface.Progress) Error!void {
         var grey: std.ArrayList([3]u16) = .empty;
         defer grey.deinit(gpa);
         var unused: std.ArrayList([1]u16) = .empty;
@@ -1070,6 +1085,9 @@ const max_string = 1024;
 
 /// How many bytes we ask `sane_read` for at a time.
 const read_size = 64 * 1024;
+
+/// The last of a three-pass scan's frames, counting from 0. No scan has more frames than that.
+const last_of_three = 2;
 
 /// Samples in an RGBI pixel, and where its infrared is.
 const rgbi_samples = 4;
@@ -1285,6 +1303,11 @@ test "SANE's test backend scans, where libsane is installed" {
     try std.testing.expect(picture.scan.width > 0 and picture.scan.height > 0);
     try std.testing.expectEqual(picture.scan.width * picture.scan.height, picture.scan.pixels.len);
     try std.testing.expectEqual(@as(u32, @intCast(picture.scan.height)), progress.lines.load(.acquire));
+}
+
+test {
+    // A scanner made up for the tests, and the scans it's put through.
+    _ = @import("sane_fake.zig");
 }
 
 test "every function compiles, on every platform" {
