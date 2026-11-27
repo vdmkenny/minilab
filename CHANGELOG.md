@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/vdmkenny/minilab/compare/v0.9.0...v0.10.0) (2026-11-27)
+
+
+### Features
+
+* More film stocks, other names stocks are sold under, and every chart re-read ([#112](https://github.com/vdmkenny/minilab/issues/112)) ([8f26467](https://github.com/vdmkenny/minilab/commit/8f2646793225b631df3a9c52864f8f0a21f1c136))
+* Sharpening, and Develop's sections fold ([#103](https://github.com/vdmkenny/minilab/issues/103)) ([cacf366](https://github.com/vdmkenny/minilab/commit/cacf366bfe476c8050836993cf8834e055063faf))
+* Show pictures in the display's colours on Windows and Linux ([#101](https://github.com/vdmkenny/minilab/issues/101)) ([9f13549](https://github.com/vdmkenny/minilab/commit/9f1354920731ef0779c05a015c54bfd075b93c31))
+
+
+### Fixes
+
+* Colour audit: profile white points, untagged Log export, one rounding to the display, JPEG profiles ([#109](https://github.com/vdmkenny/minilab/issues/109)) ([f0de77b](https://github.com/vdmkenny/minilab/commit/f0de77b8f0c780d87f65173ea884a33005122c97))
+
 ## [0.9.0](https://github.com/vdmkenny/minilab/compare/v0.8.0...v0.9.0) (2026-11-26)
 
 
