@@ -332,6 +332,8 @@ test "the clock's lead on UTC is within a day" {
 }
 
 test "a folder in a freedesktop Trash gets a name of its own, and its info" {
+    // It asks the C library for the user's id and the local time, which Windows' doesn't have.
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
