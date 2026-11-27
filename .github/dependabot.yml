@@ -1,0 +1,15 @@
+# The workflows pin each Action by commit, so a moved tag can't change what runs. Dependabot opens
+# a pull request when an Action has a newer release, with the new commit and its tag.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # One pull request for all of them, titled the way CONTRIBUTING.md asks. `chore` keeps them
+    # out of the changelog.
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
