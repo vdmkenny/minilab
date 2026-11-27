@@ -49,7 +49,7 @@ const Fix32 = extern struct {
     const one = 1 << 16;
 
     fn of(number: f64) Fix32 {
-        const scaled: i32 = @intFromFloat(@round(number * one));
+        const scaled = interface.wholeOf(i32, number * one);
         return .{ .whole = @intCast(scaled >> 16), .frac = @truncate(@as(u32, @bitCast(scaled))) };
     }
 

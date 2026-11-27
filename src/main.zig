@@ -140,6 +140,14 @@ fn parseNumbers(comptime count: usize, value: []const u8) error{Usage}![count]f3
     return numbers;
 }
 
+/// `parseNumbers`, for numbers that only make sense above 0: a resolution, or the share of the
+/// light the film base lets through.
+fn parsePositive(comptime count: usize, value: []const u8) error{Usage}![count]f32 {
+    const numbers = try parseNumbers(count, value);
+    for (numbers) |n| if (!(n > 0)) return error.Usage;
+    return numbers;
+}
+
 const Format = enum { tiff, ppm };
 const Depth = minilab.image.Depth;
 
@@ -420,7 +428,7 @@ fn developRoll(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) !
         } else if (eql(arg, "--film")) {
             kind = try parseFilm(try each.value(), negative_films);
         } else if (eql(arg, "--base")) {
-            given_base = try parseNumbers(minilab.image.channel_count, try each.value());
+            given_base = try parsePositive(minilab.image.channel_count, try each.value());
         } else if (Args.isFlag(arg)) {
             return error.Usage;
         } else try paths.append(gpa, arg);
@@ -517,7 +525,7 @@ fn detectFrames(gpa: std.mem.Allocator, io: std.Io, args: []const [:0]const u8) 
     var each: Args = .{ .list = args };
     while (each.next()) |arg| {
         if (eql(arg, "--dpi")) {
-            dpi = std.fmt.parseFloat(f32, try each.value()) catch return error.Usage;
+            dpi = (try parsePositive(1, try each.value()))[0];
         } else if (eql(arg, "--film")) {
             kind = try parseFilm(try each.value(), .full);
         } else if (path == null and !Args.isFlag(arg)) {
@@ -563,7 +571,8 @@ const ImportOptions = struct {
     roll: []const u8,
     scans: []const []const u8,
     stock: ?[]const u8 = null,
-    kind: minilab.develop.FilmKind = .colour_negative,
+    /// The film `--film` names. A new roll without it is colour negative.
+    kind: ?minilab.develop.FilmKind = null,
     /// A shot of the light source with no film, for the roll's flat field.
     flat: ?[]const u8 = null,
     /// Whether finished pictures move into the roll rather than being copied.
@@ -602,11 +611,25 @@ fn parseImport(arena: std.mem.Allocator, library: []const u8, args: []const [:0]
 fn importScans(gpa: std.mem.Allocator, io: std.Io, options: ImportOptions) !void {
     const path = try std.fs.path.join(gpa, &.{ options.library, options.roll });
     defer gpa.free(path);
+    var existed = true;
     var roll = minilab.roll.Roll.open(gpa, io, path) catch |err| switch (err) {
-        error.FileNotFound => try minilab.roll.Roll.create(gpa, io, options.library, .{ .name = options.roll, .kind = options.kind, .stock = options.stock }),
+        error.FileNotFound => made: {
+            existed = false;
+            break :made try minilab.roll.Roll.create(gpa, io, options.library, .{ .name = options.roll, .kind = options.kind orelse .colour_negative, .stock = options.stock });
+        },
         else => return err,
     };
     defer roll.close();
+    // A roll that's already there keeps its own film and stock, so say when what was asked for
+    // isn't what the scans will get.
+    if (existed) {
+        if (options.kind) |kind| if (kind != roll.info.kind) {
+            std.log.warn("{s} is a {t} roll already; --film is left out", .{ options.roll, roll.info.kind });
+        };
+        if (options.stock) |stock| if (!std.mem.eql(u8, stock, roll.info.stock orelse "")) {
+            std.log.warn("{s} has its stock already ({s}); --stock is left out", .{ options.roll, roll.info.stock orelse "none" });
+        };
+    }
     if (options.flat) |flat_path| {
         var shot = try minilab.input.read(gpa, io, flat_path);
         defer shot.deinit(gpa);
@@ -643,7 +666,7 @@ fn parse(args: []const [:0]const u8) !Options {
         } else if (eql(arg, "--stock")) {
             stock_name = try each.value();
         } else if (eql(arg, "--base")) {
-            options.base = try parseNumbers(minilab.image.channel_count, try each.value());
+            options.base = try parsePositive(minilab.image.channel_count, try each.value());
         } else if (eql(arg, "--depth")) {
             const bits = std.fmt.parseInt(u8, try each.value(), 10) catch return error.Usage;
             options.depth = std.enums.fromInt(Depth, bits) orelse return error.Usage;
@@ -765,6 +788,9 @@ test "comma-separated numbers" {
     try std.testing.expectError(error.Usage, parseNumbers(3, "0.5,grey,0.125"));
     try std.testing.expectError(error.Usage, parseNumbers(3, "0.5,0.25,0.125,1"));
     try std.testing.expectError(error.Usage, parseNumbers(3, "0.5,nan,0.125"));
+    try std.testing.expectEqual([1]f32{2400}, try parsePositive(1, "2400"));
+    for ([_][]const u8{ "0", "-300", "nan", "inf" }) |dpi| try std.testing.expectError(error.Usage, parsePositive(1, dpi));
+    try std.testing.expectError(error.Usage, parsePositive(3, "0.5,0,0.125"));
 }
 
 test "a developed TIFF carries sRGB's profile" {

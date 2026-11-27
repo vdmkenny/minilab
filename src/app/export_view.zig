@@ -317,6 +317,10 @@ pub const State = struct {
             state.editing = null;
         }
         const count = r.frames.items.len;
+        // The roll can lose frames on disk while it's open.
+        if (state.anchor) |anchor| if (anchor >= count) {
+            state.anchor = null;
+        };
         const known = @min(state.seen.items.len, count);
         state.selected.resize(gpa, count) catch return;
         state.seen.resize(gpa, count) catch {

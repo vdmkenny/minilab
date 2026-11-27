@@ -15,6 +15,7 @@ const encode = @import("encode.zig");
 const look = @import("look.zig");
 const sharpen = @import("sharpen.zig");
 const roll = @import("roll.zig");
+const json_file = @import("json_file.zig");
 const stock_curves = @import("stock_curves.zig");
 /// Reduces pictures by area, to any size.
 pub const resample = @import("resample.zig");
@@ -670,12 +671,15 @@ pub const Batch = struct {
         try check(&batch.cancel);
 
         batch.stage.store(.writing, .release);
-        const cwd = std.Io.Dir.cwd();
         const name = try batch.fileName(gpa, job);
         defer gpa.free(name);
         const path = try std.fs.path.join(gpa, &.{ batch.folder, name });
         defer gpa.free(path);
-        try cwd.writeFile(io, .{ .sub_path = path, .data = file });
+        // Next to the file first, then over it: a file that's there from an earlier export stays
+        // whole if this one fails part-way.
+        var name_arena: std.heap.ArenaAllocator = .init(gpa);
+        defer name_arena.deinit();
+        try json_file.replace(name_arena.allocator(), io, path, file);
         _ = batch.written.fetchAdd(1, .acq_rel);
     }
 };

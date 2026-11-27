@@ -231,7 +231,7 @@ const OptionDescriptor = extern struct {
 
     /// Turns `value` into a word of the option's own type.
     fn word(option: *const OptionDescriptor, value: f64) Word {
-        return if (option.type == .fixed) fix(value) else @intFromFloat(@round(value));
+        return if (option.type == .fixed) fix(value) else interface.wholeOf(Word, value);
     }
 };
 
@@ -261,7 +261,7 @@ const Parameters = extern struct {
 const fixed_one = 1 << 16;
 
 fn fix(value: f64) Word {
-    return @intFromFloat(@round(value * fixed_one));
+    return interface.wholeOf(Word, value * fixed_one);
 }
 
 fn unfix(value: Word) f64 {

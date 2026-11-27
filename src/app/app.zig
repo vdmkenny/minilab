@@ -121,6 +121,7 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         if (c.SDL_GetTicks() -% library_checked >= library_check_ms) {
             library_checked = c.SDL_GetTicks();
             app.library.refresh(gpa, io);
+            app.develop.follow(gpa, &app.library);
         }
         // Between frames, so no frame mixes two looks.
         const look = settings_view.look(app.preferences.values, window.system_light);
