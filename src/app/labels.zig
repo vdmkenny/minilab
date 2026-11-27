@@ -135,36 +135,42 @@ pub const StockChoice = struct {
 /// Common stocks whose makers don't publish the numbers for a preset. You can still name a roll
 /// after them.
 const unmeasured = [_]StockChoice{
-    .{ .name = "Ilford HP5 Plus", .kind = .bw_negative },
-    .{ .name = "Ilford FP4 Plus", .kind = .bw_negative },
-    .{ .name = "Ilford Delta 100 Professional", .kind = .bw_negative },
-    .{ .name = "Ilford Delta 3200 Professional", .kind = .bw_negative },
-    .{ .name = "Ilford Pan F Plus", .kind = .bw_negative },
-    .{ .name = "Ilford XP2 Super", .kind = .bw_negative },
     .{ .name = "Kentmere Pan 100", .kind = .bw_negative },
+    .{ .name = "Kentmere Pan 200", .kind = .bw_negative },
     .{ .name = "Kentmere Pan 400", .kind = .bw_negative },
-    .{ .name = "Kodak T-Max P3200", .kind = .bw_negative },
-    .{ .name = "Fujifilm Acros 100 II", .kind = .bw_negative },
+    .{ .name = "Agfa APX 100", .kind = .bw_negative },
+    .{ .name = "Agfa APX 400", .kind = .bw_negative },
+    .{ .name = "ADOX CMS 20 II", .kind = .bw_negative },
+    .{ .name = "ADOX HR-50", .kind = .bw_negative },
+    .{ .name = "ADOX Silvermax", .kind = .bw_negative },
+    .{ .name = "Foma Retropan 320 Soft", .kind = .bw_negative },
+    .{ .name = "Lucky New SHD100", .kind = .bw_negative },
+    .{ .name = "Lucky New SHD400", .kind = .bw_negative },
     .{ .name = "Kodak ColorPlus 200", .kind = .colour_negative },
-    .{ .name = "Kodak Pro Image 100", .kind = .colour_negative },
-    .{ .name = "Fujifilm Superia 200", .kind = .colour_negative },
-    .{ .name = "Harman Phoenix 200", .kind = .colour_negative },
+    .{ .name = "Kodak Kodacolor 100", .kind = .colour_negative },
+    .{ .name = "Kodak Kodacolor 200", .kind = .colour_negative },
+    .{ .name = "Harman Phoenix II", .kind = .colour_negative },
     .{ .name = "CineStill 400D", .kind = .colour_negative },
-    .{ .name = "CineStill 50D", .kind = .colour_negative },
     .{ .name = "Lomography Color Negative 100", .kind = .colour_negative },
     .{ .name = "Lomography Color Negative 400", .kind = .colour_negative },
     .{ .name = "Lomography Color Negative 800", .kind = .colour_negative },
-    .{ .name = "Fujichrome Velvia 50", .kind = .colour_positive },
+    .{ .name = "Lucky C200", .kind = .colour_negative },
+    .{ .name = "Lucky C400", .kind = .colour_negative },
 };
 
-/// Every stock you can pick: the presets first, then the rest. A name that has a preset now is
-/// left out of the rest.
+/// Every stock you can pick: the presets, the other names they're sold under, then the rest. A
+/// name that has a preset now is left out of the rest.
 pub const stock_choices = blk: {
     @setEvalBranchQuota(1_000_000);
     const presets = minilab.stocks.stocks;
-    var all: [presets.len + unmeasured.len]StockChoice = undefined;
+    const aliases = minilab.stocks.aliases;
+    var all: [presets.len + aliases.len + unmeasured.len]StockChoice = undefined;
     for (&presets, 0..) |*preset, i| all[i] = .{ .name = preset.name, .kind = preset.kind, .preset = preset };
-    var n = presets.len;
+    for (aliases, presets.len..) |alias, i| {
+        const preset = minilab.stocks.named(alias.of).?;
+        all[i] = .{ .name = alias.name, .kind = preset.kind, .preset = preset };
+    }
+    var n = presets.len + aliases.len;
     for (unmeasured) |choice| {
         const has_preset = for (presets) |preset| {
             if (std.mem.eql(u8, preset.name, choice.name)) break true;
@@ -334,6 +340,7 @@ test "stocks are listed by film type, with the last choice after them" {
     try std.testing.expectEqualStrings("Other", names[names.len - 1]);
     for (names[0 .. names.len - 1]) |name| try std.testing.expectEqual(develop.FilmKind.colour_negative, findStock(name).?.kind);
     try std.testing.expect(findStock("Kodak Portra 400").?.preset != null);
+    try std.testing.expectEqualStrings("Kodak Portra 400", findStock("Kodak Ektacolor Pro 400").?.preset.?.name);
     try std.testing.expectEqual(@as(?StockChoice, null), findStock("Not a stock"));
     try std.testing.expectEqual(@as(?[3]f32, null), stockGamma(null));
 }

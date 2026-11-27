@@ -3,7 +3,8 @@
 usage: make_zig.py READINGS_DIR STOCKS_ZIG [--dry-run]
 
 For every stock in stocks_meta.py: the table entry (base_density, gamma and density_range from
-the reading, rounded to 0.001) and its curve constant. An entry or constant that already exists
+the reading, rounded to 0.001, or the gamma the maker states where the entry gives
+`stated_gamma`) and its curve constant. An entry or constant that already exists
 under that name is replaced in place; a new entry goes after the entry named in `after`, and a
 new constant at the end of `curve_data`. Run `zig fmt` afterwards to align the number columns.
 """
@@ -56,6 +57,9 @@ def entry_and_const(meta, reading):
         base, rng = None, None
     if rng is not None and any(v is None for v in rng):
         rng = None
+    # A gamma the maker states, written as printed, replaces the curve's slope.
+    stated = meta.get("stated_gamma")
+    gamma_text = ".{ " + ", ".join([stated] * 3) + " }" if stated else triple(gamma)
     entry = (
         "    .{\n"
         f'        .name = "{meta["name"]}",\n'
@@ -63,7 +67,7 @@ def entry_and_const(meta, reading):
         f"        .kind = .{meta['kind']},\n"
         f"        .iso = {meta['iso']},\n"
         f"        .base_density = {triple(base)},\n"
-        f"        .gamma = {triple(gamma)},\n"
+        f"        .gamma = {gamma_text},\n"
         f"        .density_range = {triple(rng)},\n"
         f"        .curves = curve_data.{meta['const']},\n"
         f"        .source = {json.dumps(meta['source'], ensure_ascii=False)},\n"

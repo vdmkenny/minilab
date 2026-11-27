@@ -24,12 +24,27 @@ pub const samples = 33;
 /// Above 0.05 D it needs less than 3.
 pub const max_gain = 3;
 /// The part of a curve's density range we fit its straight line to, as shares of the range. It
-/// sits above the toe and below any shoulder.
+/// sits above the toe and below most shoulders.
 const straight_from = 0.25;
 const straight_to = 0.85;
-/// Whether density `above` the base, on a curve rising `range` in all, is on its straight part.
-fn onStraightPart(above: f32, range: f32) bool {
-    return above >= straight_from * range and above <= straight_to * range;
+/// Within that, the straight part is only where the curve is at least this share as steep as at
+/// its steepest, as data/stocks/README.md finds gamma. It keeps out a long shoulder, like ORWO
+/// Wolfen NC500's, that starts below `straight_to`.
+const straight_steepness = 0.5;
+
+/// Whether point `i` of a curve whose density above its lowest point is `above`, `range` at most,
+/// is on its straight part. `steepest` is the curve's steepest `slopeAt`.
+fn onStraightPart(points: []const stocks.Point, above: []const f32, range: f32, steepest: f32, i: usize) bool {
+    const a = above[i];
+    return a >= straight_from * range and a <= straight_to * range and slopeAt(points, above, i) >= straight_steepness * steepest;
+}
+
+/// The curve's slope at point `i`, across its neighbours.
+fn slopeAt(points: []const stocks.Point, above: []const f32, i: usize) f32 {
+    const before = i -| 1;
+    const after = @min(i + 1, points.len - 1);
+    const run = points[after].log_exposure - points[before].log_exposure;
+    return if (run > 0) (above[after] - above[before]) / run else 0;
 }
 
 /// The most points a datasheet curve can have.
@@ -105,11 +120,13 @@ fn layerTable(points: []const stocks.Point, scale: f32, values: *[samples]f32) ?
 /// agree with their curves to within a few percent, but a B&W curve has no straight part to quote
 /// a gamma from. Null when the straight part is too short or flat to fit.
 fn straightLine(points: []const stocks.Point, above: []const f32, range: f32) ?struct { gamma: f32, foot: f32 } {
+    var steepest: f32 = 0;
+    for (0..points.len) |i| steepest = @max(steepest, slopeAt(points, above, i));
     var sum_h: f32 = 0;
     var sum_d: f32 = 0;
     var straight: f32 = 0;
-    for (points, above) |p, a| {
-        if (!onStraightPart(a, range)) continue;
+    for (points, above, 0..) |p, a, i| {
+        if (!onStraightPart(points, above, range, steepest, i)) continue;
         sum_h += p.log_exposure;
         sum_d += a;
         straight += 1;
@@ -119,8 +136,8 @@ fn straightLine(points: []const stocks.Point, above: []const f32, range: f32) ?s
     const mean_d = sum_d / straight;
     var covariance: f32 = 0;
     var variance: f32 = 0;
-    for (points, above) |p, a| {
-        if (!onStraightPart(a, range)) continue;
+    for (points, above, 0..) |p, a, i| {
+        if (!onStraightPart(points, above, range, steepest, i)) continue;
         covariance += (p.log_exposure - mean_h) * (a - mean_d);
         variance += (p.log_exposure - mean_h) * (p.log_exposure - mean_h);
     }
