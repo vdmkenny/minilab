@@ -189,7 +189,13 @@ pub const Library = struct {
     /// Moves roll `index` (its folder, with its scans, settings and exports) to the system's Trash,
     /// and reads the rolls again.
     pub fn trashRoll(library: *Library, gpa: std.mem.Allocator, io: std.Io, index: usize) !void {
-        const path = try gpa.dupe(u8, library.rolls.items[index].path);
+        // The Trash needs the full path: a library opened as `--library Rolls` has a relative one,
+        // and Windows deletes for good what it's given that way. The folder it's in is resolved,
+        // not the roll's own, so a roll that's a link is trashed as the link.
+        const given = library.rolls.items[index].path;
+        const parent = try std.Io.Dir.cwd().realPathFileAlloc(io, std.fs.path.dirname(given) orelse ".", gpa);
+        defer gpa.free(parent);
+        const path = try std.fs.path.join(gpa, &.{ parent, std.fs.path.basename(given) });
         defer gpa.free(path);
         try trash.move(gpa, io, path, library.home);
         try library.reload(gpa, io);

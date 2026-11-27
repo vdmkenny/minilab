@@ -980,7 +980,10 @@ pub const State = struct {
         const rl = &library.rolls.items[r];
         rl.frames.items[index].look = .neutral;
         rl.frames.items[index].settings = frame.settings;
-        rl.frames.items[index].developed = false;
+        // A finished picture has no automatic settings to go back to: its settings are what it
+        // is, so it never counts as undeveloped. Export, thumbnails and `load` would measure an
+        // undeveloped one as film.
+        rl.frames.items[index].developed = frame.settings.finished;
         rl.saveFrame(io, index) catch |err| std.log.err("can't save frame {d}: {t}", .{ index + 1, err });
         library.invalidate(.{ .roll = r, .frame = index });
     }
@@ -2483,4 +2486,100 @@ test "dragging a crop corner keeps the opposite one and the format's shape" {
     // A drag onto the fixed corner leaves the smallest box, its long side `min_crop`.
     edit.dragCorner(.bottom_right, edit.min, size, 1.5);
     try std.testing.expectApproxEqAbs(@as(f32, min_crop), edit.max[0] - edit.min[0], 1e-4);
+}
+
+test "Develop saves a change, undoes it, resets it, and follows the roll on disk" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    const roll_path = try std.fs.path.join(gpa, &.{ folder, "Develop test" });
+    defer gpa.free(roll_path);
+    {
+        var made = try roll.Roll.create(gpa, io, folder, .{ .name = "Develop test" });
+        defer made.close();
+        // Two negatives, and a finished picture after them.
+        var scan: minilab.image.Scan = try .init(gpa, 96, 64);
+        defer scan.deinit(gpa);
+        for (scan.pixels, 0..) |*p, i| {
+            const t = 0.15 + 0.7 * @as(f32, @floatFromInt(i % 96)) / 95;
+            p.* = .{ @intFromFloat(t * 60000), @intFromFloat(t * 30000), @intFromFloat(t * 20000) };
+        }
+        const ppm = try minilab.pnm.write(gpa, u16, scan);
+        defer gpa.free(ppm);
+        for (0..3) |_| _ = try made.addScan(gpa, io, ppm);
+        made.frames.items[2].settings = .finishedPicture();
+        try made.saveFrame(io, 2);
+    }
+    var library: Library = try .load(gpa, io, folder, null);
+    // Nothing here is drawn, so there are no textures to release and the GPU is never used.
+    defer library.deinit(gpa, undefined);
+    var state: State = .{};
+    defer state.deinit(gpa, undefined);
+    try state.openRoll(gpa, io, &library, roll_path);
+    state.ensureFrame(gpa, io, &library);
+    const r = state.rollIndex(&library).?;
+    const frames = &library.rolls.items[r].frames;
+    const automatic = state.frame.?.settings;
+    try std.testing.expect(!automatic.finished);
+    try std.testing.expect(!frames.items[0].developed);
+
+    // A change is saved to the roll, and marks the frame developed.
+    state.frame.?.settings.contrast = automatic.contrast + 0.4;
+    state.changed();
+    state.save(io, &library);
+    try std.testing.expect(frames.items[0].developed);
+    try std.testing.expectEqual(automatic.contrast + 0.4, frames.items[0].settings.contrast);
+
+    // Undo and redo go between the two, in the roll as well.
+    state.step(io, &library, .back);
+    try std.testing.expectEqual(automatic.contrast, state.frame.?.settings.contrast);
+    try std.testing.expectEqual(automatic.contrast, frames.items[0].settings.contrast);
+    state.step(io, &library, .forward);
+    try std.testing.expectEqual(automatic.contrast + 0.4, state.frame.?.settings.contrast);
+
+    // Reset goes back to the automatic settings and an undeveloped frame, and can be undone.
+    state.reset(io, &library);
+    try std.testing.expectEqual(automatic.contrast, state.frame.?.settings.contrast);
+    try std.testing.expect(!frames.items[0].developed);
+    state.step(io, &library, .back);
+    try std.testing.expectEqual(automatic.contrast + 0.4, state.frame.?.settings.contrast);
+
+    // A finished picture is still one after a reset.
+    state.select(gpa, io, &library, 2);
+    state.ensureFrame(gpa, io, &library);
+    try std.testing.expect(state.frame.?.settings.finished);
+    state.reset(io, &library);
+    try std.testing.expect(state.frame.?.settings.finished);
+    try std.testing.expectEqual(develop.FilmKind.colour_positive, state.frame.?.settings.kind);
+    try std.testing.expect(frames.items[2].settings.finished);
+    // It's still one when it's opened again: it never counts as undeveloped.
+    try std.testing.expect(frames.items[2].developed);
+    state.select(gpa, io, &library, 0);
+    state.select(gpa, io, &library, 2);
+    state.ensureFrame(gpa, io, &library);
+    try std.testing.expect(state.frame.?.settings.finished);
+
+    // Its file goes, outside the app. The frame is closed, and the last one left is selected.
+    try tmp.dir.deleteFile(io, "Develop test/frames/03.json");
+    try library.reload(gpa, io);
+    state.follow(gpa, &library);
+    try std.testing.expectEqual(@as(?Frame, null), state.frame);
+    try std.testing.expectEqual(@as(?usize, 1), state.selected);
+    // The first frame's file goes too: frame 2 is now at its place, and isn't the one open.
+    state.select(gpa, io, &library, 0);
+    state.ensureFrame(gpa, io, &library);
+    try std.testing.expect(state.frame != null);
+    try tmp.dir.deleteFile(io, "Develop test/frames/01.json");
+    try library.reload(gpa, io);
+    state.follow(gpa, &library);
+    try std.testing.expectEqual(@as(?Frame, null), state.frame);
+    // The whole roll goes: Develop has no roll.
+    try tmp.dir.deleteTree(io, "Develop test");
+    try library.reload(gpa, io);
+    state.follow(gpa, &library);
+    try std.testing.expectEqual(@as(?[]u8, null), state.roll_path);
+    try std.testing.expectEqual(@as(?usize, null), state.selected);
 }

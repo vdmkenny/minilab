@@ -276,6 +276,9 @@ pub const Roll = struct {
             finite(develop.Settings, &frame.settings, .{});
             withinRanges(develop.Settings, &frame.settings);
             frame.rating = frame.rating.valid();
+            // A finished picture's settings are what it is, so it's always developed. Reset used
+            // to mark one undeveloped, and it was then measured as film.
+            if (frame.settings.finished) frame.developed = true;
             try roll.frames.append(arena, frame);
             try roll.numbers.append(arena, frameNumber(name).?);
         }

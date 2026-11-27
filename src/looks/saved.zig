@@ -13,6 +13,7 @@ const Io = std.Io;
 const model = @import("model.zig");
 const cube = @import("cube.zig");
 const fit = @import("fit.zig");
+const json_file = @import("../core/json_file.zig");
 
 pub const looks_folder = "Looks";
 pub const draft_file = "draft.json";
@@ -43,6 +44,22 @@ pub const File = struct {
     held_out_pairs: usize = 0,
 };
 
+/// Whether a look.json holds a look that can be applied: every number finite, and curves that
+/// don't go down, as the fit makes them. A file edited by hand, or damaged, may hold anything.
+fn valid(file: File) bool {
+    for (file.matrix) |row| {
+        for (row) |v| if (!std.math.isFinite(v)) return false;
+    }
+    for (file.curves) |curve| {
+        var before = -std.math.inf(f32);
+        for (curve) |v| {
+            if (!std.math.isFinite(v) or v < before) return false;
+            before = v;
+        }
+    }
+    return true;
+}
+
 /// A saved look, read back so it can be applied.
 pub const Look = struct {
     name: []u8,
@@ -57,6 +74,7 @@ pub const Look = struct {
         const cwd = Io.Dir.cwd();
         const bytes = try cwd.readFileAlloc(io, try std.fs.path.join(a, &.{ folder, look_file }), a, .limited(max_json_bytes));
         const file = try std.json.parseFromSliceLeaky(File, a, bytes, .{ .ignore_unknown_fields = true });
+        if (!valid(file)) return error.InvalidLook;
         const name = try gpa.dupe(u8, file.name);
         errdefer gpa.free(name);
         var look: Look = .{ .name = name, .model = .{ .matrix = file.matrix, .curves = file.curves }, .lut = null };
@@ -87,7 +105,9 @@ pub const Look = struct {
 };
 
 /// Writes `result` as the look `name` into `folder`, creating the folder if needed. It writes
-/// look.json, the LUT if the fit kept one, and the whole look baked into one .cube.
+/// look.json, the LUT if the fit kept one, and the whole look baked into one .cube. Each file is
+/// written next to the old one and then takes its place (`json_file.replace`), so a save that
+/// fails leaves each of them whole.
 pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8, result: *const fit.Result) !void {
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
@@ -110,7 +130,7 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8
             "minilab look: what the curves and matrix leave, applied to the curves' output.",
             "Input and output: sRGB-encoded 0..1.",
         });
-        try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ folder, lut_file }), .data = bytes });
+        try json_file.replace(a, io, try std.fs.path.join(a, &.{ folder, lut_file }), bytes);
     }
 
     const baked = try a.create(model.Lut);
@@ -119,10 +139,11 @@ pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, name: []const u8
         "minilab look, whole: density matrix, channel curves and LUT in one.",
         "Input: density 0..1 per channel, as minilab's Log tone writes it. Output: sRGB.",
     });
-    try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ folder, baked_file }), .data = baked_bytes });
+    try json_file.replace(a, io, try std.fs.path.join(a, &.{ folder, baked_file }), baked_bytes);
 
     const json = try std.json.Stringify.valueAlloc(a, file, json_options);
-    try cwd.writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ folder, look_file }), .data = json });
+    // Last, so look.json never names a LUT that isn't written yet.
+    try json_file.replace(a, io, try std.fs.path.join(a, &.{ folder, look_file }), json);
 }
 
 /// A look's folder in the library.
@@ -226,4 +247,19 @@ test "a look saved and loaded applies the same" {
     }
     try std.testing.expectEqual(@as(usize, 1), entries.items.len);
     try std.testing.expect(entries.items[0].saved);
+
+    // Nothing half-written is left next to the files.
+    var look_dir = try std.Io.Dir.cwd().openDir(io, folder, .{ .iterate = true });
+    defer look_dir.close(io);
+    var files = look_dir.iterate();
+    while (try files.next(io)) |file| try std.testing.expect(!std.mem.endsWith(u8, file.name, json_file.partial_suffix));
+
+    // A look whose curve goes down, or holds something that isn't a number, isn't applied.
+    result.model.curves[1][10] = result.model.curves[1][9] - 0.2;
+    try save(gpa, io, folder, "Test look", &result);
+    try std.testing.expectError(error.InvalidLook, Look.load(gpa, io, folder));
+    var not_a_number: File = .{ .name = "x", .matrix = result.model.matrix, .curves = curves };
+    try std.testing.expect(valid(not_a_number));
+    not_a_number.matrix[2][0] = std.math.nan(f32);
+    try std.testing.expect(!valid(not_a_number));
 }
