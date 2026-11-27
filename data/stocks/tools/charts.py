@@ -250,6 +250,236 @@ VECTOR += [
     },
 ]
 
+# Kodak still-film datasheets: Status M colour negatives, Status A slides and diffuse visual
+# density for black-and-white. Each chart has a gridline (or tick mark) every 1.0 on both axes,
+# and the frame is the outer one. The colour curves are stacked blue, green, red from the top at
+# the left-hand end.
+_KODAK_RGB = {"b": {"rank": 0}, "g": {"rank": 1}, "r": {"rank": 2}}
+
+
+def _kodak(cid, pdf, page, frame, x_values, kind="negative", curves=None):
+    x0, y0, x1, y1 = frame
+    return {
+        "id": cid,
+        "pdf": pdf,
+        "page": page,
+        "frame": frame,
+        "x_ticks": _even(list(x_values), x0, x1),
+        "y_ticks": _even([4.0, 3.0, 2.0, 1.0, 0.0], y0, y1),
+        "curves": curves or _KODAK_RGB,
+        "kind": kind,
+    }
+
+
+_KODAK_4_TO_1 = (-4.0, -3.0, -2.0, -1.0, 0.0, 1.0)
+VECTOR += [
+    # Portra 160, E-4051 (January 2025): C-41, daylight. The inner density gridlines are 46.4 pt
+    # apart, and the bottom one 45.3 pt; the frame spans 4.0 D in 184.5 pt, as on Kodak's other
+    # sheets. So the density axis is fitted to the frame (0.0 and 4.0) only.
+    {**_kodak("kodak_portra_160", "e4051.pdf", 4, (81.45, 102.12, 266.01, 286.60), _KODAK_4_TO_1), "y_fit": [0.0, 4.0]},
+    # Portra 400, E-4050 (January 2025).
+    _kodak("kodak_portra_400", "e4050.pdf", 4, (81.16, 102.85, 265.63, 287.37), _KODAK_4_TO_1),
+    # Portra 800, E-4040 (January 2025): page 4 has three charts, for EI 800, 1600 (push 1) and
+    # 3200 (push 2). On the EI 800 chart the -3.0 and -2.0 labels are printed the wrong way
+    # round; its gridlines are evenly spaced, so the axis runs -4 to +1 as on the other two.
+    _kodak("kodak_portra_800", "e4040.pdf", 4, (81.64, 74.47, 266.17, 258.89), _KODAK_4_TO_1),
+    _kodak("kodak_portra_800_push_1", "e4040.pdf", 4, (81.13, 314.06, 265.63, 498.52), _KODAK_4_TO_1),
+    _kodak("kodak_portra_800_push_2", "e4040.pdf", 4, (357.65, 70.98, 542.19, 255.52), _KODAK_4_TO_1),
+    # Ektar 100, E-4046 (January 2025).
+    _kodak("kodak_ektar_100", "e4046.pdf", 4, (81.19, 107.92, 265.70, 292.41), (-3.0, -2.0, -1.0, 0.0, 1.0, 2.0)),
+    # Gold 200, E-7022 (June 2023). The log H labels are printed without their minus signs.
+    _kodak("kodak_gold_200", "e7022_gold_200.pdf", 4, (81.68, 71.93, 266.18, 256.43), (-3.0, -2.0, -1.0, 0.0, 1.0)),
+    # UltraMax 400, E-7023 (February 2016).
+    _kodak("kodak_ultramax_400", "e7023_ultramax_400.pdf", 4, (81.09, 112.75, 265.90, 297.35), _KODAK_4_TO_1),
+    # Ektachrome E100, E-4000 (August 2018): Status A, E-6, daylight.
+    _kodak("kodak_ektachrome_e100", "e4000_ektachrome_100.pdf", 3, (368.72, 358.60, 553.91, 542.97), (-3.0, -2.0, -1.0, 0.0, 1.0), kind="positive"),
+    # Tri-X 400, F-4017 (October 2021): 35 mm, T-MAX Developer, small tank, 6 min, 20 C (the
+    # table's starting point), the solid curve. The log H labels lost their minus signs.
+    _kodak("kodak_tri_x_400", "f4017_trix_320400.pdf", 8, (354.42, 63.48, 538.85, 247.98), _KODAK_4_TO_1, curves={"bw": {"path": "103.0"}}),
+    # T-Max 100, F-4016 (June 2018): D-76, small tank, 6 min, 20 C.
+    _kodak("kodak_t_max_100", "f4016_tmax_100.pdf", 8, (355.61, 57.01, 540.04, 241.48), _KODAK_4_TO_1, curves={"bw": {"path": "115.0"}}),
+    # T-Max 400, F-4043 (February 2016): T-MAX RS Developer and Replenisher, large tank, 5 min,
+    # 24 C (the table's starting point for that developer).
+    _kodak("kodak_t_max_400", "f4043_tmax_400.pdf", 8, (83.24, 308.44, 267.66, 492.95), _KODAK_4_TO_1, curves={"bw": {"path": "29.0"}}),
+    # Verita 200D 5206, brochure K-1216 (April 2026): Status M, ECN-2, 5500 K daylight 1/50 s.
+    # Each curve is a filled outline, clipped by the frame. The frame and the camera-stop tick
+    # marks are thin filled rectangles, each counted once, at its centre. The top
+    # axis gives log H in lux-seconds, -2.915 at the left edge (-8 stops) to 1.885 at the right
+    # (+8 stops), so the 17 stop marks are 0.3 log H apart.
+    {
+        "id": "kodak_verita_200d",
+        "pdf": "k1216_verita_200d.pdf",
+        "page": 2,
+        "frame": (45.90, 484.36, 200.71, 622.86),
+        "x_ticks": _even([round(-2.915 + 0.3 * k, 3) for k in range(17)], 45.90, 200.71),
+        "y_ticks": [(0.0, 622.86), (1.0, 580.25), (2.0, 537.63), (3.0, 495.02)],
+        "thin_rects": 0.5,
+        "curves": {"b": {"outline": ["11.0"]}, "g": {"outline": ["10.0"]}, "r": {"outline": ["9.0"]}},
+        "kind": "negative",
+    },
+]
+
+# More Fujifilm datasheets with vector curves and labels drawn as outlines. Gridlines every 0.5
+# on both axes. Status M, CN-16, daylight 1/125 s. The curves are stacked blue, green, red from
+# the top at the left-hand end.
+_HALF_LOG_H = [-4.0, -3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5]
+_HALF_D = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
+VECTOR += [
+    # Fujifilm 200, AF3-0261E (9 February 2022).
+    {
+        "id": "fujifilm_200",
+        "pdf": "fujifilm_200_af3-0261e.pdf",
+        "page": 5,
+        "frame": (60.17, 127.00, 288.49, 304.58),
+        "x_ticks": _even(_HALF_LOG_H, 60.17, 288.49),
+        "y_ticks": _even(_HALF_D[:8], 304.58, 127.00),
+        "curves": _KODAK_RGB,
+        "kind": "negative",
+    },
+    # Fujifilm 400, AF3-0262E (1 April 2023).
+    {
+        "id": "fujifilm_400",
+        "pdf": "fujifilm_400_af3-0262e.pdf",
+        "page": 6,
+        "frame": (60.10, 122.94, 287.96, 300.16),
+        "x_ticks": _even(_HALF_LOG_H, 60.10, 287.96),
+        "y_ticks": _even(_HALF_D[:8], 300.16, 122.94),
+        "curves": _KODAK_RGB,
+        "kind": "negative",
+    },
+    # Superia X-TRA 400, 013AR0316A (Japanese). The inner density gridlines are uneven by up to
+    # 0.7 pt, so the density axis is fitted to the frame (0.0 and 4.0) only.
+    {
+        "id": "fujifilm_superia_xtra_400",
+        "pdf": "superia_xtra_400_jp.pdf",
+        "page": 5,
+        "frame": (89.64, 214.57, 285.49, 387.60),
+        "x_ticks": _grid(_HALF_LOG_H, [89.64, 111.18, 133.07, 155.24, 176.56, 198.44, 220.05, 241.94, 263.54, 285.49]),
+        "y_ticks": _grid(_HALF_D, [387.60, 366.39, 344.97, 322.84, 301.21, 279.66, 257.82, 235.73, 214.57]),
+        "y_fit": [0.0, 4.0],
+        "curves": _KODAK_RGB,
+        "kind": "negative",
+    },
+    # Pro 160NS, 163AR109A (Japanese). The frame is drawn up to 0.8 pt off the inner gridlines,
+    # so both axes are fitted to the inner gridlines only.
+    {
+        "id": "fujifilm_pro_160ns",
+        "pdf": "pro_160ns_jp.pdf",
+        "page": 8,
+        "frame": (88.39, 117.70, 287.52, 295.86),
+        "x_ticks": _grid(_HALF_LOG_H, [88.39, 110.74, 132.93, 155.13, 177.32, 199.51, 221.70, 243.90, 266.09, 287.52]),
+        "y_ticks": _grid(_HALF_D, [295.86, 273.78, 251.59, 229.39, 207.20, 185.00, 162.81, 140.61, 117.70]),
+        "x_fit": _HALF_LOG_H[1:-1],
+        "y_fit": _HALF_D[1:-1],
+        "curves": _KODAK_RGB,
+        "kind": "negative",
+    },
+    # Fujicolor 100, 013AR0317A (Japanese): log H -3.5 to 1.0. Drawn like Superia X-TRA 400, so
+    # the density axis is fitted to the frame only.
+    {
+        "id": "fujifilm_fujicolor_100",
+        "pdf": "fujicolor_100_jp.pdf",
+        "page": 5,
+        "frame": (89.95, 214.57, 285.77, 387.59),
+        "x_ticks": _grid([v + 0.5 for v in _HALF_LOG_H], [89.95, 111.49, 133.38, 155.54, 176.85, 198.74, 220.34, 242.22, 263.82, 285.77]),
+        "y_ticks": _grid(_HALF_D, [387.59, 366.39, 344.96, 322.83, 301.21, 279.65, 257.81, 235.73, 214.57]),
+        "y_fit": [0.0, 4.0],
+        "curves": _KODAK_RGB,
+        "kind": "negative",
+    },
+]
+
+
+# Foma datasheets: "log rel. exposure", densitometry not stated. Gridlines every 1.0 inside an
+# unlabelled frame. On the negative sheets the 1.0 density gridline leans by about 0.4 pt, so the
+# density axis is fitted to 0 and 2 only (the residual shows where the leaning line is). The frame
+# is drawn as thin filled rectangles, each counted once, at its centre. Each curve is a
+# filled outline in several pieces.
+def _foma(cid, pdf, frame, x_ticks, y_ticks, pieces, kind="negative"):
+    return {
+        "id": cid,
+        "pdf": pdf,
+        "page": 1,
+        "frame": frame,
+        "x_ticks": x_ticks,
+        "y_ticks": y_ticks,
+        "max_tilt": 0.5,
+        "thin_rects": 1.0,
+        "y_fit": [0.0, 2.0],
+        "curves": {"bw": {"outline": pieces}},
+        "kind": kind,
+    }
+
+
+VECTOR += [
+    # Fomapan 100, 200 and 400: Microphen stock, 20 C, the middle of the three curves (7, 6 and 9
+    # min). All three sheets print the same drawing.
+    _foma("foma_fomapan_100", "fomapan_100.pdf", (333.89, 384.27, 505.88, 545.63),
+          [(-3.0, 344.63), (-2.0, 398.41), (-1.0, 452.15)], [(0.0, 545.63), (1.0, 491.62), (2.0, 438.79)],
+          [f"194.{k}" for k in range(7)]),
+    _foma("foma_fomapan_200", "fomapan_200.pdf", (325.00, 272.84, 495.56, 432.90),
+          [(-3.0, 335.64), (-2.0, 388.99), (-1.0, 442.28)], [(0.0, 432.90), (1.0, 379.32), (2.0, 326.92)],
+          [f"167.{k}" for k in range(7)]),
+    _foma("foma_fomapan_400", "fomapan_400.pdf", (333.68, 381.18, 505.64, 542.02),
+          [(-3.0, 344.43), (-2.0, 398.19), (-1.0, 451.92)], [(0.0, 542.02), (1.0, 488.18), (2.0, 435.53)],
+          [f"158.{k}" for k in range(7)]),
+    # Fomapan R 100: process R-100.
+    _foma("foma_fomapan_r_100", "fomapan_r_100.pdf", (330.41, 367.73, 504.47, 531.16),
+          [(0.0, 340.85), (1.0, 395.53), (2.0, 450.20)], [(0.0, 531.16), (1.0, 476.81), (2.0, 422.46)],
+          ["290.0", "290.1", "290.2"], kind="positive"),
+]
+
+VECTOR += [
+    # Tri-X 320 (320TXP, sheets), F-4017 (October 2021): HC-110 Dilution B, large tank, 20 C, 4,
+    # 6, 9 and 14 min. None is at a table time; the table's large-tank starting point for HC-110
+    # (B) is 4 1/4 min, and the 4 min curve (solid) is the closest. The log H labels lost their
+    # minus signs.
+    _kodak("kodak_tri_x_320", "f4017_trix_320400.pdf", 9, (364.92, 338.99, 549.35, 523.49), _KODAK_4_TO_1, curves={"bw": {"dash": ()}}),
+    # Neopan 400 Presto, 163AR0120A (Japanese): D-76, 20 C, small tank, 7 1/2, 8 3/4 and 12 min.
+    # The 7 1/2 min curve (the lowest; printed G-bar 0.54) is the table's time for EI 400; 8 3/4
+    # min (G-bar 0.65) is its time for EI 800. Labels drawn as outlines; gridlines every 0.5 on
+    # both axes, log H -3.5 to 1.5 and density 0 to 3.0. The curves end together at the left edge.
+    {
+        "id": "fujifilm_neopan_400_presto",
+        "pdf": "neopan_400_presto_jp.pdf",
+        "page": 4,
+        "frame": (88.02, 269.07, 265.81, 375.76),
+        "x_ticks": _even([-3.5, -3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5], 88.02, 265.81),
+        "y_ticks": _even([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], 375.76, 269.07),
+        "curves": {"bw": {"rank": 2, "at": "right"}},
+        "kind": "negative",
+    },
+]
+
+# Filmotec ORWO black-and-white datasheets (Word documents with an Excel chart): "log H rel",
+# ORWO instruction 1182 (D-96), densitometry not stated. Gridlines every 0.3 log H and 0.5 D. The
+# curve is drawn as 14 smoothed pieces, one per 0.3 log H, whose ends sit 0.33 pt (0.007 log H)
+# left of the gridlines they belong on.
+_ORWO_LOG_H = [round(0.3 * k, 1) for k in range(15)]
+_ORWO_D = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+VECTOR += [
+    {
+        "id": "orwo_un54",
+        "pdf": "orwo_un54.pdf",
+        "page": 2,
+        "frame": (345.60, 252.24, 534.81, 376.60),
+        "x_ticks": _even(_ORWO_LOG_H, 345.60, 534.81),
+        "y_ticks": _even(_ORWO_D, 376.60, 252.24),
+        "curves": {"bw": {"pieces": [f"{k}.0" for k in range(49, 63)]}},
+        "kind": "negative",
+    },
+    {
+        "id": "orwo_n74_plus",
+        "pdf": "orwo_n74_plus.pdf",
+        "page": 2,
+        "frame": (336.47, 318.30, 525.56, 449.36),
+        "x_ticks": _even(_ORWO_LOG_H, 336.47, 525.56),
+        "y_ticks": _even(_ORWO_D, 449.36, 318.30),
+        "curves": {"bw": {"pieces": [f"{k}.0" for k in range(49, 63)]}},
+        "kind": "negative",
+    },
+]
+
 RASTER = [
     # Fujicolor C200, AF3-0249E (May 2017): Status M, CN-16, daylight 1/125 s. Black curves,
     # blue above green above red; the chart image is 600 ppi.
@@ -526,6 +756,76 @@ RASTER += [
         "curves": {"t10": {}, "bw": {}},
         "seed_x": 198.4,
         "merged_thickness_pt": 3.0,
+        "kind": "negative",
+    },
+]
+
+RASTER += [
+    # HARMAN Phoenix 125 (August 2026 sheet), a check only: its chart is the Phoenix 200 chart
+    # again (the readings agree within 0.003 D), so it says nothing of its own about Phoenix 125.
+    # Set up like Phoenix 200, with the frame about 1 pt higher on the page.
+    {
+        "id": "check_phoenix_125",
+        "check_against": "harman_phoenix_200",
+        "pdf": "harman_phoenix_125.pdf",
+        "page": 3,
+        "dpi": 600,
+        "dpi2": 300,
+        "frame": (65.2, 92.88, 288.30, 231.44),
+        "x_ticks": _grid([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], [65.2, 101.94, 139.44, 176.34, 213.66, 250.62, 288.30]),
+        "y_ticks": _grid([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+                         [231.44, 214.14, 196.74, 179.34, 162.06, 145.02, 127.26, 110.10, 92.88]),
+        "threshold": 0.7,
+        "order": ["g", "b", "r"],
+        "curves": {"g": {}, "b": {}, "r": {}},
+        "seed_x": 191.6,
+        "merged_thickness_pt": 3.0,
+        "kind": "negative",
+    },
+    # ORWO N 75 (Filmotec, February 2020): ORWO instruction 1182 (D-96), "log H rel", the chart
+    # an image (200 ppi). Gridlines every 0.3 log H and 0.5 D.
+    {
+        "id": "orwo_n75",
+        "pdf": "orwo_n75.pdf",
+        "page": 2,
+        "dpi": 600,
+        "dpi2": 300,
+        "frame": (375.42, 301.86, 528.80, 421.02),
+        "x_ticks": _grid([round(0.3 * k, 1) for k in range(15)],
+                         [375.42, 386.58, 397.50, 408.30, 419.46, 430.26, 441.06, 452.22, 463.02, 474.18, 484.98, 495.90, 506.94, 517.86, 528.80]),
+        "y_ticks": _grid([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0], [421.02, 401.34, 381.42, 361.62, 341.82, 322.02, 301.86]),
+        "open_pt": 0.6,
+        "order": ["bw"],
+        "curves": {"bw": {}},
+        "seed_x": 470.0,
+        "max_thickness_pt": 4.0,
+        "max_jump_pt": 3.0,
+        "kind": "negative",
+    },
+    # Lucky New SHD100 (scanned sheet, 200 ppi): LK HB-17 or D-76, 5, 7, 9 and 11 min; 5 min (the
+    # lowest) is the processing paragraph's time. Visual diffuse density. The log H labels lost
+    # their minus signs (exposure grows to the right, so they read -2.0 and -1.0; the next
+    # gridline, labelled "lgH", is then 0.0). Density is labelled 1.0 and 2.0 only.
+    {
+        "id": "lucky_shd100",
+        "pdf": "lucky_shd100.pdf",
+        "page": 1,
+        "dpi": 600,
+        "dpi2": 300,
+        "frame": (173.04, 673.50, 278.52, 748.62),
+        "x_ticks": _grid([-2.0, -1.0, 0.0], [195.84, 228.90, 261.84]),
+        "y_ticks": _grid([0.0, 1.0, 2.0], [748.62, 717.54, 686.10]),
+        # fitted to the labelled lines only; the frame (density 0) and the "lgH" line (0.0)
+        # show how well the inferred values agree
+        "x_fit": [-2.0, -1.0],
+        "y_fit": [1.0, 2.0],
+        "open_pt": 0.85,
+        "exclude": [(205, 676, 253, 685)],
+        "order": ["t11", "t9", "t7", "bw"],
+        "keep": ["bw"],
+        "curves": {"t11": {}, "t9": {}, "t7": {}, "bw": {}},
+        "seed_x": 255.0,
+        "merged_thickness_pt": 4.0,
         "kind": "negative",
     },
 ]

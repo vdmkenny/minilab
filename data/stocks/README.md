@@ -38,9 +38,9 @@ If you haven't worked with film datasheets before, here's the vocabulary used be
 
 **Densities.** Colour negatives use Status M and colour slides use Status A, as printed on the
 makers' curves. Two charts don't say how density was measured: HARMAN Phoenix 200 (a colour
-negative) and Fujifilm Acros 100 II. For black-and-white, Kodak's curves are diffuse visual
-density. Ilford, Foma, Rollei and ADOX don't say how they measured, and Kodak measures Double-X
-gamma with Status M blue. Each entry's `source` says which of these applies. Black-and-white
+negative) and Fujifilm Acros 100 II. For black-and-white, Kodak's and Lucky's curves are diffuse
+visual density. Ilford, Foma, Rollei, ADOX, ORWO and Fujifilm (Neopan 400 Presto) don't say how
+they measured, and Kodak measures Double-X gamma with Status M blue. Each entry's `source` says which of these applies. Black-and-white
 entries repeat the same value for R, G and B.
 
 **Log exposure.** The curves keep the maker's own exposure axis, log10 of lux-seconds, with these
@@ -55,10 +55,13 @@ exceptions:
   Sixteen stops should be 4.82 log H, so we went with the stop scale.
 - Fomapan 100, 200, 400 and R: Foma labels its axis "log relative exposure".
 - Ilford and HARMAN: "relative log exposure".
+- ORWO UN54, N74 plus and N75: "log H rel", 0 to 4.2.
+- Lucky New SHD100: labelled only "lgH" (see "Which curve we picked").
 
 **`base_density`** (base + fog for negatives, D-min for slides). This is the density at the
 least-exposed end of the published curve: the low-exposure end on a negative, the high-exposure
-end on a slide.
+end on a slide. "The end" means where the drawn curve ends, not the first or last point of the
+stored grid (below), which can be up to 0.1 log H short of it.
 
 The catch is that datasheet curves often stop before the toe has flattened out, and then the end
 of the curve sits above the real minimum. So we only accept the value if the curve has flattened
@@ -67,7 +70,6 @@ That's about a sixth of a negative's gamma, which puts the end density within ro
 real minimum. If any channel fails the test, `base_density` is null for that stock. That happens
 for:
 
-- Fujifilm 400: the blue curve is still rising at 0.12 per log H where it starts.
 - Fujifilm Superia 200: the green curve is still rising at 0.105 per log H where it starts.
 - ORWO Wolfen NC400: the blue and green curves are still rising at 0.166 and 0.101 per log H
   where they start.
@@ -112,7 +114,7 @@ index of 0.56 for Tri-X's starting-point development, while the slope we get fro
 
 **`density_range`**:
 
-- For negatives: the density at the most-exposed end of the published curve, minus
+- For negatives: the density at the most-exposed end of the drawn curve, minus
   `base_density`. That's how far the maker's curve goes, not the film's maximum density. Kodak's
   still-film curves stop about 6 stops above normal exposure, Vision3 and Verita curves run to +8
   stops, and the T-Max P3200 curve runs off the top of the chart at density 3.0.
@@ -124,8 +126,8 @@ index of 0.56 for Tri-X's starting-point development, while the slope we get fro
 - We sample them every 0.1 log H, at multiples of 0.1, across the drawn range.
 - If that would give more than 41 points (the most the tests in `stocks.zig` allow), the step goes
   up to 0.15 log H (half a stop), at multiples of 0.15. That's the case for Vision3, Verita, HP5
-  Plus, Pan F Plus, XP2 Super, Delta 3200, SFX 200, Pro 400H, Provia 100F, Velvia 100 and ORWO
-  Wolfen NC400, whose curves span more than 4.0 log H.
+  Plus, Pan F Plus, XP2 Super, Delta 3200, SFX 200, Pro 400H, Provia 100F, Velvia 100, ORWO
+  Wolfen NC400, ORWO UN54 and N74 plus, whose curves span more than 4.0 log H.
 - Curves traced from images are only smoothed at the grid points: each stored value comes from a
   least-squares line through the traced samples within ±0.025 log H of that point.
 
@@ -149,15 +151,25 @@ them exactly:
   order the curves are stacked in at that end, or by the line style the legend gives (Velvia 100:
   R solid, G dash-dot, B dashed). Each curve is its own path, so curves that cross later on (as
   Kodachrome's do near D-min) keep the right channel.
-- Foma and Kodak sometimes draw curves as filled outlines. There we take the centre of the
-  outline.
+- Foma and Kodak sometimes draw curves as filled outlines (Fomapan, Verita 200D). There we take
+  the centre of the outline: halfway between its lowest and highest edge at each log H, leaving
+  out the last 0.3 pt at each end, where the outline closes round the line's end. Where the
+  chart's frame clips a curve, the reading stops at the frame.
+- Some charts draw their frame or tick marks as thin filled rectangles (Fomapan, Verita 200D).
+  Each of those counts as one line, at its centre.
 
 Tick residuals are below 0.001, except for these:
 
-- Portra 160: the density ticks are drawn unevenly spaced, so ±0.02 D.
-- Superia X-TRA 400 and Fujicolor 100: the gridlines are slightly uneven, so ±0.015 D.
-- Pro 160NS: the frame is drawn off the inner grid, so ±0.017 D.
-- Fomapan 100, 200 and 400: the 1.0 density gridline is drawn slightly tilted, so ±0.015 D.
+- Portra 160: the inner density gridlines are 46.4 pt apart and the bottom one 45.3 pt, while
+  the frame spans 4.0 D in 184.5 pt, as on Kodak's other sheets. We fit the density axis to the
+  frame (0 and 4.0) only, and the gridlines then sit up to 0.018 D off.
+- Superia X-TRA 400 and Fujicolor 100: the inner density gridlines are uneven by up to 0.7 pt.
+  We fit the density axis to the frame (0 and 4.0) only; the gridlines sit up to 0.015 D off,
+  and the log H gridlines up to 0.008.
+- Pro 160NS: the frame is drawn up to 0.8 pt off the inner gridlines, so we fit both axes to the
+  inner gridlines only. They sit up to 0.016 D and 0.017 log H off.
+- Fomapan 100, 200 and 400: the 1.0 density gridline leans by about 0.4 pt, so we fit the
+  density axis to 0 and 2.0 only. The leaning line's midpoint sits 0.011 D off.
 - Vision3 50D: the top of the frame, labelled 3.0, is drawn 0.03 D too low. We left it out of the
   fit; the 0, 1.0 and 2.0 ticks agree to 0.0015 D.
 - Ilford 2010 editions (HP5 Plus, FP4 Plus, Pan F Plus, XP2 Super, Delta 3200): the gridlines every
@@ -165,6 +177,11 @@ Tick residuals are below 0.001, except for these:
 - Fujifilm Pro 400H: up to 0.013 log H and 0.006 D. Velvia 100: up to 0.008 log H and 0.008 D.
 - ORWO Wolfen NC400 and NC500: the gridlines are placed to about a tenth of a point, so up to
   0.0012 log H and 0.0016 D.
+- Neopan 400 Presto: up to 0.0014 log H and 0.0016 D.
+- ORWO UN54 and N74 plus: up to 0.0013 log H and 0.0010 D. These Excel charts draw the curve as
+  14 smoothed pieces, one per 0.3 log H, and each piece's ends sit 0.33 pt (0.007 log H) left of
+  the gridline it starts and ends on. We read the curve where it's drawn, so it may sit up to
+  0.007 log H early, about 0.005 D on the straight part.
 
 We drew every reading back onto a render of its page (`tools/overlay.py`), and the points sit on
 the printed lines. For Superia X-TRA 400, the Japanese and English sheets give the same curves to
@@ -207,6 +224,8 @@ axis residual, and the largest and mean density difference between the two reads
 | SFX 200 | 185 ppi | 0.014 / 0.003 | 0.002 / 0.001 | |
 | Ortho Plus | 199 ppi | 0.003 / 0.006 | 0.010 / 0.002 | The 8 and 10 min curves share a reading in the toe. The 0.0 gridline is hidden by the toe, so we left it out of the fit. |
 | Phoenix 200 | 216 ppi | 0.002 / 0.001 | 0.002 / 0.001 | Blue and red are drawn on top of each other up to relative log H 0.9 and share a reading there. |
+| ORWO N75 | 200 ppi | 0.002 / 0.003 | 0.001 / 0.000 | |
+| Lucky New SHD100 | 200 ppi, scanned print | 0.013 / 0.021 | 0.007 / 0.001 | Each axis has only two labels, so each is fitted to those two; the residuals are those of the unlabelled lines (log H 0.0, density 0). The 5, 7, 9 and 11 min curves run together in the toe and share a reading there. |
 
 We also checked the method against exact readings of the same curves. Kodak's March 2026 Vision3
 sheets reprint the July 2015 charts as 225 ppi images, and the November 2018 HP5 Plus sheet prints
@@ -298,6 +317,13 @@ numbers we read from them are our own measurements of published data.
 | SFX 200 | Ilford datasheet, November 2018 | image | ilfordphoto.com; the download URL wasn't recorded |
 | Ortho Plus | Harman datasheet, October 2019 | image | https://ilfordphoto.com/amfile/file/download/file/1948/product/698 |
 | Phoenix 200 | HARMAN datasheet, September 2024 | image | https://web.archive.org/web/20260902152549id_/https://harmanphoto.co.uk/amfile/file/download/file/1963/product/2143/ |
+| (check only) Phoenix 125 | HARMAN datasheet (H26; the PDF was made in August 2026) | image | https://www.harmanphoto.co.uk/amfile/file/download/file/1973/product/2277/ |
+| Tri-X 320 | Kodak F-4017, October 2021 (the Tri-X 400 sheet) | vector | as Tri-X 400 |
+| Neopan 400 Presto | Fujifilm 163AR0120A (Japanese, 2007) | vector | https://asset.fujifilm.com/www/jp/files/2019-12/34aac580ca2ba80532d72269e84aa9ce/datasheet_neopan400presto135_01.pdf |
+| ORWO UN54 | Filmotec technical information TI-UN54-X/2014 | vector | https://cdn.shopify.com/s/files/1/0549/7205/5650/files/Datasheet_UN54.pdf |
+| ORWO N74 plus | Filmotec technical information TI-N74plus-X/2014 | vector | https://cdn.shopify.com/s/files/1/0549/7205/5650/files/Datasheet_N74plus.pdf |
+| ORWO N75 | Filmotec technical information TI-N75-VIII/2019 | image | https://cdn.shopify.com/s/files/1/0549/7205/5650/files/Datasheet_N75.pdf |
+| Lucky New SHD100 | Lucky datasheet LU1011 (a scan; the PDF was made in December 2008) | image | https://www.macodirect.de/media/pdf/72/e9/12/LU1011_Datenblatt_e.pdf |
 | ORWO Wolfen NC400 | InovisCoat data sheet, undated (the PDF was made in November 2022) | vector | https://cdn.shopify.com/s/files/1/0549/7205/5650/files/Data_sheet_Wolfen_NC400.pdf |
 | ORWO Wolfen NC500 | InovisCoat Datenblatt (German), undated (the PDF was made in October 2022) | vector | https://filmotec.de/wp-content/uploads/2023/04/Datenblatt-Wolfen-NC500.pdf |
 | Fomapan 100 Classic | Foma datasheet, 05/22 | vector | https://www.foma.cz/en/fomapan-100 |
@@ -330,6 +356,23 @@ each entry uses, and why.
   16 min. MICROPHEN 9 min at 20 °C is the table's time for EI 3200, so we used that curve, and the
   entry is for EI 3200 (the film's ISO speed is 1000).
 - **Acros 100 II**: Microfine, 20 °C, small tank, 10 min: the table's time for EI 100.
+- **Tri-X 320** (320TXP, sheet film): F-4017 prints two charts for it, HC-110 (B) at 4, 6, 9 and
+  14 min and D-76 at 6, 8, 10 and 12 min, both large tank at 20 °C. None is at a table time. The
+  table's large-tank starting points are 4¼ min in HC-110 (B) and 7½ min in D-76, so we used the
+  closest curve, HC-110 (B) 4 min.
+- **Neopan 400 Presto**: the D-76 chart (20 °C, small tank) prints 7½ min (G-bar 0.54), 8¾ min
+  (G-bar 0.65) and 12 min (G-bar 0.83). The development table gives 7½ min for EI 400 and 8¾ min
+  for EI 800, so the entry uses 7½ min, for the box speed, as for Acros. Its straight-line slope
+  is 0.561; the 8¾ min curve's would be 0.716 (base 0.215, range 1.970).
+- **ORWO UN54, N74 plus and N75**: each sheet prints one negative curve, for ORWO instruction
+  1182 (D-96) to the recommended average gradient 0.65. The straight-line slopes we get are
+  0.643, 0.619 and 0.575. UN54's reversal curve (instruction 4185) isn't used.
+- **Lucky New SHD100**: the chart prints LK HB-17 or D-76 curves at 5, 7, 9 and 11 min; the
+  processing paragraph gives D-76 at 20 °C for 5 min, so the entry uses 5 min. The log H labels
+  read "2.0" and "1.0", growing to the left, and the next gridline is labelled "lgH". Exposure
+  grows to the right on a negative's curve, so these must be -2.0 and -1.0 with their minus signs
+  lost (as on Kodak's Gold 200 and Tri-X charts), and the "lgH" gridline 0.0. The sheet doesn't
+  give the unit, so the entry treats log H as relative.
 - **Delta 100**: ID-11 stock, 8½ min at 20 °C: the table's time for EI 100.
 - **Ortho Plus**: the "Pictorial contrast" chart, ID-11 stock, 8 min, which the chart labels G-bar
   0.62. Like every other entry with a curve, its gamma is the straight-line slope we work out from
@@ -391,7 +434,8 @@ typical development. Here's what Foma publishes, and what the entries hold.
   Microphen stock at 20 °C at three times: 5, 7 and 11 min (100), 4, 6 and 8 min (200), and 7, 9
   and 11 min (400). The entries keep the middle curve: 7, 6 and 9 min. Those times are at the top
   end of Foma's recommended Microphen times for each film.
-  - We read the curves exactly from the vector drawing. The worst axis residual is 0.015 D.
+  - We read the curves exactly from the vector drawing. The worst axis residual is 0.011 D, at
+    the leaning 1.0 gridline (section 1).
   - **The catch: all three datasheets print the same drawing**, with only the time labels
     changed. Once mapped, the three agree to within 0.001 D.
   - The drawing's straight part has a slope of about 0.96, well above the γ Foma itself states
@@ -460,6 +504,7 @@ that too.
 | Kodak Ektapan 100, 400, P3200 (2026) | T-Max 100, 400, P3200 | The same: Kodak calls it a T-Grain emulsion and uses T-Max's wording and formats, but doesn't say it's T-Max. |
 | Silbersalz35 50D, 250D, 200T, 500T | Vision3 50D, 250D, 200T, 500T | Kodak's blog, https://www.kodak.com/en/motion/blog-post/silbersalz35/ |
 | Reflx Lab 500T | Vision3 500T 5219 | Reflx Lab's product page. |
+| Harman Phoenix 125 | Phoenix 200 | HARMAN's own sheet: it prints Phoenix 200's chart (see "Stocks left out"). |
 | Elektra 100, Reflx Lab Pro 100 | Aerocolor IV 2460 | Their sellers' product pages (B&H for Elektra 100, Reflx Lab for Pro 100), not Kodak. Other rebrands, like SantaColor 100, only have blogs saying so, and aren't listed. |
 
 "Fujicolor 200" isn't an alias, because it names two films. In the US since December 2021 it's
@@ -476,8 +521,7 @@ the film on Fujifilm's AF3-0261E sheet (the "Fujifilm 200" preset), and in Europ
 | ADOX CMS 20 II | No contrast figure and no curve. |
 | CineStill 400D | See above. |
 | Lomography Color Negative 100/400/800, Lomochrome Purple, Lady Grey, Berlin Kino, Earl Grey | No datasheet found. |
-| Fujifilm Neopan 400 Presto | Discontinued. Its Japanese sheet has stated G-bar values and a vector curve, so it could be added. |
-| Harman Phoenix 125 | Not added yet. Its sheet has a raster curve and no figures; it could be read like Phoenix 200. |
+| Harman Phoenix 125 | Its sheet's chart is the Phoenix 200 chart: traced the same way, the two agree within 0.003 D on every channel, with the same gammas to 0.001. So it tells us nothing more than Phoenix 200's does, and the sheet states no figures: Phoenix 125 is listed as another name for Phoenix 200 instead. `charts.py` keeps it as a check (`check_phoenix_125`). |
 | CineStill BwXX | CineStill calls it "Double-X" but gives no data. Kodak Double-X is included. |
 | ADOX Silvermax, Scala 50 | The contrast column (0,65) has no heading, so it isn't clear what it measures. |
 | ADOX HR-50 | Same unheaded 0,65 column (datasheet of 20 November 2018, https://www.macodirect.de/media/pdf/c2/97/cf/ASC5011_Datenblatt_e.pdf). Its "Characteristic Curve ADOX HR-50 in ADOX FX-39" has no development time and no numbers on the log E axis, so no slope can be read from it, and its density labels (0, 0.1, 0.2, 0.3, 0.5, then every 0.2) are unevenly spaced. The 6 September 2018 sheet on adox.de (https://web.archive.org/web/20251015072916id_/https://www.adox.de/Technical_Informations/TA_HR-50_EN.pdf) prints the same chart. |
@@ -502,7 +546,12 @@ file name, and `tools/charts.py` gives the file name for each chart.
   figures from section 3.
 - `tools/make_zig.py OUT_DIR ../../src/presets/stocks.zig`: writes the entries and curve data
   listed in `tools/stocks_meta.py` into `stocks.zig`, replacing any entry with the same name. Add
-  `--dry-run` to try it without writing the file. Run `zig fmt` afterwards.
+  `--dry-run` to try it without writing the file. Run `zig fmt` afterwards. Where the maker
+  states a gamma that we use instead of the curve's slope (Foma), the entry's `stated_gamma`
+  holds it.
+
+Every entry in `stocks.zig` with curves has its chart in `charts.py` and its entry in
+`stocks_meta.py`, so `read_all.py` followed by `make_zig.py` rebuilds all of them.
 - `tools/overlay.py PDF_DIR READING_JSON OUT_PNG`: draws a reading back onto its page, so you can
   check it by eye.
 - `tools/explore_vector.py`, `tools/explore_raster.py`, `tools/colours.py` and

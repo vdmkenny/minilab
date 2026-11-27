@@ -27,3 +27,6 @@ zig-pkg/
 # The website's screenshots and icon, which the Pages workflow adds when it publishes it.
 /site/images/
 /site/icon.svg
+
+# Python bytecode from running the stock tools.
+__pycache__/
