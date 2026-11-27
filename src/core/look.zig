@@ -293,9 +293,6 @@ pub fn developFrame(gpa: std.mem.Allocator, scan: image.Scan, area: image.Area, 
 /// The largest .cube file we read: 64 MiB. A 129-point 3D LUT in text is about 60 MiB.
 pub const max_cube_bytes = 64 << 20;
 
-/// Reads the looks that ids name, each one once: the built-in ones from minilab itself, and
-/// imported LUTs and fitted looks from the library's Looks folder. Only one thread can use it at a
-/// time.
 /// The extension of imported LUTs in the library's Looks folder.
 pub const cube_extension = ".cube";
 
@@ -306,6 +303,9 @@ fn cubePath(gpa: std.mem.Allocator, folder: []const u8, name: []const u8) ![]u8 
     return std.fs.path.join(gpa, &.{ folder, file });
 }
 
+/// Reads the looks that ids name, each one once: the built-in ones from minilab itself, and
+/// imported LUTs and fitted looks from the library's Looks folder. Only one thread can use it at a
+/// time.
 pub const Catalog = struct {
     /// `<library>/Looks`, or null without a library, when only the built-in looks are there.
     folder: ?[]u8 = null,

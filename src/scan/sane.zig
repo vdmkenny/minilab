@@ -819,6 +819,14 @@ pub const Scanner = struct {
         return null;
     }
 
+    /// Turns off the switches that send the infrared with the scan, where the scanner has them.
+    fn switchInfraredOff(scanner: *Scanner) Error!void {
+        for (infrared_switches) |name| {
+            const found = scanner.find(name) orelse continue;
+            if (found.option.type == .bool and found.option.settable()) _ = try scanner.setNumber(name, 0);
+        }
+    }
+
     /// The area the scanner will use, after rounding.
     fn usedArea(scanner: *Scanner) interface.Area {
         const full = scanner.fullArea();
@@ -833,18 +841,29 @@ pub const Scanner = struct {
         progress.reset();
         try scanner.prepare(gpa, request);
         const way: ?InfraredWay = if (request.infrared) scanner.infraredWay() else null;
+        // A switch stays where the last scan left it, and a scan with no infrared asked for is
+        // read as colour only, so it goes off again. `prepare` has already set the mode.
+        if (way == null) try scanner.switchInfraredOff();
         // A mode or a switch that sends the infrared with the scan goes on before it.
-        if (way) |w| switch (w) {
-            .rgbi => |mode| _ = try scanner.setString("mode", mode),
-            .toggle => |name| _ = try scanner.setNumber(name, 1),
-            .mode, .source => {},
-        };
+        const with_scan = if (way) |w| switch (w) {
+            .rgbi => |mode| with: {
+                _ = try scanner.setString("mode", mode);
+                break :with true;
+            },
+            .toggle => |name| with: {
+                _ = try scanner.setNumber(name, 1);
+                break :with true;
+            },
+            // These take a pass of their own, after the colour (`secondPass`). Looking for the
+            // infrared in the colour pass would start a scan the scanner isn't set up for.
+            .mode, .source => false,
+        } else false;
         const area = scanner.usedArea();
         const dpi: f32 = @floatCast(scanner.getNumber("resolution") orelse @as(f64, @floatFromInt(request.dpi)));
         const x_dpi: f32 = @floatCast(scanner.getNumber("x-resolution") orelse dpi);
         const y_dpi: f32 = @floatCast(scanner.getNumber("y-resolution") orelse dpi);
 
-        var colour = try scanner.read(gpa, progress, way != null);
+        var colour = try scanner.read(gpa, progress, with_scan);
         errdefer colour.deinit(gpa);
         if (way) |w| switch (w) {
             // The infrared is a scan of its own, of the same area, in its mode or from its light.
@@ -978,7 +997,8 @@ pub const Scanner = struct {
         var buffer: [read_size]u8 = undefined;
         var filled: usize = 0;
         var row: usize = 0;
-        // After an error we still read the rest of the scan, so the scanner ends up idle.
+        // After a line we can't use we still read the rest of the scan, so the scanner ends up
+        // idle. A read that fails is different: the scanner has stopped sending by then.
         var failure: ?Error = null;
         while (true) {
             var length: Int = 0;

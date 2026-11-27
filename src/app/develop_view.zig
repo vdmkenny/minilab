@@ -315,7 +315,6 @@ pub const State = struct {
     look_choices: std.ArrayList(look.Catalog.Choice) = .empty,
     /// The dialog for importing a .cube file as a look.
     cube_dialog: Dialog = .{ .filters = &file_dialog.cube_files },
-    /// Why the last .cube didn't import. It's cleared when another look is chosen.
     pub fn deinit(state: *State, gpa: std.mem.Allocator, gpu: *c.SDL_GPUDevice) void {
         state.look_choices.deinit(gpa);
         state.cube_dialog.deinit(gpa);
@@ -506,7 +505,6 @@ pub const State = struct {
         library.invalidate(.{ .roll = r, .frame = index });
     }
 
-    /// Marks what the viewer shows, and the negative, as out of date.
     /// Whether section `which` is open, to read and to set.
     fn section(state: *State, which: Section) *bool {
         const sections = &state.sections.?;
@@ -515,6 +513,7 @@ pub const State = struct {
         };
     }
 
+    /// Marks what the viewer shows, and the negative, as out of date.
     fn markStale(state: *State) void {
         state.shown_stale = true;
         state.negative_stale = true;
@@ -909,7 +908,8 @@ pub const State = struct {
         state.redo = .{};
         const kind = frame.settings.kind;
         const slide = frame.settings.slide_colour;
-        frame.settings = .{ .slide_colour = slide };
+        // What the scan is stays: a finished picture is still one after a reset.
+        frame.settings = .{ .slide_colour = slide, .finished = frame.settings.finished };
         frame.look = .neutral;
         if (state.rollIndex(library)) |r| prepareStock(library, &library.rolls.items[r], frame, kind);
         frame.measure(kind);
@@ -1370,6 +1370,8 @@ fn drawPicture(state: *State, library: *const Library, area_min: gui.Vec2, area_
     c.ImDrawList_PushClipRect(list, area_min, area_max, true);
     defer c.ImDrawList_PopClipRect(list);
     if (state.cropping) |*edit| {
+        // No loupe over the crop tool: without this, the last one stays where it was.
+        state.loupe_target = null;
         c.ImDrawList_AddImage(list, positive.ref(), picture.min, picture.max);
         cropTool(edit, list, picture.min, picture.scale, picture.size, hovered, active, state.format(library).ratio());
         return;

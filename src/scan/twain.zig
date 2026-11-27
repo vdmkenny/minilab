@@ -815,7 +815,6 @@ pub const Scanner = struct {
         return error.Failed;
     }
 
-    /// Reads the image in buffered memory transfers, strip by strip.
     /// The size of the transfer buffer: what the source prefers, but at least what it needs and a
     /// row of `row_bytes`.
     fn bufferSize(scanner: *Scanner, row_bytes: usize) Error!u32 {
@@ -831,6 +830,7 @@ pub const Scanner = struct {
         return size;
     }
 
+    /// Reads the image in buffered memory transfers, strip by strip.
     fn transfer(scanner: *Scanner, gpa: std.mem.Allocator, info: ImageInfo, area: interface.Area, progress: *interface.Progress) Error!interface.Image {
         if (info.planar != 0 or info.compression != 0) return error.Unsupported;
         if (info.width <= 0) return error.Failed;

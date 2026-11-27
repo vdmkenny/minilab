@@ -138,8 +138,6 @@ pub const DeviceList = struct {
 /// Standard resolutions, for scanners that give a range instead of a list.
 pub const standard_resolutions = [_]u32{ 75, 100, 150, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 9600 };
 
-/// Appends the standard resolutions that fall in a scanner's range to `resolutions`. The range
-/// goes from `low` to `high` in steps of `step`, and a step of 0 allows any value in it.
 /// No scanner comes near this many pixels per inch. A driver that reports more is wrong.
 const max_dpi = 100_000;
 
@@ -158,6 +156,8 @@ pub fn upToNative(sorted: []const u32, optical: f64) []const u32 {
     return if (n == 0) sorted else sorted[0..n];
 }
 
+/// Appends the standard resolutions that fall in a scanner's range to `resolutions`. The range
+/// goes from `low` to `high` in steps of `step`, and a step of 0 allows any value in it.
 pub fn appendResolutionsInRange(gpa: std.mem.Allocator, resolutions: *std.ArrayList(u32), low: f64, high: f64, step: f64) error{OutOfMemory}!void {
     for (standard_resolutions) |r| {
         const value: f64 = @floatFromInt(r);

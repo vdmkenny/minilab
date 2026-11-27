@@ -146,7 +146,9 @@ pub fn cleaned(gpa: std.mem.Allocator, scan: image.Scan, plane: image.Plane, set
         f.* = e >= opaque_code;
         any_opaque = any_opaque or f.*;
         if (e <= threshold or f.*) continue;
-        const gain = std.math.pow(f32, 10, @as(f32, @floatFromInt(e)) / steps_per_density);
+        // The defect darkened the red channel as well, so taking the picture's copy out took
+        // `leak` of the defect with it. What's left is the defect's density times (1 - leak).
+        const gain = std.math.pow(f32, 10, @as(f32, @floatFromInt(e)) / steps_per_density / (1 - leak));
         for (p) |*v| v.* = @intFromFloat(@min(@round(@as(f32, @floatFromInt(v.*)) * gain), image.full_scale));
     }
     if (any_opaque) _ = try dust.fillMask(gpa, result, fill, dust.squareReach(frame_longest, settings.grow) * @intFromBool(settings.grow > 0), frame_longest);

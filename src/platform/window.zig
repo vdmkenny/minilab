@@ -55,7 +55,9 @@ pub const Window = struct {
         errdefer c.SDL_DestroyWindow(handle);
         setIcon(handle);
         _ = c.SDL_SetWindowPosition(handle, c.SDL_WINDOWPOS_CENTERED, c.SDL_WINDOWPOS_CENTERED);
-        _ = c.SDL_SetWindowMinimumSize(handle, min_width, min_height);
+        // Scaled like the window's own size, so the panels still fit at the smallest size on a
+        // display with a scale above 1.
+        _ = c.SDL_SetWindowMinimumSize(handle, @intFromFloat(@as(f32, min_width) * scale), @intFromFloat(@as(f32, min_height) * scale));
         // The shader formats ImGui's backend comes with: Vulkan's, and Metal's on Apple systems.
         const gpu = c.SDL_CreateGPUDevice(c.SDL_GPU_SHADERFORMAT_SPIRV | c.SDL_GPU_SHADERFORMAT_MSL | c.SDL_GPU_SHADERFORMAT_METALLIB, false, null) orelse return fail("SDL_CreateGPUDevice");
         errdefer c.SDL_DestroyGPUDevice(gpu);

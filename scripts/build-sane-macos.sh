@@ -12,8 +12,8 @@
 #   macOS doesn't have (escl, gphoto2, v4l and a few more) don't. escl, for network scanners,
 #   needs Avahi (https://github.com/vdmkenny/minilab/issues/17);
 # - libusb, which the backends reach USB scanners through, as a library of its own (LGPL-2.1);
-# - libjpeg-turbo, built into the backends that need JPEG, like pixma. It's the version minilab
-#   builds for itself (`deps/libjpeg-turbo`).
+# - libjpeg-turbo, built into the backends that need JPEG, like pixma. It's pinned here on its
+#   own, and can be a release behind the one minilab builds for itself (`deps/libjpeg-turbo`).
 #
 # What ends up in <out folder>:
 #
@@ -22,6 +22,7 @@
 #   sane.d/                dll.conf, which says which backends load, and each backend's config
 #   README.txt             what this is, the licences, and where the source is
 #   LICENSE-*              the licences
+#   sane-backends-*.patch  minilab's changes to sane-backends (scripts/sane-patches)
 #
 # The source archives stay in <downloads folder> (a temporary folder if you don't give one), so the
 # release can attach them. You need the Xcode command line tools and CMake. The build runs in a
@@ -92,8 +93,15 @@ fetch() {
 fetch "$sane_url" "$sane_sha256"
 # minilab's changes to sane-backends, until they're upstream: scripts/sane-patches/README.md says
 # what each does.
+# Each one also goes next to the archives and into the folder, named after the release it
+# changes, because the GPL asks for the source as it was built.
+changes=
 for change in "$(dirname "$0")"/sane-patches/*.patch; do
     patch -d "$work/src/sane-backends-$sane_version" -p1 -s < "$change"
+    name=sane-backends-$sane_version-$(basename "$change")
+    cp "$change" "$downloads/$name"
+    cp "$change" "$out/$name"
+    changes="$changes $name"
 done
 fetch "$usb_url" "$usb_sha256"
 fetch "$jpeg_url" "$jpeg_sha256"
@@ -180,7 +188,10 @@ installing anything. minilab loads it from here when you open Scan.
 
 It's sane-backends $sane_version, libusb $usb_version and libjpeg-turbo $jpeg_version, built for
 macOS on $arch by scripts/build-sane-macos.sh in minilab's repository
-(https://github.com/vdmkenny/minilab), with no changes to their code.
+(https://github.com/vdmkenny/minilab). libusb and libjpeg-turbo are built with no changes to their
+code. sane-backends is built with minilab's changes, which are the .patch files in this folder:
+$changes.
+scripts/sane-patches/README.md in minilab's repository says what each one does.
 
 Licences:
 
@@ -194,7 +205,7 @@ Licences:
 - libjpeg-turbo: the IJG and Modified BSD licences (LICENSE-libjpeg-turbo.md). This software is
   based in part on the work of the Independent JPEG Group.
 
-The source, exactly as it was built:
+The source it was built from (sane-backends with the .patch files above applied in order):
 
 - $sane_url
   SHA-256 $sane_sha256
@@ -203,7 +214,7 @@ The source, exactly as it was built:
 - $jpeg_url
   SHA-256 $jpeg_sha256
 
-The same archives are attached to the minilab release this download comes from.
+The same archives and .patch files are attached to the minilab release this download comes from.
 EOF
 
 echo "Done: $(find "$out/backends" -name '*.so' | wc -l | tr -d ' ') backends, $(du -sh "$out" | cut -f1)"

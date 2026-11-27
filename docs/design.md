@@ -198,15 +198,16 @@ low-resolution scan of the whole area.
 - If that SANE doesn't load, or on Linux, minilab loads the system's libsane, with the system's
   own configuration.
 - Options are set by name. SANE's standard names (`source`, `mode`, `depth`, `resolution`,
-  `tl-x`, `tl-y`, `br-x`, `br-y`, `preview`) work with every backend. Backend-specific ones, like
+  `tl-x`, `tl-y`, `br-x`, `br-y`) work with every backend. Backend-specific ones, like
   epkowa's `film-type` and `gamma-correction`, come from a scanner profile or from raw setup
   (both below).
 - Scan's resolution menu only lists what works raw. minilab puts the scanner in its raw setup,
   then tries each resolution the backend lists and keeps the ones it takes as they are, still at
   16 bits.
-- Cancel calls `sane_cancel`. On the V200 the plugin then reads the rest of the scan anyway, so
-  that the scanner stays usable. That takes as long as the rest of the scan would have, so the UI
-  shows "finishing" until it's done.
+- Cancel doesn't stop a scan part-way: calling `sane_cancel` in the middle of one leaves the V200
+  stuck until it's switched off. minilab reads the scan to the end and drops it, and only then
+  calls `sane_cancel`. That takes as long as the rest of the scan would have, so the UI shows
+  "finishing" until it's done.
 - sane-backends ships a `test` backend that makes up frames (Homebrew has `libsane-test.so`).
   The tests use it where libsane is installed, so the SANE code gets tested without a scanner.
 
@@ -496,8 +497,8 @@ is the picture. The look and saturation still apply. A colour slide shot with a 
 more step, because the roll's scan of it is in the camera's own colour. So at import, the frame
 keeps the RAW file's colour information (`develop.SlideColour`): the camera's white balance as shot,
 for the light behind the film (or its daylight balance, where the file doesn't have one), then the
-camera's matrix to sRGB. With a flat field, which has already made the light white, only the matrix
-applies. Slides imported by development builds from before this was added keep the camera's raw
+camera's matrix to sRGB. A flat field doesn't change this: each channel is divided by its own
+brightest value, which evens the light out and leaves its colour as it was. Slides imported by development builds from before this was added keep the camera's raw
 colour.
 
 ### Automatic settings

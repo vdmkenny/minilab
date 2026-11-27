@@ -92,7 +92,6 @@ const FilmName = enum {
 /// The film kinds `develop` and `develop-roll` accept.
 const negative_films: std.EnumSet(FilmName) = .initMany(&.{ .colour, .bw });
 
-/// Returns the film kind `--film <value>` names, as long as it's one the command `takes`.
 /// A command's arguments, read one at a time: flags, the values that follow them, and the rest. A
 /// mistake in them, such as a flag with no value or one the command doesn't know, is
 /// `error.Usage`, which prints the usage.
@@ -122,6 +121,7 @@ fn eql(a: []const u8, b: []const u8) bool {
     return std.mem.eql(u8, a, b);
 }
 
+/// Returns the film kind `--film <value>` names, as long as it's one the command `takes`.
 fn parseFilm(value: []const u8, takes: std.EnumSet(FilmName)) error{Usage}!minilab.develop.FilmKind {
     const name = std.meta.stringToEnum(FilmName, value) orelse return error.Usage;
     if (!takes.contains(name)) return error.Usage;
@@ -668,8 +668,6 @@ fn formatOf(path: []const u8) !Format {
     return error.UnknownOutputFormat;
 }
 
-/// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame
-/// of a strip as `<out>-1.tif`, `<out>-2.tif` and so on.
 /// The frames on `full`, the scan at `path`, found the way the app finds them. None means use all
 /// of the scan. The caller frees the list.
 fn framesOn(gpa: std.mem.Allocator, full: minilab.image.Scan, kind: minilab.develop.FilmKind, path: []const u8) ![]const minilab.framing.Found {
@@ -684,6 +682,8 @@ fn framesOn(gpa: std.mem.Allocator, full: minilab.image.Scan, kind: minilab.deve
     };
 }
 
+/// Develops the scan `options.input` into `options.output`: the frame found on it, or each frame
+/// of a strip as `<out>-1.tif`, `<out>-2.tif` and so on.
 fn developFile(gpa: std.mem.Allocator, io: std.Io, options: Options) !void {
     var full = (try minilab.input.read(gpa, io, options.input)).scan;
     defer full.deinit(gpa);

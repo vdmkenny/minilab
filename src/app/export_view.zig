@@ -1046,12 +1046,12 @@ fn drawOwnFields(state: *State, ctx: context.Context, r: *roll.Roll, list: *c.Im
     return y;
 }
 
-/// One row of Metadata: a check box for whether it goes into the files, its label, and either a
-/// detail you can edit here or a value you can't.
 /// A Metadata value that's set somewhere else: its text, or null when it isn't set, whether it's
 /// shown quietly, and where it's set, for its tooltip.
 const FixedValue = struct { text: ?[]const u8, quiet: bool = false, why: ?[]const u8 = null };
 
+/// One row of Metadata: a check box for whether it goes into the files, its label, and either a
+/// detail you can edit here or a value you can't.
 const MetadataRow = struct {
     label: [:0]const u8,
     flag: *bool,

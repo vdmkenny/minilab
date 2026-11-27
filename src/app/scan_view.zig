@@ -2284,7 +2284,8 @@ fn detect(state: *State, ctx: context.Context, roll_index: ?usize) void {
     }
     // The film's base is measured on the strip, now there are frames on it.
     if (state.boxes.items.len > 1) if (preview.texture) |*t| {
-        t.release(ctx.gpu);
+        // This frame may have drawn the strip already ("Detect again" sits below it).
+        ctx.library.retire(t.*);
         preview.texture = null;
         uploadPreview(state, ctx);
     };
@@ -2608,7 +2609,7 @@ fn axisOf(preview: minilab.image.Scan) frames.Axis {
 fn uploadPreview(state: *State, ctx: context.Context) void {
     const preview = if (state.preview) |*p| p else return;
     if (state.display.changed()) if (preview.texture) |*t| {
-        t.release(ctx.gpu);
+        ctx.library.retire(t.*);
         preview.texture = null;
     };
     if (preview.texture != null) return;
@@ -2724,8 +2725,6 @@ fn titleAt(list: *c.ImDrawList, x: f32, y: f32, title: [:0]const u8, detail: ?[:
     return height;
 }
 
-/// Draws a row of choices that wraps at `width`, or with `fill`, a single row whose choices share
-/// the width. Moves `y` past it and returns the choice that was clicked.
 /// `pills` for every value of enum `T`, in order, labelled by `labels_`. Returns the value clicked.
 fn pillsOf(comptime T: type, chosen: T, labels_: *const [std.enums.values(T).len][:0]const u8, x: f32, y: *f32, width: f32) ?T {
     const choices = std.enums.values(T);
@@ -2740,6 +2739,8 @@ fn labelsOf(comptime T: type, comptime labelOf: fn (T) [:0]const u8) [std.enums.
     return out;
 }
 
+/// Draws a row of choices that wraps at `width`. Moves `y` past it and returns the choice that
+/// was clicked.
 fn pills(labels_: []const [:0]const u8, chosen: usize, x: f32, y: *f32, width: f32) ?usize {
     var clicked: ?usize = null;
     const gap = gui.px(pill_gap);

@@ -139,7 +139,8 @@ pub const Range = enum {
 /// it. On a negative, the base cancels the light's colour by itself.
 pub const SlideColour = struct {
     /// Per channel, with green at 1: the camera's white balance as shot, or its daylight balance
-    /// if the file has none. It's 1 when the roll's flat field has already made the light white.
+    /// if the file has none. Frames that an older minilab imported with a flat field have 1
+    /// here.
     balance: [3]f32,
     /// Each row gives an sRGB channel from the camera's red, green and blue.
     to_srgb: [3][3]f32,
@@ -471,6 +472,9 @@ const min_span = 1e-3;
 /// The least density above the base, in D, that a reference point counts as having, so that a
 /// point right at the base doesn't divide by zero.
 const min_reference_density = 1e-3;
+/// How far past the shadows a reference point counts as being, as a share of the density range.
+/// A point in the shadows has next to no tone to balance, and would give a huge balance.
+const min_reference_tone = 0.02;
 
 /// The part of a frame the automatic settings are measured on: the middle, away from the holder.
 pub const measured_fraction = 0.5;
@@ -670,7 +674,12 @@ pub fn balanced(settings: Settings, mode: WhiteBalance, stats: Statistics, picke
                 out.* = @min(-above, -min_reference_density);
             }
             s.shadow_balance = neutral.shadow_balance;
-            for (&s.highlight_balance, d) |*high, v| high.* = d[1] / v;
+            // A channel's place on the curve is its slope times the density plus its shift
+            // (`Prepared.init`), and both carry the highlight balance. So the balance that puts
+            // the point at green's place has the shadows' shift in it too.
+            var tone: [3]f32 = undefined;
+            for (&tone, d, s.shadow_balance) |*t, v, low| t.* = @min(v / s.density_range + s.offset * low, -min_reference_tone);
+            for (&s.highlight_balance, tone) |*high, t| high.* = tone[1] / t;
         },
     }
     return s;
@@ -737,9 +746,12 @@ test "a picked grey comes out neutral" {
     const settings: Settings = .{ .base = .{ 0.8, 0.5, 0.3 }, .offset = 0 };
     const grey: [3]f32 = .{ 0.1, 0.04, 0.015 };
     const stats: Statistics = .{ .thinnest = settings.base, .densest = .{ 0.008, 0.004, 0.0035 }, .shadows = .{ 0.6, 0.35, 0.2 }, .mean_log = @splat(-1) };
-    var picked = balanced(settings, .picked, stats, grey, null);
-    picked.shadow_balance = @splat(1);
-    picked.offset = 0;
+    // With the automatic offset and shadow balance, as the app has them when a grey is picked.
+    var measured = settings;
+    measured.offset = automatic(settings.kind, settings.base, stats, null).offset;
+    const picked = balanced(measured, .picked, stats, grey, null);
+    try std.testing.expect(picked.offset > 0);
+    try std.testing.expect(picked.shadow_balance[0] != picked.shadow_balance[2]);
     var raw: [3]u16 = undefined;
     for (&raw, grey) |*r, g| r.* = @intFromFloat(g * image.full_scale);
     const out = pixel(.init(picked), raw);

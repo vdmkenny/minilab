@@ -69,7 +69,7 @@ const darkest = 1e-5;
 /// Rows a thread takes at a time, at the least.
 const min_rows_per_band = 32;
 
-/// Sharpens `picture`, linear light from 0 to 1 in the scanner's RGB, in place, as `settings` say.
+/// Sharpens `picture`, linear light from 0 to 1 in sRGB's primaries, in place, as `settings` say.
 /// `scale` is the picture's size over the full scan's: 1 for an export at full size, less for a
 /// reduced copy.
 pub fn apply(gpa: std.mem.Allocator, picture: image.Rendered, settings: Settings, scale: f64) !void {

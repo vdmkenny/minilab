@@ -54,14 +54,20 @@ enum minilab_jpeg_result minilab_jpeg_compress(const struct minilab_jpeg_compres
 {
     struct jpeg_compress_struct cinfo;
     struct error_manager errors;
+    /* Set before and read after the jump, so it can't live in a register. */
+    volatile int has_destination = 0;
 
     *jpeg = NULL;
     *jpeg_size = 0;
     set_up_errors(&errors, message);
     cinfo.err = &errors.pub;
     if (setjmp(errors.jump)) {
+        /* The memory destination frees its buffer each time it grows, and only writes the
+         * latest one to `*jpeg` when it's told the data has ended. Until then `*jpeg` may point
+         * at a buffer that's already freed, so ask for the latest one before freeing it. */
+        if (has_destination)
+            cinfo.dest->term_destination(&cinfo);
         jpeg_destroy_compress(&cinfo);
-        /* The memory destination keeps its latest buffer in `*jpeg`. */
         free(*jpeg);
         *jpeg = NULL;
         *jpeg_size = 0;
@@ -70,6 +76,7 @@ enum minilab_jpeg_result minilab_jpeg_compress(const struct minilab_jpeg_compres
 
     jpeg_create_compress(&cinfo);
     jpeg_mem_dest(&cinfo, jpeg, jpeg_size);
+    has_destination = 1;
     cinfo.image_width = image->width;
     cinfo.image_height = image->height;
     cinfo.input_components = CHANNELS;
