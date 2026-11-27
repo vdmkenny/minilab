@@ -6,6 +6,11 @@ PDF_DIR holds the makers' PDFs (searched recursively by file name). For each cha
 has the axis calibration with its tick residuals, the curves as read, the grid values that go into
 stocks.zig, and the derived base density, gamma and density range. Raster charts are read twice,
 at `dpi` and at `dpi2`, and the difference between the two reads is recorded.
+
+A chart whose worst tick sits further from its fitted axis than MAX_TICK_RESIDUAL (or the chart's
+own `max_tick_residual` in charts.py) is listed at the end, and the run exits with status 1. Its
+JSON file is still written, so you can look at what was read. Don't put its numbers into stocks.zig
+until the calibration is right: a curve or a label was most likely taken for a gridline.
 """
 
 import json
@@ -21,6 +26,12 @@ import read_raster  # noqa: E402
 import read_vector  # noqa: E402
 from derive import derive  # noqa: E402
 from grid import dense, resample  # noqa: E402
+
+
+# The worst tick residual a chart may have, in log H and in density. The makers' own drawings are
+# off by up to 0.03 (data/stocks/README.md lists them). A tick that's really something else is off
+# by more.
+MAX_TICK_RESIDUAL = 0.04
 
 
 def find(pdf_dir, name):
@@ -68,6 +79,7 @@ def main():
     pdf_dir, out_dir = sys.argv[1], sys.argv[2]
     only = set(sys.argv[3:])
     os.makedirs(out_dir, exist_ok=True)
+    off = []
     for cfg in charts.VECTOR + charts.RASTER:
         if only and cfg["id"] not in only:
             continue
@@ -90,6 +102,9 @@ def main():
             ext = {ch: (round(c["log_h"][0], 2), round(c["log_h"][-1], 2)) for ch, c in second["curves"].items()}
             extra = f"; {result['dpi']} vs {result['second_read']['dpi']} dpi: max {sd['max']:.4f} mean {sd['mean']:.4f} D; second read extents {ext}"
         print(f"{cfg['id']}: worst tick residual log H {xr:.4f}, density {yr:.4f}{extra}")
+        limit = cfg.get("max_tick_residual", MAX_TICK_RESIDUAL)
+        if max(xr, yr) > limit:
+            off.append(f"{cfg['id']}: worst tick residual log H {xr:.4f}, density {yr:.4f} (limit {limit})")
         for ch, c in result["curves"].items():
             d = c["derived"]
             if d is None:
@@ -102,6 +117,11 @@ def main():
                 f"  base {fmt(d['base'])} gamma {d['gamma']:.3f} on {d['interval'][0]:+.2f}..{d['interval'][1]:+.2f} range {fmt(d['range'])}"
                 f"  end grads {d['least_exposed_gradient']:.3f}/{d['most_exposed_gradient']:.3f}"
             )
+    if off:
+        print("\nThese charts' axes don't fit their ticks. Check their calibration before using them:", file=sys.stderr)
+        for line in off:
+            print("  " + line, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

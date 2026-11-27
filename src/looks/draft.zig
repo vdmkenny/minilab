@@ -7,6 +7,7 @@ const Io = std.Io;
 const fit = @import("fit.zig");
 const register = @import("register.zig");
 const saved = @import("saved.zig");
+const json_file = @import("../core/json_file.zig");
 const image = @import("../core/image.zig");
 
 /// Where the references come from.
@@ -106,13 +107,12 @@ pub fn load(arena: std.mem.Allocator, io: Io, folder: []const u8) !Draft {
 }
 
 pub fn save(gpa: std.mem.Allocator, io: Io, folder: []const u8, draft: Draft) !void {
-    const cwd = Io.Dir.cwd();
-    try cwd.createDirPath(io, folder);
-    const bytes = try std.json.Stringify.valueAlloc(gpa, draft, .{ .whitespace = .indent_2 });
-    defer gpa.free(bytes);
-    const path = try std.fs.path.join(gpa, &.{ folder, saved.draft_file });
-    defer gpa.free(path);
-    try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const bytes = try std.json.Stringify.valueAlloc(a, draft, .{ .whitespace = .indent_2 });
+    // Next to the old file first, so a save that fails doesn't lose the look's pairs.
+    try json_file.replace(a, io, try std.fs.path.join(a, &.{ folder, saved.draft_file }), bytes);
 }
 
 /// Holds out every third pair, starting with the third. That's about a third of them, and none
