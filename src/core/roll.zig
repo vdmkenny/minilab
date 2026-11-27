@@ -36,6 +36,7 @@ const formats = @import("../frames/formats.zig");
 const framing = @import("framing.zig");
 const infrared = @import("infrared.zig");
 const dust = @import("dust.zig");
+const sharpen = @import("sharpen.zig");
 const stocks = @import("../presets/stocks.zig");
 const file_input = @import("input.zig");
 const FlatField = @import("flat_field.zig").FlatField;
@@ -209,15 +210,17 @@ pub const Roll = struct {
     numbers: std.ArrayList(usize) = .empty,
 
     /// Creates a roll folder named after `info.name` in `library`. Fails with `error.RollExists`
-    /// if the library already has a roll with that name, and with `error.BadRollName` if the name
-    /// can't be a single folder.
+    /// if the library already has anything with that name, a roll or not, and with
+    /// `error.BadRollName` if the name can't be a single folder.
     pub fn create(gpa: std.mem.Allocator, io: Io, library: []const u8, info: Info) !Roll {
         if (!validName(info.name)) return error.BadRollName;
         var roll: Roll = .{ .arena = .init(gpa), .path = undefined, .info = undefined };
         errdefer roll.arena.deinit();
         const arena = roll.arena.allocator();
         roll.path = try std.fs.path.join(arena, &.{ library, info.name });
-        if (Io.Dir.cwd().access(io, try std.fs.path.join(arena, &.{ roll.path, info_file }), .{})) |_| {
+        // A folder that's there already isn't ours to fill, even if it isn't a roll: the library's
+        // Looks folder is one, and trashing a roll made in it would take the looks along.
+        if (Io.Dir.cwd().access(io, roll.path, .{})) |_| {
             return error.RollExists;
         } else |_| {}
         roll.info = info;
@@ -268,6 +271,10 @@ pub const Roll = struct {
                 break :frame FrameSettings{ .scan = null };
             };
             upgrade(&frame.settings);
+            // A file edited by hand, or damaged, can hold anything. The code that uses these
+            // numbers counts on their ranges.
+            finite(develop.Settings, &frame.settings, .{});
+            withinRanges(develop.Settings, &frame.settings);
             frame.rating = frame.rating.valid();
             try roll.frames.append(arena, frame);
             try roll.numbers.append(arena, frameNumber(name).?);
@@ -590,6 +597,12 @@ pub const Roll = struct {
         roll.frames.appendAssumeCapacity(frame);
     }
 
+    /// The number in the name of frame `index`'s file. It stays the frame's own when another
+    /// frame's file goes, while its index moves up.
+    pub fn numberOf(roll: *const Roll, index: usize) usize {
+        return if (index < roll.numbers.items.len) roll.numbers.items[index] else index + 1;
+    }
+
     pub fn saveFrame(roll: *Roll, io: Io, index: usize) !void {
         var temporary = roll.scratch();
         defer temporary.deinit();
@@ -601,8 +614,7 @@ pub const Roll = struct {
         if (frame.scan == null) return error.UnreadableFrame;
         finite(develop.Settings, &frame.settings, .{});
         const bytes = try std.json.Stringify.valueAlloc(a, frame, json_options);
-        const number = if (index < roll.numbers.items.len) roll.numbers.items[index] else index + 1;
-        const name = try std.fmt.allocPrint(a, "{d:0>2}.json", .{number});
+        const name = try std.fmt.allocPrint(a, "{d:0>2}.json", .{roll.numberOf(index)});
         try json_file.replace(a, io, try std.fs.path.join(a, &.{ roll.path, frames_dir, name }), bytes);
     }
 
@@ -721,11 +733,34 @@ fn byNumber(_: void, a: []const u8, b: []const u8) bool {
     return x < y;
 }
 
-/// Whether `name` works as a roll's folder in the library: a single folder, not a path.
+/// Whether `name` works as a roll's folder in the library: a single folder, not a path, with a
+/// name every system we run on takes, so a library can move between them.
 fn validName(name: []const u8) bool {
     if (name.len == 0 or std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) return false;
-    return std.mem.indexOfAny(u8, name, "/\\:") == null;
+    for (name) |byte| {
+        if (byte < ' ' or std.mem.indexOfScalar(u8, unusable_in_names, byte) != null) return false;
+    }
+    // Windows drops a dot or a space at the end of a name, so the folder would get another name.
+    if (name[name.len - 1] == '.' or name[name.len - 1] == ' ') return false;
+    // Windows keeps these for devices, with any extension: "CON" and "con.txt" are both the console.
+    const stem = name[0 .. std.mem.indexOfScalar(u8, name, '.') orelse name.len];
+    for (windows_device_names) |device| {
+        if (std.ascii.eqlIgnoreCase(stem, device)) return false;
+    }
+    return true;
 }
+
+/// What a file's name can't have in it on Windows. The first three can't be in a single folder's
+/// name anywhere.
+const unusable_in_names = "/\\:*?\"<>|";
+const windows_device_names = [_][]const u8{
+    "CON",  "PRN",  "AUX",  "NUL",
+    "COM1", "COM2", "COM3", "COM4",
+    "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3",
+    "LPT4", "LPT5", "LPT6", "LPT7",
+    "LPT8", "LPT9",
+};
 
 /// Replaces every number in `value` that isn't finite with its counterpart in `default`.
 fn finite(comptime T: type, value: *T, default: T) void {
@@ -741,6 +776,21 @@ fn finite(comptime T: type, value: *T, default: T) void {
             if (!allFinite(o.child, inner)) value.* = null;
         },
         else => {},
+    }
+}
+
+/// Brings every number in `value` that has a range into it. A setting `x` has one when its struct
+/// declares `min_x` and `max_x`, as the dust, infrared and sharpening settings do.
+fn withinRanges(comptime T: type, value: *T) void {
+    const fields = switch (@typeInfo(T)) {
+        .@"struct" => |s| s,
+        else => return,
+    };
+    inline for (fields.field_names, fields.field_types) |name, Member| {
+        const member = &@field(value, name);
+        if (@typeInfo(Member) == .float and @hasDecl(T, "min_" ++ name) and @hasDecl(T, "max_" ++ name)) {
+            member.* = std.math.clamp(member.*, @field(T, "min_" ++ name), @field(T, "max_" ++ name));
+        } else withinRanges(Member, member);
     }
 }
 
@@ -1184,6 +1234,13 @@ test "a roll's name can't take an existing roll or leave the library" {
     try std.testing.expectError(error.RollExists, Roll.create(gpa, io, library, .{ .name = "Roll 1" }));
     try std.testing.expectError(error.BadRollName, Roll.create(gpa, io, library, .{ .name = "../elsewhere" }));
     try std.testing.expectError(error.BadRollName, Roll.create(gpa, io, library, .{ .name = "" }));
+    for ([_][]const u8{ "Roll?", "a|b", "Roll 2.", "Roll 2 ", "con", "LPT1.old", "tab\there" }) |name| {
+        try std.testing.expectError(error.BadRollName, Roll.create(gpa, io, library, .{ .name = name }));
+    }
+    try std.testing.expect(validName("Console") and validName("2024.05 Lisbon") and validName("Été"));
+    // A folder that isn't a roll, like the library's Looks, can't become one.
+    try tmp.dir.createDirPath(io, "Looks");
+    try std.testing.expectError(error.RollExists, Roll.create(gpa, io, library, .{ .name = "Looks" }));
     const path = try tmp.dir.realPathFileAlloc(io, "Roll 1", gpa);
     defer gpa.free(path);
     var again = try Roll.open(gpa, io, path);
@@ -1277,4 +1334,35 @@ test "a save leaves no half-written file behind, and a frame that couldn't be re
     const kept = try tmp.dir.readFileAlloc(io, "Saves/frames/02.json", gpa, .limited(max_json_bytes));
     defer gpa.free(kept);
     try std.testing.expectEqualStrings(before, kept);
+}
+
+test "a frame's settings come into their ranges when the roll is read" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var roll = try Roll.create(gpa, io, library, .{ .name = "Ranges" });
+    _ = try roll.addScan(gpa, io, "P6 1 1 255\n\x00\x00\x00");
+    roll.close();
+    // Numbers no slider gives: they'd overflow a cast, or make a blur millions of pixels wide.
+    const edited =
+        \\{"scan":"01.ppm","settings":{"contrast":1.5,
+        \\ "sharpen":{"radius":1e20,"amount":-4},
+        \\ "dust":{"threshold":1e9,"infrared":{"threshold":7,"grow":1e12}}}}
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "Ranges/frames/01.json", .data = edited });
+    const path = try tmp.dir.realPathFileAlloc(io, "Ranges", gpa);
+    defer gpa.free(path);
+    var again = try Roll.open(gpa, io, path);
+    defer again.close();
+    const settings = again.frames.items[0].settings;
+    try std.testing.expectEqual(@as(f32, sharpen.Settings.max_radius), settings.sharpen.radius);
+    try std.testing.expectEqual(@as(f32, sharpen.Settings.min_amount), settings.sharpen.amount);
+    try std.testing.expectEqual(@as(f32, dust.Settings.max_threshold), settings.dust.threshold);
+    try std.testing.expectEqual(@as(f32, infrared.Settings.max_threshold), settings.dust.infrared.threshold);
+    try std.testing.expectEqual(@as(f32, infrared.Settings.max_grow), settings.dust.infrared.grow);
+    // A setting with no range of its own stays as it was saved.
+    try std.testing.expectEqual(@as(f32, 1.5), settings.contrast);
 }

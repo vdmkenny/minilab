@@ -94,6 +94,24 @@ def find_entry(src, name):
     return m
 
 
+FIELD = re.compile(r"^        \.(\w+) = .*,$")
+
+
+def with_kept_fields(entry, old):
+    """`entry` with the one-line fields of `old` that it doesn't write itself.
+
+    Fields added to an entry by hand, like `.material` or `.infrared`, aren't in the readings.
+    They go at the end of the entry, in the order they had.
+    """
+    written = {m.group(1) for m in map(FIELD.match, entry.splitlines()) if m}
+    kept = [line for line in old.splitlines() if (m := FIELD.match(line)) and m.group(1) not in written]
+    if not kept:
+        return entry
+    closing = "    },\n"
+    assert entry.endswith(closing)
+    return entry[: -len(closing)] + "".join(line + "\n" for line in kept) + closing
+
+
 def find_const(src, name):
     m = re.search(r"    const " + re.escape(name) + r": \[3\]\[\]const Point = \.\{\n.*?\n    \};\n", src, re.S)
     if m:
@@ -117,7 +135,7 @@ def main():
         entry, const = entry_and_const(meta, reading)
         m = find_entry(src, meta["name"])
         if m:
-            src = src[: m.start()] + entry + src[m.end() :]
+            src = src[: m.start()] + with_kept_fields(entry, m.group(0)) + src[m.end() :]
             action = "replaced"
         else:
             a = find_entry(src, meta["after"])

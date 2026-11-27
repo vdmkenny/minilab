@@ -161,6 +161,33 @@ const Snapshot = struct {
     }
 };
 
+/// Whether settings `a` and `b` are for the same kind of scan: both raw scans of a negative, both
+/// of a positive, or both finished pictures. Density, base, tone and balance only mean the same
+/// thing between two that are.
+fn sameKindOfScan(a: develop.Settings, b: develop.Settings) bool {
+    return a.finished == b.finished and a.kind.isNegative() == b.kind.isNegative();
+}
+
+/// The settings a frame with `own` gets when `copied` is pasted onto it. What the scan is stays the
+/// frame's own: its film, whether it's a finished picture, the camera's colour and the stock's
+/// curves. Onto another kind of scan (`sameKindOfScan`), only what works on any picture carries
+/// over: the saturation, dust removal and sharpening.
+fn pastedOnto(own: develop.Settings, copied: develop.Settings) develop.Settings {
+    var settings = own;
+    if (sameKindOfScan(own, copied)) {
+        settings = copied;
+        settings.kind = own.kind;
+        settings.finished = own.finished;
+        settings.slide_colour = own.slide_colour;
+        settings.stock_curves = own.stock_curves;
+        return settings;
+    }
+    settings.saturation = copied.saturation;
+    settings.dust = copied.dust;
+    settings.sharpen = copied.sharpen;
+    return settings;
+}
+
 /// A crop being drawn. The box is in the pixels of the frame's whole reduced scan.
 const CropEdit = struct {
     min: [2]f32,
@@ -292,6 +319,9 @@ pub const State = struct {
     display: display_colour.Watch = .{},
     /// Which sections are open, from the preferences (`keepSections`).
     sections: ?minilab.preferences.DevelopSections = null,
+    /// The open frame's number in its roll (`Roll.numberOf`), to tell when the frame at `selected`
+    /// is no longer the one that's open (`follow`).
+    open_number: ?usize = null,
     /// Whether the crop tool starts once the selected frame has loaded.
     crop_on_open: bool = false,
     /// Whether the settings had a scrollbar last time, so the histogram above them can match their
@@ -413,9 +443,33 @@ pub const State = struct {
         return state.loose.items.len;
     }
 
+    /// Catches up after the library was read again (`Library.refresh`): the roll may be gone, or
+    /// have fewer frames, or have another frame at the selected place. The open frame is closed
+    /// then, with what wasn't saved yet, since there's no longer a file it's sure to belong to.
+    pub fn follow(state: *State, gpa: std.mem.Allocator, library: *const Library) void {
+        const path = state.roll_path orelse return;
+        const r = library.find(path) orelse {
+            state.closeFrame(gpa);
+            gpa.free(path);
+            state.roll_path = null;
+            state.selected = null;
+            return;
+        };
+        const rl = &library.rolls.items[r];
+        const total = rl.frames.items.len;
+        const index = state.selected orelse return;
+        if (index >= total) {
+            state.closeFrame(gpa);
+            state.selected = if (total > 0) total - 1 else null;
+        } else if (state.frame != null and state.open_number != rl.numberOf(index)) {
+            state.closeFrame(gpa);
+        }
+    }
+
     fn closeFrame(state: *State, gpa: std.mem.Allocator) void {
         if (state.frame) |*f| f.close(gpa);
         state.frame = null;
+        state.open_number = null;
         state.failed = null;
         state.dirty = false;
         state.committed = null;
@@ -461,7 +515,13 @@ pub const State = struct {
     /// for it.
     fn paste(state: *State, snapshot: Snapshot) void {
         const frame = if (state.frame) |*f| f else return;
-        var settings = snapshot.settings;
+        const alike = sameKindOfScan(frame.settings, snapshot.settings);
+        var settings = pastedOnto(frame.settings, snapshot.settings);
+        frame.look = snapshot.look;
+        if (!alike) {
+            frame.settings = settings;
+            return state.changed();
+        }
         // The film base is this frame's own, unless it was picked by hand.
         switch (settings.base_source) {
             .measured => settings.base = frame.whole.thinnest,
@@ -469,7 +529,6 @@ pub const State = struct {
             .picked => {},
         }
         frame.settings = settings;
-        frame.look = snapshot.look;
         switch (settings.white_balance) {
             .auto_neutral, .auto_warm, .auto_cool, .average => |mode| frame.rebalance(mode, null),
             .stock => if (frame.stock_slopes != null) frame.rebalance(.stock, null),
@@ -667,6 +726,7 @@ pub const State = struct {
                     library.invalidate(.{ .roll = r, .frame = index });
                 } else |_| {}
             }
+            state.open_number = rl.numberOf(index);
             frame.gap_base = rl.baseFor(index);
             frame.base_from_roll = frame.gap_base != null and (saved.film_base == null or !std.meta.eql(frame.gap_base.?, saved.film_base.?));
             frame.fillNegative();
@@ -689,6 +749,7 @@ pub const State = struct {
             frame.measure(.colour_negative);
             break :frame frame;
         };
+        errdefer state.open_number = null;
         errdefer frame.close(gpa);
         try state.shown.resize(gpa, frame.rendered.len);
         state.committed = .of(&frame);
@@ -2186,35 +2247,43 @@ fn synced(gpa: std.mem.Allocator, io: std.Io, rl: *roll.Roll, index: usize, sour
     defer thumbnail.deinit(gpa);
     const stats = try develop.FrameStatistics.measure(gpa, thumbnail);
     const s = source.settings;
-    var own = if (target.developed) target.settings else own: {
+    // A finished picture has nothing to measure: its settings are its own, developed or not.
+    var own = if (target.developed or target.settings.finished) target.settings else own: {
         const base = rl.baseFor(index);
         var automatic = develop.automatic(s.kind, base orelse stats.whole.thinnest, stats.centre, s.curves());
         if (base != null) automatic.base_source = .gaps;
         break :own automatic;
     };
-    own.kind = s.kind;
-    own.monochrome_channel = s.monochrome_channel;
+    // Between a raw scan and a finished picture, or a negative and a slide, only what works on
+    // any picture carries over (`pastedOnto`).
+    const alike = sameKindOfScan(own, s);
+    if (alike) {
+        own.kind = s.kind;
+        own.monochrome_channel = s.monochrome_channel;
+    }
     if (groups.look) {
         target.look = source.look;
-        own.tone = s.tone;
-        own.matrix = s.matrix;
-        own.contrast = s.contrast;
-        own.black = s.black;
-        own.roll_off = s.roll_off;
-        own.exposure = s.exposure;
         own.saturation = s.saturation;
+        if (alike) {
+            own.tone = s.tone;
+            own.matrix = s.matrix;
+            own.contrast = s.contrast;
+            own.black = s.black;
+            own.roll_off = s.roll_off;
+            own.exposure = s.exposure;
+        }
     }
-    if (groups.density) {
+    if (groups.density and alike) {
         own.density_range = s.density_range;
         own.offset = s.offset;
     }
-    if (groups.base) {
+    if (groups.base and alike) {
         own.base = s.base;
         own.base_source = s.base_source;
     }
     if (groups.dust) own.dust = s.dust;
     if (groups.sharpen) own.sharpen = s.sharpen;
-    if (groups.balance) {
+    if (groups.balance and alike) {
         own.white_balance = s.white_balance;
         own.temperature = s.temperature;
         own.tint = s.tint;
@@ -2324,6 +2393,43 @@ test "Sync gives the chosen groups and leaves each frame its own density" {
     const all = try synced(gpa, io, &rl, 1, &source, rl.frames.items[0].scan, .{ .density = true, .base = true });
     try std.testing.expectEqual(source.settings.density_range, all.settings.density_range);
     try std.testing.expectEqual(source.settings.base, all.settings.base);
+
+    // A finished picture in the roll stays one: it takes the look, the saturation and the dust
+    // removal, and none of the negative's own settings.
+    rl.frames.items[1].settings = .finishedPicture();
+    rl.frames.items[1].developed = false;
+    const finished = try synced(gpa, io, &rl, 1, &source, rl.frames.items[0].scan, .{ .density = true, .base = true });
+    try std.testing.expect(finished.settings.finished);
+    try std.testing.expectEqual(develop.FilmKind.colour_positive, finished.settings.kind);
+    try std.testing.expectEqual(develop.Settings.finishedPicture().exposure, finished.settings.exposure);
+    try std.testing.expectEqual(develop.Settings.finishedPicture().density_range, finished.settings.density_range);
+    try std.testing.expect(finished.look.eql(&look.Id.frontier));
+    try std.testing.expectEqual(@as(f32, 1.3), finished.settings.saturation);
+    try std.testing.expectEqual(source.settings.dust, finished.settings.dust);
+}
+
+test "pasted settings leave what the scan is, and only some go onto another kind of scan" {
+    var copied: develop.Settings = .{ .kind = .colour_negative, .contrast = 1.4, .saturation = 1.2, .density_range = 1.8 };
+    copied.sharpen.on = true;
+    copied.stock_curves = null;
+
+    // Onto another negative: everything but its film, and what belongs to its scan.
+    const negative: develop.Settings = .{ .kind = .bw_negative, .contrast = 1 };
+    const onto_negative = pastedOnto(negative, copied);
+    try std.testing.expectEqual(develop.FilmKind.bw_negative, onto_negative.kind);
+    try std.testing.expectEqual(@as(f32, 1.4), onto_negative.contrast);
+    try std.testing.expectEqual(@as(f32, 1.8), onto_negative.density_range);
+    try std.testing.expectEqual(negative.stock_curves, onto_negative.stock_curves);
+
+    // Onto a finished picture: it stays one, at its own exposure.
+    const finished: develop.Settings = .finishedPicture();
+    const onto_finished = pastedOnto(finished, copied);
+    try std.testing.expect(onto_finished.finished);
+    try std.testing.expectEqual(develop.FilmKind.colour_positive, onto_finished.kind);
+    try std.testing.expectEqual(finished.exposure, onto_finished.exposure);
+    try std.testing.expectEqual(finished.contrast, onto_finished.contrast);
+    try std.testing.expectEqual(@as(f32, 1.2), onto_finished.saturation);
+    try std.testing.expect(onto_finished.sharpen.on);
 }
 
 /// Gives `frame`, which is about to be measured as film `kind`, the roll's stock: its curves and,

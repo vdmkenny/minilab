@@ -141,6 +141,21 @@ pub const standard_resolutions = [_]u32{ 75, 100, 150, 200, 300, 400, 600, 800, 
 /// No scanner comes near this many pixels per inch. A driver that reports more is wrong.
 const max_dpi = 100_000;
 
+/// `value` rounded to a `T`, or the nearest a `T` goes when it's out of its range, and 0 when it
+/// isn't a number. Option values from a settings file go through it on their way to a driver: one
+/// edited by hand can hold anything, and casting it as it is could crash the app.
+pub fn wholeOf(comptime T: type, value: f64) T {
+    if (std.math.isNan(value)) return 0;
+    return @intFromFloat(std.math.clamp(@round(value), @as(f64, std.math.minInt(T)), @as(f64, std.math.maxInt(T))));
+}
+
+test "a number out of an integer's range becomes the nearest it has" {
+    try std.testing.expectEqual(@as(i32, 3), wholeOf(i32, 2.6));
+    try std.testing.expectEqual(@as(i32, std.math.maxInt(i32)), wholeOf(i32, 1e12));
+    try std.testing.expectEqual(@as(i32, std.math.minInt(i32)), wholeOf(i32, -std.math.inf(f64)));
+    try std.testing.expectEqual(@as(i32, 0), wholeOf(i32, std.math.nan(f64)));
+}
+
 /// A resolution a driver reports, as a whole number, or null when it isn't one a scanner could
 /// have: not a number, below 1, or absurdly high. Casting it as it is could crash the app.
 pub fn resolutionOf(value: f64) ?u32 {
