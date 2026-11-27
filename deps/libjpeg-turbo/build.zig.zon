@@ -1,7 +1,7 @@
 .{
     .name = .libjpeg_turbo,
-    // libjpeg-turbo's release 3.2.0: the tag 3.2.0, commit c85e6b905bf237038faa936dab160ebfc5da0344.
-    .version = "3.2.0",
+    // libjpeg-turbo's release 3.2.1: the tag 3.2.1, commit 7b4993786d856cbccabfc0ed2f923ba000e326cc.
+    .version = "3.2.1",
     .fingerprint = 0xb6dab2cee9a5d49a,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{

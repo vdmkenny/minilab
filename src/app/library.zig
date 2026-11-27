@@ -122,8 +122,9 @@ pub const Library = struct {
 
     /// Keeps `texture` until the frame has been drawn. If there's no memory to keep it, it stays on
     /// the GPU until the app ends, rather than being released while it might still be drawn.
-    fn retire(library: *Library, texture: Texture) void {
-        library.retired.append(library.gpa, texture) catch std.log.warn("a thumbnail stays on the GPU: out of memory", .{});
+    /// The views use it too, for a texture they replace after this frame has already drawn it.
+    pub fn retire(library: *Library, texture: Texture) void {
+        library.retired.append(library.gpa, texture) catch std.log.warn("a texture stays on the GPU: out of memory", .{});
     }
 
     /// Releases the thumbnails dropped during the frame that was just drawn.
@@ -152,27 +153,37 @@ pub const Library = struct {
         library.reload(gpa, io) catch |err| std.log.err("can't read the library again: {t}", .{err});
     }
 
-    /// A fingerprint of the library's folders: the times of the library's folder, and of each
-    /// roll's folder and frames folder. Adding, removing or renaming anything in them changes
-    /// it. Saving a file in place doesn't, so the app's own saves don't count.
+    /// A fingerprint of the library's folders: the time of the library's folder, and for each
+    /// folder in it, whether it's a roll and the names of its frames' files. Adding, removing or
+    /// renaming a roll or a frame changes it. Saving a roll's or a frame's file doesn't, so the
+    /// app's own saves don't count.
     fn fingerprint(library: *const Library, io: std.Io) !u64 {
         const cwd = std.Io.Dir.cwd();
-        var hasher: std.hash.Wyhash = .init(0);
         var dir = try cwd.openDir(io, library.path, .{ .iterate = true });
         defer dir.close(io);
-        hasher.update(std.mem.asBytes(&(try dir.stat(io)).mtime.nanoseconds));
+        // The folders come in no set order, so their hashes are added up rather than chained.
+        var sum: u64 = std.hash.Wyhash.hash(0, std.mem.asBytes(&(try dir.stat(io)).mtime.nanoseconds));
         var each = dir.iterate();
         while (try each.next(io)) |entry| {
             if (entry.kind != .directory) continue;
-            hasher.update(entry.name);
-            for ([_][]const u8{ ".", roll.frames_dir }) |sub| {
-                var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
-                const path = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ entry.name, sub }) catch continue;
-                const stat = dir.statFile(io, path, .{}) catch continue;
-                hasher.update(std.mem.asBytes(&stat.mtime.nanoseconds));
-            }
+            var path_buffer: [std.fs.max_path_bytes]u8 = undefined;
+            const info = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ entry.name, roll.info_file }) catch continue;
+            const is_roll = if (dir.access(io, info, .{})) |_| true else |_| false;
+            var names: u64 = @intFromBool(is_roll);
+            const frames_path = std.fmt.bufPrint(&path_buffer, "{s}/{s}", .{ entry.name, roll.frames_dir }) catch continue;
+            if (dir.openDir(io, frames_path, .{ .iterate = true })) |opened| {
+                var frames_folder = opened;
+                defer frames_folder.close(io);
+                var frame_files = frames_folder.iterate();
+                while (frame_files.next(io) catch null) |file| {
+                    // A file on its way to replacing a frame's file isn't a change yet.
+                    if (std.mem.endsWith(u8, file.name, minilab.json_file.partial_suffix)) continue;
+                    names +%= std.hash.Wyhash.hash(1, file.name);
+                }
+            } else |_| {}
+            sum +%= std.hash.Wyhash.hash(names, entry.name);
         }
-        return hasher.final();
+        return sum;
     }
 
     /// Moves roll `index` (its folder, with its scans, settings and exports) to the system's Trash,

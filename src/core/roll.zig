@@ -27,6 +27,7 @@ const stats = @import("stats.zig");
 const develop = @import("develop.zig");
 const look = @import("look.zig");
 const date = @import("date.zig");
+const json_file = @import("json_file.zig");
 const Date = date.Date;
 const pnm = @import("../io/pnm.zig");
 const tiff = @import("../io/codecs/tiff.zig");
@@ -284,7 +285,7 @@ pub const Roll = struct {
         defer temporary.deinit();
         const a = temporary.allocator();
         const bytes = try std.json.Stringify.valueAlloc(a, roll.info, json_options);
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, info_file }), .data = bytes });
+        try json_file.replace(a, io, try std.fs.path.join(a, &.{ roll.path, info_file }), bytes);
     }
 
     /// One of the roll's editable details, or null when it isn't set.
@@ -392,8 +393,8 @@ pub const Roll = struct {
     /// Imports the file at `path`, of any kind `input.zig` reads, the way `addImage` does. If
     /// there's a flat field `flat` (the roll's, from `flatField`), a camera frame is divided by it
     /// first. A roll that's still empty and has no flat field takes its input from the file's
-    /// kind. A camera RAW file's colour goes with its frames, for slides. With a flat field, which
-    /// has already made the light behind the film white, only its matrix goes with them.
+    /// kind. A camera RAW file's colour goes with its frames, for slides. A flat field evens the
+    /// light out but leaves its colour, so the frames need the white balance with or without one.
     pub fn importFile(roll: *Roll, gpa: std.mem.Allocator, io: Io, path: []const u8, flat: ?*const FlatField, transfer: Transfer) !Added {
         var read = try file_input.readWith(gpa, io, path, .{ .infrared = true });
         defer read.deinit(gpa);
@@ -403,11 +404,7 @@ pub const Roll = struct {
         }
         if (read.kind.finished()) return roll.addFinished(gpa, io, path, read.scan, transfer);
         if (flat) |f| try f.apply(read.scan);
-        var slide = read.camera;
-        if (flat != null) {
-            if (slide) |*s| s.balance = @splat(1);
-        }
-        return roll.addImageWith(gpa, io, read.scan, .{ .slide = slide, .infrared = read.infrared });
+        return roll.addImageWith(gpa, io, read.scan, .{ .slide = read.camera, .infrared = read.infrared });
     }
 
     /// Saves `scan` as the roll's next scan file, with its thumbnail, and adds a frame for each
@@ -599,11 +596,14 @@ pub const Roll = struct {
         const a = temporary.allocator();
         // JSON has no infinity or NaN, and a file with one couldn't be read back.
         var frame = roll.frames.items[index];
+        // A frame whose file couldn't be read has only defaults here. Saving them would write
+        // over the file, which a newer minilab may well be able to read.
+        if (frame.scan == null) return error.UnreadableFrame;
         finite(develop.Settings, &frame.settings, .{});
         const bytes = try std.json.Stringify.valueAlloc(a, frame, json_options);
         const number = if (index < roll.numbers.items.len) roll.numbers.items[index] else index + 1;
         const name = try std.fmt.allocPrint(a, "{d:0>2}.json", .{number});
-        try Io.Dir.cwd().writeFile(io, .{ .sub_path = try std.fs.path.join(a, &.{ roll.path, frames_dir, name }), .data = bytes });
+        try json_file.replace(a, io, try std.fs.path.join(a, &.{ roll.path, frames_dir, name }), bytes);
     }
 
     pub fn developedCount(roll: Roll) usize {
@@ -702,7 +702,6 @@ test "a frame whose gap fell on something else takes the roll's base" {
     try std.testing.expectEqual(median, roll.baseFor(4).?);
 }
 
-/// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
 /// The file name of the thumbnail of the scan called `scan`, in `buffer`: the scan's own name with
 /// .ppm, which a finished picture's JPEG scan gets too.
 fn thumbnailName(buffer: []u8, scan: []const u8) ![]const u8 {
@@ -715,6 +714,7 @@ fn frameNumber(name: []const u8) ?usize {
     return if (number > 0) number else null;
 }
 
+/// Sorts frame files by number, so `7.json` comes before `10.json`. Names without a number go last.
 fn byNumber(_: void, a: []const u8, b: []const u8) bool {
     const x = std.fmt.parseInt(usize, std.fs.path.stem(a), 10) catch return false;
     const y = std.fmt.parseInt(usize, std.fs.path.stem(b), 10) catch return true;
@@ -1247,4 +1247,34 @@ test "a frame after a gap in the files keeps its own file" {
     try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Gaps/frames/02.json", .{}));
     try tmp.dir.access(io, "Gaps/frames/03.json", .{});
     try tmp.dir.access(io, "Gaps/frames/04.json", .{});
+}
+
+test "a save leaves no half-written file behind, and a frame that couldn't be read isn't saved over" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const library = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(library);
+    var roll = try Roll.create(gpa, io, library, .{ .name = "Saves" });
+    for (0..2) |_| _ = try roll.addScan(gpa, io, "P6 1 1 255\n\x00\x00\x00");
+    try roll.saveFrame(io, 0);
+    try roll.saveInfo(io);
+    roll.close();
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Saves/frames/01.json" ++ json_file.partial_suffix, .{}));
+    try std.testing.expectError(error.FileNotFound, tmp.dir.access(io, "Saves/" ++ info_file ++ json_file.partial_suffix, .{}));
+
+    // A frame whose file couldn't be read, say one a newer minilab saved, has no scan (`open`).
+    const path = try tmp.dir.realPathFileAlloc(io, "Saves", gpa);
+    defer gpa.free(path);
+    var again = try Roll.open(gpa, io, path);
+    defer again.close();
+    const before = try tmp.dir.readFileAlloc(io, "Saves/frames/02.json", gpa, .limited(max_json_bytes));
+    defer gpa.free(before);
+    again.frames.items[1].scan = null;
+    again.frames.items[1].rating = .{ .stars = 3 };
+    try std.testing.expectError(error.UnreadableFrame, again.saveFrame(io, 1));
+    const kept = try tmp.dir.readFileAlloc(io, "Saves/frames/02.json", gpa, .limited(max_json_bytes));
+    defer gpa.free(kept);
+    try std.testing.expectEqualStrings(before, kept);
 }

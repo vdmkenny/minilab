@@ -13,7 +13,7 @@ const Io = std.Io;
 /// Added to the name of a file that can't be read, when it's moved aside.
 pub const unreadable_suffix = ".bad";
 /// Added to the name of the file being written, until it replaces the old one.
-const partial_suffix = ".partial";
+pub const partial_suffix = ".partial";
 /// The largest file we read. Settings files are a few kilobytes.
 pub const max_bytes = 1 << 20;
 
@@ -66,7 +66,14 @@ pub fn write(gpa: std.mem.Allocator, io: Io, path: []const u8, value: anytype) !
     if (old(a, io, path, number_text)) |was| try keepUnknown(@TypeOf(value), a, &merged, was);
     const bytes = try std.json.Stringify.valueAlloc(a, merged, .{ .whitespace = .indent_2 });
 
-    const partial = try std.fmt.allocPrint(a, "{s}{s}", .{ path, partial_suffix });
+    try replace(a, io, path, bytes);
+}
+
+/// Puts `bytes` at `path`, making its folder if it isn't there yet. They go to a file next to it
+/// first, synced to disk, which then takes its place. So a full disk, a crash or a power cut
+/// leaves the old file or the new one, never half of one. `arena` holds the other file's name.
+pub fn replace(arena: std.mem.Allocator, io: Io, path: []const u8, bytes: []const u8) !void {
+    const partial = try std.fmt.allocPrint(arena, "{s}{s}", .{ path, partial_suffix });
     const cwd = Io.Dir.cwd();
     const folder = std.fs.path.dirname(path) orelse ".";
     try cwd.createDirPath(io, folder);

@@ -184,18 +184,25 @@ fn repeats(command: Command) bool {
     };
 }
 
+/// The commands that work while a popup is open: they're about the window, not what's in it.
+const above_popups: std.EnumSet(Command) = .initMany(&.{ .quit, .full_screen });
+
 const mods_mask = c.ImGuiMod_Ctrl | c.ImGuiMod_Shift | c.ImGuiMod_Alt | c.ImGuiMod_Super;
 
 /// Returns the commands whose keys were pressed this frame. While a text field has the keyboard,
 /// only Escape and shortcuts with the Command key count, so typing never triggers a tool. While
 /// something is being dragged, Escape belongs to the drag: it cancels a slider's (`gui.slider`).
+/// While a dialog, a menu or another popup is open, the keys belong to it, so Escape closes it
+/// without also cancelling something behind it. Only `above_popups` still work then.
 pub fn poll() std.EnumSet(Command) {
     var pressed: std.EnumSet(Command) = .empty;
     const io = c.ImGui_GetIO();
+    const popup = c.ImGui_IsPopupOpen("", c.ImGuiPopupFlags_AnyPopupId | c.ImGuiPopupFlags_AnyPopupLevel);
     const typing = io.*.WantTextInput;
     const dragging = !typing and c.ImGui_IsAnyItemActive() and c.ImGui_IsMouseDown(c.ImGuiMouseButton_Left);
     const mods = io.*.KeyMods & mods_mask;
     for (bindings) |b| {
+        if (popup and !above_popups.contains(b.command)) continue;
         const wanted = b.chord & mods_mask;
         const key: c.ImGuiKey = @intCast(b.chord & ~@as(c_int, mods_mask));
         if (typing and wanted & command_key == 0 and key != c.ImGuiKey_Escape) continue;

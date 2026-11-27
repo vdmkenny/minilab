@@ -69,6 +69,9 @@ const windows = struct {
     const no_confirmation = 0x10;
     const silent = 0x4;
     const no_error_ui = 0x400;
+    /// Asks before deleting for good something the Recycle Bin can't take (it's too big, on a
+    /// network drive, or the bin is off). Without it the shell deletes it without a word.
+    const want_nuke_warning = 0x4000;
 
     extern "shell32" fn SHFileOperationW(operation: *FileOperation) callconv(.winapi) c_int;
 
@@ -81,7 +84,7 @@ const windows = struct {
         @memcpy(list[0..wide.len], wide);
         list[wide.len] = 0;
         list[wide.len + 1] = 0;
-        var operation: FileOperation = .{ .function = delete, .from = list.ptr, .flags = allow_undo | no_confirmation | silent | no_error_ui };
+        var operation: FileOperation = .{ .function = delete, .from = list.ptr, .flags = allow_undo | no_confirmation | silent | no_error_ui | want_nuke_warning };
         if (SHFileOperationW(&operation) != 0 or operation.aborted != 0) return error.TrashFailed;
     }
 };

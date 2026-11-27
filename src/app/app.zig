@@ -131,7 +131,10 @@ pub fn run(gpa: std.mem.Allocator, io: std.Io, options: Options) !?[]u8 {
         const language = settings_view.language(asked, if (options.screenshot == null) window.system_language else null);
         if (language != i18n.current) i18n.use(language);
         gui.newFrame();
-        const keys = shortcuts.poll();
+        var keys = shortcuts.poll();
+        // The shortcuts window isn't a popup, and Escape closes it. It shouldn't cancel what's
+        // behind it as well.
+        if (app.show_help) keys.remove(.cancel);
         const ctx: context.Context = .{ .gpa = gpa, .io = io, .gpu = window.gpu, .library = &app.library, .develop = &app.develop, .keys = keys, .notice = &app.notice, .preferences = &app.preferences };
         app.handleKeys(ctx, &window);
         // Scanned frames go into their roll whichever workspace is showing, and the header picks

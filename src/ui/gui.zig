@@ -141,8 +141,6 @@ pub fn paragraph(color: theme.Color, value: []const u8) void {
     c.ImGui_PopTextWrapPos();
 }
 
-/// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
-/// writes headings in capitals, and so do the callers.
 /// The gap after a section heading's icon, in the design's pixels.
 const heading_icon_gap = 8;
 
@@ -201,6 +199,8 @@ fn drawFold(open: bool, centre: Vec2, lit: bool) void {
     drawIcon(if (open) .chevron_down else .chevron_right, centre, if (lit) theme.colors.text else theme.colors.text_tertiary);
 }
 
+/// A section heading, as in the design: 12 pixels, semibold, in the secondary colour. The design
+/// writes headings in capitals, and so do the callers.
 pub fn heading(value: []const u8) void {
     fonts.pushSized(.semibold, fonts.small_size);
     textColored(theme.colors.text_secondary, value);
@@ -449,8 +449,6 @@ pub fn iconButton(id: [:0]const u8, kind: Kind, icon: icons.Icon) bool {
 /// The size of an icon on a button, in the design's pixels.
 pub const icon_size = 16;
 
-/// Draws `icon` at the size buttons use, centred on `centre`, faded with the item when it's
-/// disabled: ImGui fades disabled items through the style's alpha, which a draw list doesn't use.
 /// The spool over an empty page, in the design's pixels: its size and the gap under it.
 const spool_size = 32;
 const spool_gap = 12;
@@ -476,6 +474,8 @@ pub fn filterIcon(height: f32) void {
     c.ImGui_SetCursorScreenPos(vec2(at.x + px(filter_icon_space), at.y));
 }
 
+/// Draws `icon` at the size buttons use, centred on `centre`, faded with the item when it's
+/// disabled: ImGui fades disabled items through the style's alpha, which a draw list doesn't use.
 pub fn drawIcon(icon: icons.Icon, centre: Vec2, colour: theme.Color) void {
     icons.draw(c.ImGui_GetWindowDrawList(), icon, centre, px(icon_size), theme.withAlpha(colour, colour.w * c.ImGui_GetStyle().*.Alpha));
 }
@@ -548,8 +548,6 @@ pub const reset_space = reset_size + 6;
 /// The size of the reset button's icon.
 const reset_icon_size = 12;
 
-/// Starts a row of a settings grid: draws `label` in the label column, then moves the cursor to
-/// where the control goes.
 /// The gap after a warning's icon, in the design's pixels.
 const warning_gap = 6;
 
@@ -563,6 +561,8 @@ pub fn warning(message: [:0]const u8) void {
     textColored(theme.colors.accent, message);
 }
 
+/// Starts a row of a settings grid: draws `label` in the label column, then moves the cursor to
+/// where the control goes.
 pub fn rowLabel(label: []const u8) void {
     const x = c.ImGui_GetCursorPosX();
     c.ImGui_AlignTextToFramePadding();

@@ -10,7 +10,6 @@ const grey_magic = "P5";
 
 pub const Error = error{ NotAPpm, UnsupportedDepth, Truncated, InvalidHeader };
 
-/// Bits per sample in the file.
 /// A PNM file after reading it into a scan.
 pub const Decoded = struct {
     /// The pixels. 8-bit samples are scaled up to 16 bits, and a greyscale file gets its value

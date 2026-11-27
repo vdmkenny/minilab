@@ -480,9 +480,11 @@ fn drawStrip(library: *Library, gpa: std.mem.Allocator, r: *roll.Roll, index: us
     const more_width = gui.px(2 * more_padding) + c.ImGui_CalcTextSize(gui.say(i18n.t.rolls.more_frames, .{"00"})).x;
     // Each frame takes its width and the gap after it; sheets each have their own border.
     const step = width + if (sheets) 2 * leader + gap else gap;
-    const room = right - strip_x + gap - if (sheets) 0 else 2 * leader;
+    // Never less than nothing, in a window too narrow for the strip: a negative count can't be a
+    // `usize`.
+    const room = @max(0, right - strip_x + gap - if (sheets) 0 else 2 * leader);
     var fit = @max(1, @as(usize, @intFromFloat(@floor(room / step))));
-    if (fit < total) fit = @max(1, @as(usize, @intFromFloat(@floor((room - more_width - gui.px(thumb_gap)) / step))));
+    if (fit < total) fit = @max(1, @as(usize, @intFromFloat(@floor(@max(0, room - more_width - gui.px(thumb_gap)) / step))));
     const shown = @min(total, fit);
     const strip_end = strip_x + @as(f32, @floatFromInt(shown)) * step - gap + if (sheets) 0 else 2 * leader;
     const film_ink = theme.imU32(theme.film);

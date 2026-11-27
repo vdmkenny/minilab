@@ -790,7 +790,6 @@ pub const State = struct {
         state.start(ctx, .{ .fit = .{ .prepared = prepared, .alignments = alignments, .held_out = held_out, .options = own.options } }, look, job_pairs);
     }
 
-    /// Makes a new look, "Look N", with no pairs yet, and selects it.
     /// Adds an empty look called `name` to the list, with its folder in the library's Looks.
     fn makeLook(state: *State, ctx: context.Context, name: []const u8) !*Own {
         const root = try looks.saved.folderOf(ctx.gpa, ctx.library.path);
@@ -803,6 +802,7 @@ pub const State = struct {
         return &state.own.items[state.own.items.len - 1];
     }
 
+    /// Makes a new look, "Look N", with no pairs yet, and selects it.
     fn newLook(state: *State, ctx: context.Context) void {
         var number: usize = state.own.items.len + 1;
         const name = while (true) : (number += 1) {

@@ -86,6 +86,8 @@ const linear_power = 1.0;
 const linear_slope = 1.0;
 /// The white balance multiplier we ask for, for each of red, green, blue and the second green.
 const unity_multiplier = 1.0;
+/// LibRaw's `adjust_maximum_thr` at 0: the white level stays the sensor's, whatever is in the frame.
+const keep_white_level = 0.0;
 
 /// Reads the camera raw file `bytes`.
 pub fn read(gpa: std.mem.Allocator, bytes: []const u8, options: Options) ReadError!Decoded {
@@ -101,6 +103,9 @@ pub fn read(gpa: std.mem.Allocator, bytes: []const u8, options: Options) ReadErr
     params.use_camera_wb = 0;
     params.use_auto_wb = 0;
     params.no_auto_scale = 1;
+    // By default LibRaw lowers the white level to a frame's brightest sample when that's close
+    // to the sensor's. The frames of one roll would then each get a different scale.
+    params.adjust_maximum_thr = keep_white_level;
     params.gamm[0] = linear_power;
     params.gamm[1] = linear_slope;
     params.no_auto_bright = 1;

@@ -104,7 +104,11 @@ pub const Worker = struct {
         defer client.deinit();
         const archive = update.download(gpa, &client, &worker.release.?, &worker.downloaded, &worker.cancel) catch |err| return worker.fail(err);
         defer gpa.free(archive);
-        worker.phase.store(.installing, .release);
+        // `stop` sets `cancel` and then reads the phase; this sets the phase and then reads
+        // `cancel`. In one order for both threads (`seq_cst`), at least one sees the other, so the
+        // files are never being swapped while the app quits without waiting.
+        worker.phase.store(.installing, .seq_cst);
+        if (worker.cancel.load(.seq_cst)) return;
         update.install(gpa, worker.io, archive, worker.folder) catch |err| return worker.fail(err);
         worker.phase.store(.installed, .release);
     }
@@ -119,9 +123,9 @@ pub const Worker = struct {
     /// A check or download that's still waiting on the network is cancelled and left to end with
     /// the process, and then the worker isn't freed.
     pub fn stop(worker: *Worker) void {
-        worker.cancel.store(true, .release);
+        worker.cancel.store(true, .seq_cst);
         if (worker.thread) |thread| {
-            if (!worker.finished.load(.acquire) and worker.phase.load(.acquire) != .installing) {
+            if (!worker.finished.load(.acquire) and worker.phase.load(.seq_cst) != .installing) {
                 thread.detach();
                 return;
             }

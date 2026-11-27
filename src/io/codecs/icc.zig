@@ -267,10 +267,6 @@ pub fn Transform(comptime Sample: type) type {
     };
 }
 
-/// A transform from sRGB to a display's own profile, for showing pictures on it: 8-bit RGBA in and
-/// out, the alpha kept. Relative colorimetric with black point compensation, as screens are
-/// usually matched: colours inside the display's gamut stay as they are, and black is the
-/// display's black.
 /// From 8-bit RGB in the colours of a picture's own profile (an ICC file, like a JPEG's embedded
 /// one) to linear light in sRGB's primaries, 0 to `image.full_scale`. Colours outside sRGB clip.
 /// It's relative colorimetric, with black point compensation, as GIMP and darktable import by
@@ -316,6 +312,10 @@ pub const ImportTransform = struct {
     }
 };
 
+/// A transform from sRGB to a display's own profile, for showing pictures on it: 8-bit RGBA in and
+/// out, the alpha kept. Relative colorimetric with black point compensation, as screens are
+/// usually matched: colours inside the display's gamut stay as they are, and black is the
+/// display's black.
 pub const DisplayTransform = struct {
     /// From 8-bit sRGB RGBA, for pictures that only come that way.
     handle: *anyopaque,

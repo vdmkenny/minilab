@@ -8,8 +8,8 @@ nothing comes from your system.
 | Folder | Library | Version | Upstream | Licence |
 | --- | --- | --- | --- | --- |
 | `libtiff/` | LibTIFF | 4.7.2 | gitlab.com/libtiff/libtiff, tag `v4.7.2` | LibTIFF licence (BSD-like) |
-| `libjpeg-turbo/` | libjpeg-turbo | 3.2.0 | github.com/libjpeg-turbo/libjpeg-turbo, tag `3.2.0` | IJG licence, Modified BSD and zlib licences |
-| `libraw/` | LibRaw | 0.22.2 | github.com/LibRaw/LibRaw, tag `0.22.2` | LGPL-2.1 or CDDL-1.0, minilab takes LGPL-2.1 |
+| `libjpeg-turbo/` | libjpeg-turbo | 3.2.1 | github.com/libjpeg-turbo/libjpeg-turbo, tag `3.2.1` | IJG licence, Modified BSD and zlib licences |
+| `libraw/` | LibRaw | 0.22.3 | github.com/LibRaw/LibRaw, tag `0.22.3` | LGPL-2.1 or CDDL-1.0, minilab takes LGPL-2.1 |
 | (by URL) | LittleCMS | 2.18 | allyourcodebase/lcms2, tag `v2.18.0` | MIT |
 | (by URL) | zlib | 1.3.2 | allyourcodebase/zlib, tag `1.3.2` | zlib licence |
 | `codecs/` | the four as one Zig module | | | minilab's own: MPL-2.0 |

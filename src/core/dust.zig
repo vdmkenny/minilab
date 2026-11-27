@@ -1143,8 +1143,8 @@ pub fn testFilm(gpa: std.mem.Allocator, width: usize, height: usize, grain: Test
     return scan;
 }
 
-/// Adds `density` D to the disc of `radius` around (`cx`, `cy`). Negative makes it lighter.
 /// Makes the disc of `radius` round (`cx`, `cy`) on `scan`, a scan or a plane, `density` denser.
+/// A negative `density` makes it lighter.
 pub fn addDisc(scan: anytype, cx: usize, cy: usize, radius: usize, density: f32) void {
     const r: isize = @intCast(radius);
     var dy: isize = -r;

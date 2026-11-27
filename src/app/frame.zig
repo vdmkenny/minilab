@@ -479,9 +479,6 @@ fn squareStart(centre: f32, length: usize, start: usize, room: usize) usize {
     return @intFromFloat(std.math.clamp(wanted, lowest, highest));
 }
 
-/// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.
-/// For a frame of a strip, it's `preview_longest` times the whole number of times the scan is
-/// longer than the frame, so the frame still gets `preview_longest` (up to `strip_longest`).
 /// `source`, a scan or a plane, cut to `area` and turned the way a frame is.
 fn cutAndTurn(gpa: std.mem.Allocator, source: anytype, area: image.Area, quarter_turns: u2, mirrored: bool) !@TypeOf(source) {
     var cut = try source.crop(gpa, area);
@@ -499,6 +496,9 @@ fn tinted(pixel: [4]u8, tint: [4]u8) [4]u8 {
     return out;
 }
 
+/// How long the longer side of `scan`'s reduced copy should be, when frame `crop` is cut from it.
+/// For a frame of a strip, it's `preview_longest` times the whole number of times the scan is
+/// longer than the frame, so the frame still gets `preview_longest` (up to `strip_longest`).
 fn reducedLongest(scan: image.Scan, crop: ?image.Area) usize {
     const area = crop orelse return preview_longest;
     const times = @max(scan.width, scan.height) / @max(1, area.width, area.height);

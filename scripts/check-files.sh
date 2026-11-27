@@ -29,22 +29,23 @@ fail() {
     failed=1
 }
 
-# Names as they are, not quoted: git puts a name with an accent in quotes, with the accent as
-# octal escapes, and the -f check below would then skip it.
+# Names as they are, each ended by a NUL (-z). Without it git puts a name with an accent, a quote,
+# a backslash or a tab in quotes, with escapes, and the checks below would then miss the file.
 paths() {
     case $mode in
-        "") git -c core.quotePath=false ls-files ;;
-        --staged) git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR ;;
+        "") git ls-files -z ;;
+        --staged) git diff --cached --name-only --diff-filter=ACMR -z ;;
     esac
 }
 
-while IFS= read -r path; do
-    [ -f "$path" ] || continue
+while IFS= read -r -d '' path; do
+    # The name is checked first: it counts even if the file is no longer in the working tree.
     lower=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
     if printf '%s' "$lower" | grep -Eq "\.($kept_out)$"; then
         fail "$path" "is a kind of file that stays out of the repository"
         continue
     fi
+    [ -f "$path" ] || continue
     size=$(wc -c < "$path")
     if [ "$size" -gt "$max_size" ]; then
         fail "$path" "is over 2 MiB"

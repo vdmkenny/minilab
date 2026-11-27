@@ -11,7 +11,7 @@
 
 const std = @import("std");
 
-const version: std.SemanticVersion = .{ .major = 3, .minor = 2, .patch = 0 };
+const version: std.SemanticVersion = .{ .major = 3, .minor = 2, .patch = 1 };
 const version_string = std.fmt.comptimePrint("{f}", .{version});
 /// The upstream's own version number: the major version, then three digits each for the minor
 /// version and the patch.

@@ -1,7 +1,7 @@
 .{
     .name = .libraw,
-    // LibRaw's release 0.22.2: the tag 0.22.2, commit b93f6e45c194f5df9b02a43b1af9a54b4f41f33f.
-    .version = "0.22.2",
+    // LibRaw's release 0.22.3: the tag 0.22.3, commit cf02d66eb5c19d4e46df7aee0582e47a4918509a.
+    .version = "0.22.3",
     .fingerprint = 0x2e0b4671c34638c5,
     .minimum_zig_version = "0.17.0",
     .dependencies = .{
