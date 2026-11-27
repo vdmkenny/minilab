@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.1](https://github.com/vdmkenny/minilab/compare/v0.10.0...v0.10.1) (2026-11-27)
+
+
+### Fixes
+
+* Review fixes, batch 2: settings in range, roll names, Sync and Paste, safe exports ([#141](https://github.com/vdmkenny/minilab/issues/141)) ([af733e5](https://github.com/vdmkenny/minilab/commit/af733e54431216a88dd181d212395eadc2468edd))
+* Review fixes: safe roll saves, picked grey, infrared scans, shortcuts behind dialogs ([#139](https://github.com/vdmkenny/minilab/issues/139)) ([ac96114](https://github.com/vdmkenny/minilab/commit/ac96114b717835daa86865b389d449dd1fc29599))
+* Review leftovers: finished pictures stay developed, Linux Trash on other disks, safe look saves ([#143](https://github.com/vdmkenny/minilab/issues/143)) ([4d26697](https://github.com/vdmkenny/minilab/commit/4d26697bee2b81c54e218a07a11089f6d298f7b7))
+
 ## [0.10.0](https://github.com/vdmkenny/minilab/compare/v0.9.0...v0.10.0) (2026-11-27)
 
 
