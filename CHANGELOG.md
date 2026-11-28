@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.2](https://github.com/vdmkenny/minilab/compare/v0.10.1...v0.10.2) (2026-11-28)
+
+
+### Fixes
+
+* Skip the freedesktop Trash test on Windows, where it doesn't link ([#144](https://github.com/vdmkenny/minilab/issues/144)) ([e4a285f](https://github.com/vdmkenny/minilab/commit/e4a285f7217b3545f10b5127ef07a2267a0fa6bd))
+* Skip the Trash data folder test on Windows, where its paths aren't full paths ([#146](https://github.com/vdmkenny/minilab/issues/146)) ([3624618](https://github.com/vdmkenny/minilab/commit/3624618a0658f7af758b20696cfdfe59a14d1aa4))
+
 ## [0.10.1](https://github.com/vdmkenny/minilab/compare/v0.10.0...v0.10.1) (2026-11-27)
 
 
