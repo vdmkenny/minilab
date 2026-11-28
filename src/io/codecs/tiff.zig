@@ -57,6 +57,8 @@ pub const WriteOptions = struct {
     /// The resolution in pixels per inch, for the resolution tags. Without one, other apps take
     /// the file to be 72 dpi.
     dpi: ?f32 = null,
+    /// Vertical resolution; omitted for square pixels.
+    dpi_y: ?f32 = null,
 };
 
 /// The photometric interpretations we read, numbered the way TIFF numbers them.
@@ -484,7 +486,7 @@ fn setTags(tif: *c.TIFF, shape: Shape, options: WriteOptions) bool {
         // LibTIFF takes the resolutions as doubles through its variadic setter.
         const resolution: f64 = dpi;
         if (c.TIFFSetField(tif, c.TIFFTAG_XRESOLUTION, resolution) == 0 or
-            c.TIFFSetField(tif, c.TIFFTAG_YRESOLUTION, resolution) == 0 or
+            c.TIFFSetField(tif, c.TIFFTAG_YRESOLUTION, @as(f64, options.dpi_y orelse dpi)) == 0 or
             c.TIFFSetField(tif, c.TIFFTAG_RESOLUTIONUNIT, @as(c_int, c.RESUNIT_INCH)) == 0)
             return false;
     }
@@ -928,6 +930,26 @@ test "the resolution goes in the file's tags" {
     try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_RESOLUTIONUNIT, &unit) != 0);
     try std.testing.expectEqual(@as(f32, 2400), x);
     try std.testing.expectEqual(@as(f32, 2400), y);
+    try std.testing.expectEqual(@as(u16, c.RESUNIT_INCH), unit);
+}
+
+test "rectangular scanner pixels retain separate TIFF resolution tags" {
+    const gpa = std.testing.allocator;
+    var encoded = try testImage(gpa, u16, 4, 3);
+    defer encoded.deinit(gpa);
+    const file = try write(gpa, u16, encoded, .{ .dpi = 6400, .dpi_y = 9600 });
+    defer gpa.free(file);
+    var source: Source = .{ .bytes = file };
+    const tif = open(&source, read_mode, Source) orelse return error.TestUnexpectedResult;
+    defer c.TIFFClose(tif);
+    var x: f32 = 0;
+    var y: f32 = 0;
+    var unit: u16 = 0;
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_XRESOLUTION, &x) != 0);
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_YRESOLUTION, &y) != 0);
+    try std.testing.expect(c.TIFFGetField(tif, c.TIFFTAG_RESOLUTIONUNIT, &unit) != 0);
+    try std.testing.expectEqual(@as(f32, 6400), x);
+    try std.testing.expectEqual(@as(f32, 9600), y);
     try std.testing.expectEqual(@as(u16, c.RESUNIT_INCH), unit);
 }
 

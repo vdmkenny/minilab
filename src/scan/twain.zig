@@ -736,7 +736,7 @@ pub const Scanner = struct {
         scanner.set(.bit_depth, .uint16, if (request.deep) rgb_bits_deep else rgb_bits) catch try scanner.set(.bit_depth, .uint16, rgb_bits);
         const dpi: f64 = @floatFromInt(request.dpi);
         try scanner.setFix(.x_resolution, dpi);
-        try scanner.setFix(.y_resolution, dpi);
+        try scanner.setFix(.y_resolution, @floatFromInt(request.dpi_y orelse request.dpi));
         scanner.setFix(.gamma, 1.0) catch {};
         try scanner.set(.xfer_mech, .uint16, sx_memory);
         scanner.set(.xfer_count, .int16, 1) catch {};

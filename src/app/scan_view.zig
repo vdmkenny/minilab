@@ -488,6 +488,7 @@ pub const State = struct {
     /// Whether frames are scanned with an infrared pass too, for scanners that can
     /// (`scan.Capabilities.infrared`). It's off to begin with: it takes about twice as long.
     infrared: bool = false,
+    dpi_y: ?u32 = null,
     margin_mm: f32 = 1.0,
     margin_text: [16:0]u8 = @splat(0),
     editing_margin: bool = false,
@@ -652,6 +653,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.device = opened.device;
             state.problem = null;
             state.dpi = chooseDpi(opened.capabilities, state.dpi, ctx.preferences.values.scan_dpi);
+            state.dpi_y = null;
             sendRaw(state, ctx);
             return;
         },
@@ -663,7 +665,7 @@ fn handleEvent(state: *State, ctx: context.Context, worker: *Worker, event: *sca
             state.capabilities = reopened.capabilities;
             state.device = reopened.device;
             state.problem = null;
-            state.dpi = chooseDpi(reopened.capabilities, state.dpi, ctx.preferences.values.scan_dpi);
+            validateDpi(state, reopened.capabilities, ctx.preferences.values.scan_dpi);
             return;
         },
         .failed => |failed| {
@@ -742,16 +744,23 @@ fn chooseDpi(capabilities: scan.Capabilities, current: u32, wanted: u32) u32 {
     return capabilities.resolutionNearest(wanted) orelse current;
 }
 
+/// Keep a native pair only while both axes remain available for the new source.
+fn validateDpi(state: *State, capabilities: scan.Capabilities, wanted: u32) void {
+    if (state.dpi_y) |vertical| {
+        if (capabilities.hasAxisResolution(.{ state.dpi, vertical })) return;
+        state.dpi_y = null;
+    }
+    state.dpi = chooseDpi(capabilities, state.dpi, wanted);
+}
+
 /// Adds a scanned frame to the queue's roll. Returns its index there.
 fn addToRoll(state: *State, ctx: context.Context, done: scan_worker.Scanned) !usize {
     const path = state.queue_roll orelse return error.NoRoll;
     const index = ctx.library.find(path) orelse return error.RollNotFound;
     const r = &ctx.library.rolls.items[index];
-    const frame = try r.addScanAt(ctx.gpa, ctx.io, done.ppm, done.dpi, done.infrared);
-    const saved = &r.frames.items[frame];
-    saved.crop = done.crop;
-    saved.quarter_turns = state.queue_turns;
-    try r.saveFrame(ctx.io, frame);
+    const stored = try storeFrame(r, ctx.gpa, ctx.io, done, state.queue_turns);
+    const frame = stored.frame;
+    if (stored.native_failed) ctx.notice.say(i18n.t.scan.native_save_failed, .{});
     if (r.info.dpi == null or r.info.scanner == null) {
         r.info.dpi = done.dpi;
         if (r.info.scanner == null) if (state.openDevice()) |device| {
@@ -760,6 +769,43 @@ fn addToRoll(state: *State, ctx: context.Context, done: scan_worker.Scanned) !us
         r.saveInfo(ctx.io) catch |err| std.log.err("can't save the roll: {t}", .{err});
     }
     return frame;
+}
+
+const StoredFrame = struct { frame: usize, native_failed: bool };
+
+/// Archive failures must not leave a working frame without its crop and turns.
+fn storeFrame(r: *roll.Roll, gpa: std.mem.Allocator, io: std.Io, done: scan_worker.Scanned, turns: u2) !StoredFrame {
+    const frame = try r.addScanAt(gpa, io, done.ppm, done.dpi, done.infrared);
+    const saved = &r.frames.items[frame];
+    var native_failed = false;
+    if (done.native_tiff) |bytes| {
+        const name = try std.fmt.allocPrint(r.arena.allocator(), "{s}.native.tiff", .{saved.scan.?});
+        const path = try std.fs.path.join(gpa, &.{ r.path, minilab.roll.scans_dir, name });
+        defer gpa.free(path);
+        if (std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes })) |_| {
+            saved.native_scan = name;
+            saved.capture_dpi = done.capture_dpi;
+        } else |err| {
+            std.log.warn("working scan kept, but native TIFF could not be saved: {t}", .{err});
+            native_failed = true;
+        }
+    }
+    if (done.native_infrared_tiff) |bytes| {
+        const name = try std.fmt.allocPrint(r.arena.allocator(), "{s}.native.ir.tif", .{saved.scan.?});
+        const path = try std.fs.path.join(gpa, &.{ r.path, minilab.roll.scans_dir, name });
+        defer gpa.free(path);
+        if (std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = bytes })) |_| {
+            saved.native_infrared = name;
+            saved.capture_dpi = done.capture_dpi;
+        } else |err| {
+            std.log.warn("working scan kept, but native infrared TIFF could not be saved: {t}", .{err});
+            native_failed = true;
+        }
+    }
+    saved.crop = done.crop;
+    saved.quarter_turns = turns;
+    try r.saveFrame(io, frame);
+    return .{ .frame = frame, .native_failed = native_failed };
 }
 
 /// Draws the workspace. Returns a workspace to go to, when the page asks for one.
@@ -1009,10 +1055,35 @@ fn drawResolution(state: *State, panel: ScannerPanel, top: f32) f32 {
         for (labels_[0..resolutions.len], resolutions) |*label, r| label.* = gui.print("{d} dpi", .{r});
         const chosen = std.mem.indexOfScalar(u32, resolutions, state.dpi) orelse resolutions.len;
         c.ImGui_BeginDisabled(state.scanning);
-        if (menu(panel, y, "resolution", labels_[0..resolutions.len], chosen)) |picked| state.dpi = resolutions[picked];
+        if (menu(panel, y, "resolution", labels_[0..resolutions.len], chosen)) |picked| {
+            state.dpi = resolutions[picked];
+            state.dpi_y = null;
+        }
         c.ImGui_EndDisabled();
         y += gui.px(device_height + group_gap);
     }
+    if (state.capabilities) |caps| if (caps.axis_resolutions) |axes| {
+        y += gui.lineAt(panel.list, panel.x, y, theme.colors.text_secondary, i18n.t.scan.native_resolution) + gui.px(group_gap);
+        for (axes, 0..) |values, axis| {
+            const listed = values[values.len -| max_resolutions..];
+            if (listed.len == 0) continue;
+            var names: [max_resolutions][]const u8 = undefined;
+            for (names[0..listed.len], listed) |*label, value| label.* = gui.print("{s}: {d} dpi", .{ if (axis == 0) "X" else "Y", value });
+            const current = if (axis == 0) state.dpi else state.dpi_y orelse state.dpi;
+            const chosen = std.mem.indexOfScalar(u32, listed, current) orelse listed.len;
+            c.ImGui_BeginDisabled(state.scanning);
+            if (menu(panel, y, if (axis == 0) "resolution-x" else "resolution-y", names[0..listed.len], chosen)) |picked| {
+                if (state.dpi_y == null) state.dpi_y = state.dpi;
+                if (axis == 0) state.dpi = listed[picked] else state.dpi_y = listed[picked];
+            }
+            c.ImGui_EndDisabled();
+            y += gui.px(device_height + group_gap);
+        }
+    };
+    if (state.dpi_y) |vertical| if (vertical != state.dpi) {
+        const note = gui.say(i18n.t.scan.native_archive_note, .{@max(state.dpi, vertical)});
+        y += gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.colors.text_tertiary, note) + gui.px(group_gap);
+    };
     return y + gui.paragraphAt(panel.list, panel.x, y, panel.width, theme.colors.text_tertiary, sizeNote(state, panel.ctx, panel.roll_index)) + gui.px(scanner_gap);
 }
 
@@ -1451,11 +1522,22 @@ fn sizeNote(state: *const State, ctx: context.Context, roll_index: ?usize) []con
     };
     along_mm += 2 * state.margin_mm;
     const width: u64 = @intFromFloat(@round(across_mm * dpi / mm_per_inch));
-    const height: u64 = @intFromFloat(@round(along_mm * dpi / mm_per_inch));
-    const deep = if (state.capabilities) |caps| caps.deep else true;
-    const megabytes = labels.megabytes(width * height * @as(u64, if (deep) 6 else 3));
+    const height: u64 = @intFromFloat(@round(along_mm * @as(f32, @floatFromInt(state.dpi_y orelse state.dpi)) / mm_per_inch));
+    const megabytes = labels.megabytes(captureBytes(width, height, .{ state.dpi, state.dpi_y orelse state.dpi }, state.infrared and if (state.capabilities) |caps| caps.infrared else false));
     if (megabytes < 10) return gui.say(if (estimate) i18n.t.scan.size_about else i18n.t.scan.size, .{ width, height });
     return gui.say(if (estimate) i18n.t.scan.size_about_mb else i18n.t.scan.size_mb, .{ width, height, megabytes });
+}
+
+/// Uncompressed TIFF bytes: every stored raw scan has three 16-bit channels.
+/// Rectangular captures also keep the working copy at the higher density.
+fn captureBytes(width: u64, height: u64, dpi: [2]u32, with_infrared: bool) u64 {
+    const bytes_per_pixel: u64 = (image.channel_count + @intFromBool(with_infrared)) * @sizeOf(u16);
+    const native = width * height * bytes_per_pixel;
+    if (dpi[0] == dpi[1]) return native;
+    const target = @max(dpi[0], dpi[1]);
+    const working_width: u64 = @max(1, @as(u64, @intFromFloat(@round(@as(f64, @floatFromInt(width)) * target / dpi[0]))));
+    const working_height: u64 = @max(1, @as(u64, @intFromFloat(@round(@as(f64, @floatFromInt(height)) * target / dpi[1]))));
+    return native + working_width * working_height * bytes_per_pixel;
 }
 
 /// The margin field, in mm. It shows "1.0 mm" and edits as a plain number.
@@ -2365,7 +2447,7 @@ fn startScan(state: *State, ctx: context.Context, roll_index: ?usize) void {
         area = area.clip(caps.area) orelse caps.area;
         job.* = .{
             .index = i,
-            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .deep = caps.deep, .area = area, .infrared = state.infrared and caps.infrared },
+            .request = .{ .source = caps.source, .film = scanner_film, .dpi = state.dpi, .dpi_y = state.dpi_y, .deep = caps.deep, .area = area, .infrared = state.infrared and caps.infrared },
             .crop = crop,
             .refine = if (box.hand) null else .{ .format = info.format.format(), .kind = state.film.detectKind(), .axis = preview.axis, .holder = state.holder(), .fit = state.fit, .inset = box.inset / 100 },
         };
@@ -3112,4 +3194,64 @@ test "detecting again keeps only the boxes edited by hand" {
     state.boxes.items[1].hand = false;
     keepHandBoxes(&state);
     try std.testing.expectEqual(@as(?usize, null), state.selected);
+}
+
+test "a native resolution survives reopen only while the source still offers both axes" {
+    var caps: scan.Capabilities = .{ .sources = .initOne(.transparency), .source = .transparency, .resolutions = @constCast(&[_]u32{ 300, 2400 }), .axis_resolutions = .{ @constCast(&[_]u32{ 300, 2400, 6400 }), @constCast(&[_]u32{ 300, 2400, 9600 }) }, .area = default_film_area, .deep = true, .film_setting = false, .profile = null };
+    var state: State = .{ .dpi = 6400, .dpi_y = 9600 };
+    validateDpi(&state, caps, 2400);
+    try std.testing.expectEqual(@as(u32, 6400), state.dpi);
+    try std.testing.expectEqual(@as(?u32, 9600), state.dpi_y);
+    caps.source = .flatbed;
+    caps.axis_resolutions = null;
+    validateDpi(&state, caps, 2400);
+    try std.testing.expectEqual(@as(u32, 2400), state.dpi);
+    try std.testing.expectEqual(@as(?u32, null), state.dpi_y);
+    // A device with axes but without the old Y value also clears the override.
+    state.dpi_y = 9600;
+    caps.axis_resolutions = .{ @constCast(&[_]u32{ 300, 2400 }), @constCast(&[_]u32{ 300, 2400 }) };
+    validateDpi(&state, caps, 300);
+    try std.testing.expectEqual(@as(u32, 2400), state.dpi);
+    try std.testing.expectEqual(@as(?u32, null), state.dpi_y);
+}
+
+test "rectangular storage estimates count native and square-pixel TIFFs" {
+    try std.testing.expectEqual(@as(u64, 120), captureBytes(2, 3, .{ 6400, 9600 }, true));
+    try std.testing.expectEqual(@as(u64, 90), captureBytes(2, 3, .{ 6400, 9600 }, false));
+    try std.testing.expectEqual(@as(u64, 90), captureBytes(3, 2, .{ 9600, 6400 }, false));
+    try std.testing.expectEqual(@as(u64, 36), captureBytes(2, 3, .{ 6400, 6400 }, false));
+}
+
+test "native archive write failure still persists the working frame crop and turns" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var r = try roll.Roll.create(gpa, io, folder, .{ .name = "Native failure" });
+    defer r.close();
+    const blocked = try std.fs.path.join(gpa, &.{ r.path, roll.scans_dir, "01.tif.native.tiff" });
+    defer gpa.free(blocked);
+    try std.Io.Dir.cwd().createDir(io, blocked, .default_dir);
+    var picture = try image.Scan.init(gpa, 3, 3);
+    defer picture.deinit(gpa);
+    @memset(picture.pixels, .{ 1000, 2000, 3000 });
+    const ppm = try minilab.pnm.write(gpa, u16, picture);
+    defer gpa.free(ppm);
+    const crop: image.Area = .{ .x = 1, .y = 0, .width = 2, .height = 3 };
+    const done: scan_worker.Scanned = .{ .index = 0, .ppm = ppm, .dpi = 9600, .native_tiff = @constCast("not written"), .capture_dpi = .{ 6400, 9600 }, .crop = crop, .refined = false };
+    const stored = try storeFrame(&r, gpa, io, done, 1);
+    try std.testing.expect(stored.native_failed);
+    var reopened = try roll.Roll.open(gpa, io, r.path);
+    defer reopened.close();
+    const saved = reopened.frames.items[stored.frame];
+    try std.testing.expectEqual(crop, saved.crop.?);
+    try std.testing.expectEqual(@as(u2, 1), saved.quarter_turns);
+    try std.testing.expectEqual(@as(?[]const u8, null), saved.native_scan);
+    const saved_path = try reopened.scanPath(gpa, stored.frame);
+    defer gpa.free(saved_path);
+    var raw = try minilab.input.read(gpa, io, saved_path);
+    defer raw.deinit(gpa);
+    try std.testing.expectEqualSlices([3]u16, picture.pixels, raw.scan.pixels);
 }

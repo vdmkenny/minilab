@@ -545,8 +545,18 @@ pub const Scanner = struct {
         // film or at 16 bits.
         const deep = scanner.hasDeepColour();
         try scanner.setUpRaw(gpa, .negative, &.{}, deep);
-        const resolutions = try scanner.rawResolutions(gpa);
+        const resolutions = try scanner.rawResolutions(gpa, "resolution");
         errdefer gpa.free(resolutions);
+        var axes: ?[2][]u32 = null;
+        if (scanner.find("x-resolution") != null and scanner.find("y-resolution") != null and
+            scanner.find("x-resolution").?.option.settable() and scanner.find("y-resolution").?.option.settable())
+        {
+            const x = try scanner.rawResolutions(gpa, "x-resolution");
+            errdefer gpa.free(x);
+            const y = try scanner.rawResolutions(gpa, "y-resolution");
+            axes = .{ x, y };
+        }
+        errdefer if (axes) |values| for (values) |a| gpa.free(a);
 
         // Without a profile, raw setup works from the options, and so do the scanner settings.
         var options: ?interface.Owned(interface.OptionInfo) = null;
@@ -561,6 +571,7 @@ pub const Scanner = struct {
             .sources = sources,
             .source = current,
             .resolutions = resolutions,
+            .axis_resolutions = axes,
             .area = scanner.fullArea(),
             .deep = deep,
             .film_setting = scanner.hasFilmSetting() or raw_film,
@@ -702,10 +713,10 @@ pub const Scanner = struct {
 
     /// The resolutions the scanner reads at with its raw settings in place, from lowest to
     /// highest: the ones it lists that it keeps when they're set, along with its bit depth.
-    fn rawResolutions(scanner: *Scanner, gpa: std.mem.Allocator) Error![]u32 {
+    fn rawResolutions(scanner: *Scanner, gpa: std.mem.Allocator, name: [:0]const u8) Error![]u32 {
         var listed: std.ArrayList(u32) = .empty;
         defer listed.deinit(gpa);
-        if (scanner.find("resolution")) |found| {
+        if (scanner.find(name)) |found| {
             const option = found.option;
             switch (option.constraint_type) {
                 .word_list => for (option.words()) |w| {
@@ -718,7 +729,7 @@ pub const Scanner = struct {
                     option.number(option.constraint.range.max),
                     option.number(option.constraint.range.quant),
                 ),
-                else => if (scanner.getNumber("resolution")) |value| if (interface.resolutionOf(value)) |r| try listed.append(gpa, r),
+                else => if (scanner.getNumber(name)) |value| if (interface.resolutionOf(value)) |r| try listed.append(gpa, r),
             }
         }
         std.mem.sortUnstable(u32, listed.items, {}, std.sort.asc(u32));
@@ -726,7 +737,7 @@ pub const Scanner = struct {
         var kept: std.ArrayList(u32) = .empty;
         errdefer kept.deinit(gpa);
         const depth = scanner.getNumber("depth");
-        for (listed.items) |r| if (scanner.keeps(r, depth)) try kept.append(gpa, r);
+        for (listed.items) |r| if (scanner.keeps(name, r, depth)) try kept.append(gpa, r);
         // A driver that keeps none of them can't be checked this way, so it gets its own list.
         if (kept.items.len == 0) return listed.toOwnedSlice(gpa);
         return kept.toOwnedSlice(gpa);
@@ -734,10 +745,10 @@ pub const Scanner = struct {
 
     /// Whether the scanner keeps resolution `dpi` as it is when it's set, and bit depth `depth`
     /// with it.
-    fn keeps(scanner: *Scanner, dpi: u32, depth: ?f64) bool {
-        const set = scanner.setNumber("resolution", @floatFromInt(dpi)) catch return false;
+    fn keeps(scanner: *Scanner, name: [:0]const u8, dpi: u32, depth: ?f64) bool {
+        const set = scanner.setNumber(name, @floatFromInt(dpi)) catch return false;
         if (!set) return false;
-        if (scanner.getNumber("resolution")) |now| if (@round(now) != @as(f64, @floatFromInt(dpi))) return false;
+        if (scanner.getNumber(name)) |now| if (@round(now) != @as(f64, @floatFromInt(dpi))) return false;
         if (depth) |bits| if (scanner.getNumber("depth")) |now| if (now != bits) return false;
         return true;
     }
@@ -781,11 +792,28 @@ pub const Scanner = struct {
         try scanner.setUpRaw(gpa, request.film, request.raw, request.deep);
         step = "the resolution and the area";
         try scanner.setResolutionAndArea(request);
+        if (request.dpi_y != null and request.deep and scanner.getNumber("depth") != @as(f64, 16)) return error.Unsupported;
     }
 
     /// Sets the resolution and the area `request` asks for.
     fn setResolutionAndArea(scanner: *Scanner, request: interface.Request) Error!void {
-        if (!try scanner.setNumber("resolution", @floatFromInt(request.dpi))) return error.Unsupported;
+        if (request.dpi_y != null) {
+            if (!try scanner.setNumber("x-resolution", @floatFromInt(request.dpi))) return error.Unsupported;
+            if (!try scanner.setNumber("y-resolution", @floatFromInt(request.dpi_y.?))) return error.Unsupported;
+            // Drivers may silently round an unsupported resolution. Never label that as native.
+            if (scanner.getNumber("x-resolution") != @as(f64, @floatFromInt(request.dpi)) or
+                scanner.getNumber("y-resolution") != @as(f64, @floatFromInt(request.dpi_y.?))) return error.Unsupported;
+        } else {
+            // Axis controls can stay active after probing or a rectangular scan.
+            // Setting the common control alone need not change either axis.
+            const dpi: f64 = @floatFromInt(request.dpi);
+            if (!try scanner.setNumber("resolution", dpi)) return error.Unsupported;
+            for ([_][]const u8{ "x-resolution", "y-resolution" }) |name| {
+                if (try scanner.setNumber(name, dpi)) {
+                    if (scanner.getNumber(name) != dpi) return error.Unsupported;
+                }
+            }
+        }
         // Move the far corner out of the way first, so the near corner can go anywhere.
         const full = scanner.fullArea();
         const area = if (request.area) |a| a.clip(full) orelse return error.Unsupported else full;
@@ -1313,4 +1341,61 @@ test {
 test "every function compiles, on every platform" {
     std.testing.refAllDecls(Library);
     std.testing.refAllDecls(Scanner);
+}
+
+/// A backend whose active X/Y controls are independent of its common resolution.
+/// It reproduces the V600 failure without opening SANE or moving a scanner.
+const IndependentAxes = struct {
+    values: [5]Word = .{ 0, 300, 6400, 9600, 16 },
+    const descriptors = [_]OptionDescriptor{
+        number("resolution", &.{ 3, 300, 2400, 6400 }),
+        number("x-resolution", &.{ 3, 300, 2400, 6400 }),
+        number("y-resolution", &.{ 4, 300, 2400, 6400, 9600 }),
+        number("depth", &.{ 2, 8, 16 }),
+    };
+
+    fn number(name: [*:0]const u8, choices: []const Word) OptionDescriptor {
+        return .{ .name = name, .title = null, .desc = null, .type = .int, .unit = .none, .size = @sizeOf(Word), .cap = cap_soft_select, .constraint_type = .word_list, .constraint = .{ .word_list = choices.ptr } };
+    }
+    fn descriptor(_: Handle, index: Int) callconv(.c) ?*const OptionDescriptor {
+        if (index < 1 or index > descriptors.len) return null;
+        return &descriptors[@intCast(index - 1)];
+    }
+    fn control(handle: Handle, index: Int, action: Action, value: ?*anyopaque, _: ?*Int) callconv(.c) Status {
+        const backend: *IndependentAxes = @ptrCast(@alignCast(handle));
+        const word: *Word = @ptrCast(@alignCast(value orelse return .inval));
+        if (index == 0) {
+            word.* = descriptors.len + 1;
+            return .good;
+        }
+        if (index < 0 or index >= backend.values.len) return .inval;
+        switch (action) {
+            .get_value => word.* = backend.values[@intCast(index)],
+            .set_value => backend.values[@intCast(index)] = word.*,
+            else => return .unsupported,
+        }
+        return .good;
+    }
+};
+
+test "square scans and previews reset active axes after capability probing and native scans" {
+    const gpa = std.testing.allocator;
+    var backend: IndependentAxes = .{};
+    var api: Api = undefined;
+    api.get_option_descriptor = IndependentAxes.descriptor;
+    api.control_option = IndependentAxes.control;
+    var scanner: Scanner = .{ .api = &api, .handle = @ptrCast(&backend), .profile = null };
+    var capabilities = try scanner.capabilities(gpa, .flatbed);
+    defer capabilities.deinit(gpa);
+    try std.testing.expect(capabilities.hasAxisResolution(.{ 6400, 9600 }));
+    try scanner.prepare(gpa, .{ .source = .flatbed, .dpi = 2400 });
+    try std.testing.expectEqual(@as(Word, 2400), backend.values[1]);
+    try std.testing.expectEqual(@as(Word, 2400), backend.values[2]);
+    try std.testing.expectEqual(@as(Word, 2400), backend.values[3]);
+    try scanner.prepare(gpa, .{ .source = .flatbed, .dpi = 6400, .dpi_y = 9600 });
+    try std.testing.expectEqual(@as(Word, 6400), backend.values[2]);
+    try std.testing.expectEqual(@as(Word, 9600), backend.values[3]);
+    try scanner.prepare(gpa, .{ .source = .flatbed, .dpi = 300 });
+    try std.testing.expectEqual(@as(Word, 300), backend.values[2]);
+    try std.testing.expectEqual(@as(Word, 300), backend.values[3]);
 }
