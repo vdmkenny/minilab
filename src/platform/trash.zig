@@ -289,6 +289,8 @@ test "a freedesktop info file has the path encoded and the time" {
 }
 
 test "the Trash is in the data folder the user chose, when it's a full path" {
+    // The paths are written the way Linux writes them, which Windows doesn't take as full paths.
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     for ([_]struct { ?[]const u8, []const u8 }{
         .{ null, "/home/kenny/.local/share" },
