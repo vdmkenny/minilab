@@ -93,6 +93,7 @@
         .name_used = "Naam al in gebruik",
         .invalid_name = "Ongeldige naam",
         .not_created = "Rol niet gemaakt",
+        .name_not_saved = "Naam kon niet worden opgeslagen",
     },
     .scan = .{
         .no_scanner = "Geen scanner",

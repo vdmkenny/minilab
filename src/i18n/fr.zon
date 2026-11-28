@@ -93,6 +93,7 @@
         .name_used = "Nom déjà utilisé",
         .invalid_name = "Nom invalide",
         .not_created = "Pellicule non créée",
+        .name_not_saved = "Impossible d’enregistrer le nom",
     },
     .scan = .{
         .no_scanner = "Aucun scanner",

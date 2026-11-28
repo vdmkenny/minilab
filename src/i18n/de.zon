@@ -93,6 +93,7 @@
         .name_used = "Name schon vergeben",
         .invalid_name = "Ungültiger Name",
         .not_created = "Rolle nicht angelegt",
+        .name_not_saved = "Name konnte nicht gespeichert werden",
     },
     .scan = .{
         .no_scanner = "Kein Scanner",

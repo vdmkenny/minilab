@@ -56,4 +56,5 @@ pub const Messages = struct {
     name_used: [:0]const u8 = "Name already used",
     invalid_name: [:0]const u8 = "Invalid name",
     not_created: [:0]const u8 = "Roll not created",
+    name_not_saved: [:0]const u8 = "Name could not be saved",
 };

@@ -143,6 +143,23 @@ pub const Library = struct {
         library.rolls = rolls;
     }
 
+    /// Display names and existing folders are reserved, even after a roll was renamed.
+    pub fn nameUsed(library: *const Library, value: []const u8, except: ?usize) bool {
+        const name = std.mem.trim(u8, value, " \t\r\n");
+        for (library.rolls.items, 0..) |r, i| {
+            if (except == i) continue;
+            if (std.ascii.eqlIgnoreCase(name, std.mem.trim(u8, r.info.name, " \t\r\n")) or
+                std.ascii.eqlIgnoreCase(name, std.fs.path.basename(r.path))) return true;
+        }
+        return false;
+    }
+
+    pub fn renameRoll(library: *Library, io: std.Io, index: usize, name: []const u8) !void {
+        if (index >= library.rolls.items.len) return error.RollNotFound;
+        if (library.nameUsed(name, index)) return error.RollExists;
+        try library.rolls.items[index].setName(io, name);
+    }
+
     /// Reads the rolls again if the library changed on disk since the last look, say from rolls
     /// added by `minilab import` or in the Finder, or frames added to one.
     pub fn refresh(library: *Library, gpa: std.mem.Allocator, io: std.Io) void {
@@ -332,4 +349,31 @@ test "the library's label has ~ for the home folder, and only for it" {
         defer gpa.free(label);
         try std.testing.expectEqualStrings(case.label, label);
     }
+}
+
+test "renamed display names and original folders remain reserved in the library" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var first = try roll.Roll.create(gpa, io, folder, .{ .name = "First" });
+    const first_path = try gpa.dupe(u8, first.path);
+    defer gpa.free(first_path);
+    first.close();
+    var second = try roll.Roll.create(gpa, io, folder, .{ .name = "Second" });
+    second.close();
+    var library = try Library.load(gpa, io, folder, null);
+    defer library.deinit(gpa, undefined);
+    const index = library.find(first_path).?;
+    try std.testing.expectError(error.RollExists, library.renameRoll(io, index, " second "));
+    try library.renameRoll(io, index, " New name ");
+    try std.testing.expectEqualStrings("New name", library.rolls.items[index].info.name);
+    try std.testing.expectEqualStrings(first_path, library.rolls.items[index].path);
+    try std.testing.expect(library.nameUsed("new NAME", null));
+    try std.testing.expect(library.nameUsed("First", null));
+    try std.testing.expect(!library.nameUsed("First", index));
+    try library.reload(gpa, io);
+    try std.testing.expectEqualStrings("New name", library.rolls.items[library.find(first_path).?].info.name);
 }
