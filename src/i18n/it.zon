@@ -93,6 +93,7 @@
         .name_used = "Nome già usato",
         .invalid_name = "Nome non valido",
         .not_created = "Rullino non creato",
+        .name_not_saved = "Impossibile salvare il nome",
     },
     .scan = .{
         .no_scanner = "Nessuno scanner",

@@ -87,6 +87,13 @@ const flat_files = [_]c.SDL_DialogFileFilter{
     .{ .name = "Camera RAW and TIFF", .pattern = minilab.input.extensions },
 };
 
+/// A failed edit stays visible for correction instead of reverting silently.
+const NameEditor = struct {
+    text: [roll_details.capacity:0]u8 = @splat(0),
+    editing: bool = false,
+    problem: ?[:0]const u8 = null,
+};
+
 pub const State = struct {
     search: [gui.text_capacity:0]u8 = @splat(0),
     /// The film size shown, or null for all of them.
@@ -96,6 +103,7 @@ pub const State = struct {
     form: Form = .{},
     /// The boxes for the details of the roll in the details panel.
     details: roll_details.Boxes = .{},
+    name: NameEditor = .{},
     /// Move the keyboard focus to the search field on the next frame.
     focus_search: bool = false,
     /// The dialog for the new roll's flat field.
@@ -129,6 +137,7 @@ pub const State = struct {
         const copy = gpa.dupe(u8, path) catch return;
         state.closePanel(gpa);
         state.details = .{};
+        state.name = .{};
         state.panel = .{ .details = copy };
     }
 
@@ -603,7 +612,7 @@ fn drawForm(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io
     // The button sits at the bottom of the panel.
     const bottom = c.ImGui_GetWindowHeight() - gui.px(form_padding + create_height);
     if (c.ImGui_GetCursorPosY() < bottom) c.ImGui_SetCursorPosY(bottom);
-    const name = std.mem.sliceTo(&form.name, 0);
+    const name = std.mem.trim(u8, std.mem.sliceTo(&form.name, 0), " \t\r\n");
     c.ImGui_BeginDisabled(name.len == 0 or choices.len == 0);
     defer c.ImGui_EndDisabled();
     if (!gui.buttonOf(.primary, switch (form.input) {
@@ -649,7 +658,11 @@ fn drawFlatField(state: *State, gpa: std.mem.Allocator, io: std.Io) void {
 /// Returns it once it's in the library, or null if it can't be made; the form then says why.
 fn createRoll(state: *State, library: *Library, gpa: std.mem.Allocator, io: std.Io, stock_names: []const []const u8, choices: []const formats.Standard) ?Created {
     const form = &state.form;
-    const name = std.mem.sliceTo(&form.name, 0);
+    const name = std.mem.trim(u8, std.mem.sliceTo(&form.name, 0), " \t\r\n");
+    if (library.nameUsed(name, null)) {
+        form.problem = i18n.t.rolls.name_used;
+        return null;
+    }
     const stock_count = stock_names.len - 1;
     var made = roll.Roll.create(gpa, io, library.path, .{
         .name = name,
@@ -709,9 +722,38 @@ fn drawDetails(state: *State, library: *Library, gpa: std.mem.Allocator, io: std
     drawPanelTitle(state, gpa, r.info.name);
     c.ImGui_PushStyleVarImVec2(c.ImGuiStyleVar_ItemSpacing, gui.vec2(gui.px(form_spacing), gui.px(form_spacing)));
     defer c.ImGui_PopStyleVar();
+    drawName(&state.name, library, io, index);
     for (std.enums.values(roll.Detail)) |which| {
         gui.rowLabel(roll_details.label(which));
         state.details.draw(which, r, library, io, i18n.t.common.not_set, 0);
+    }
+}
+
+fn drawName(editor: *NameEditor, library: *Library, io: std.Io, index: usize) void {
+    const r = &library.rolls.items[index];
+    const fits = r.info.name.len <= editor.text.len;
+    if (!editor.editing and editor.problem == null) roll_details.showCut(&editor.text, r.info.name);
+    gui.rowLabel(i18n.t.rolls.name);
+    c.ImGui_BeginDisabled(!fits);
+    const changed = gui.textField("roll name", &editor.text, i18n.t.rolls.name, 0);
+    const edit = gui.TextEdit.ofLastItem();
+    c.ImGui_EndDisabled();
+    if (!fits) gui.tooltip(gui.print("{s}", .{r.info.name}));
+    if (changed) editor.problem = null;
+    editor.editing = edit.active;
+    if (edit.done and fits) {
+        library.renameRoll(io, index, std.mem.sliceTo(&editor.text, 0)) catch |err| {
+            editor.problem = switch (err) {
+                error.BadRollName => i18n.t.rolls.invalid_name,
+                error.RollExists => i18n.t.rolls.name_used,
+                else => i18n.t.rolls.name_not_saved,
+            };
+            if (err != error.BadRollName and err != error.RollExists) std.log.err("can't rename {s}: {t}", .{ r.info.name, err });
+        };
+    }
+    if (editor.problem) |problem| {
+        gui.rowLabel("");
+        gui.paragraph(theme.colors.text_secondary, problem);
     }
 }
 
@@ -725,4 +767,26 @@ fn setFlatField(gpa: std.mem.Allocator, io: std.Io, r: *roll.Roll, path: []const
 fn optional(buffer: anytype) ?[]const u8 {
     const text = std.mem.sliceTo(buffer, 0);
     return if (text.len == 0) null else text;
+}
+
+test "new rolls cannot reuse another roll's renamed display name" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const folder = try tmp.dir.realPathFileAlloc(io, ".", gpa);
+    defer gpa.free(folder);
+    var existing = try roll.Roll.create(gpa, io, folder, .{ .name = "Folder name" });
+    try existing.setName(io, "Display name");
+    existing.close();
+    var library = try Library.load(gpa, io, folder, null);
+    defer library.deinit(gpa, undefined);
+    var state: State = .{};
+    defer state.deinit(gpa);
+    state.form.name = gui.initText(gui.text_capacity, "Display name");
+    state.form.input = .tiff_files;
+    const made = createRoll(&state, &library, gpa, io, &.{"Other"}, &.{.@"135_full_frame"});
+    try std.testing.expect(made == null);
+    try std.testing.expectEqualStrings(i18n.t.rolls.name_used, state.form.problem.?);
+    try std.testing.expectEqual(@as(usize, 1), library.rolls.items.len);
 }

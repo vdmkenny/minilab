@@ -93,6 +93,7 @@
         .name_used = "Nombre ya usado",
         .invalid_name = "Nombre no válido",
         .not_created = "Carrete no creado",
+        .name_not_saved = "No se pudo guardar el nombre",
     },
     .scan = .{
         .no_scanner = "Sin escáner",

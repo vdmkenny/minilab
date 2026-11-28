@@ -93,6 +93,7 @@
         .name_used = "この名前は使用済みです",
         .invalid_name = "無効な名前",
         .not_created = "ロールを作成できませんでした",
+        .name_not_saved = "名前を保存できませんでした",
     },
     .scan = .{
         .no_scanner = "スキャナーなし",
